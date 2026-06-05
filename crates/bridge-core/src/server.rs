@@ -6,9 +6,14 @@
 ///
 /// Endpoints
 ///   GET /v1/health             → JSON {name, version, capabilities}
-///   GET /v1/replays            → JSON [{name, size, modified_ms}]
+///   GET /v1/replays            → JSON [{name, size, modified_ms}]  (*.wowsreplay + tempArenaInfo.json)
 ///   GET /v1/replays/latest     → JSON {name, size, modified_ms} or 404
 ///   GET /v1/replays/{name}     → file bytes
+///
+/// The `tempArenaInfo.json` file is the live battle roster written by WoWS at
+/// battle start and deleted at battle end.  It is included in the replays list
+/// and in the file-watcher generation counter so the Battle Monitor can detect
+/// live battles in real time.
 ///
 /// All responses include CORS headers that allow the canonical origin
 /// `https://engine.tfd.rocks`.  A secondary `dev_origin` can be passed for
@@ -113,16 +118,12 @@ fn start_on_ports(
     let gen_clone = Arc::clone(&generation);
     let dir_clone = replays_dir.clone();
 
-    // File watcher: bump generation on any change in the replays dir.
+    // File watcher: bump generation on any change to served files in the replays dir.
+    // Covers *.wowsreplay archives and tempArenaInfo.json (live battle roster).
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             if event.kind.is_create() || event.kind.is_modify() || event.kind.is_remove() {
-                // Only care about .wowsreplay files
-                let affects_replays = event.paths.iter().any(|p| {
-                    p.extension()
-                        .map(|ext| ext.eq_ignore_ascii_case("wowsreplay"))
-                        .unwrap_or(false)
-                });
+                let affects_replays = event.paths.iter().any(|p| is_served_file(p));
                 if affects_replays {
                     gen_clone.fetch_add(1, Ordering::SeqCst);
                 }
@@ -250,7 +251,7 @@ fn handle_health() -> Response<std::io::Cursor<Vec<u8>>> {
     let body = serde_json::to_string(&Health {
         name: "tfd-bridge",
         version: crate::version(),
-        capabilities: &["replays-v1"],
+        capabilities: &["replays-v1", "live-v1"],
     })
     .unwrap_or_default();
 
@@ -324,17 +325,29 @@ fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<
 
 // ── Pure helpers ───────────────────────────────────────────────────────────────
 
-/// List all `.wowsreplay` files in `dir`.
+/// Returns `true` for files that the bridge serves and watches:
+/// - `*.wowsreplay` archive files
+/// - `tempArenaInfo.json` (the live battle roster, case-insensitive)
+fn is_served_file(path: &Path) -> bool {
+    if path
+        .extension()
+        .map(|ext| ext.eq_ignore_ascii_case("wowsreplay"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    path.file_name()
+        .map(|n| n.eq_ignore_ascii_case("tempArenaInfo.json"))
+        .unwrap_or(false)
+}
+
+/// List all `.wowsreplay` files and `tempArenaInfo.json` in `dir`.
 pub fn list_replays(dir: &Path) -> Result<Vec<ReplayEntry>, std::io::Error> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path
-            .extension()
-            .map(|ext| ext.eq_ignore_ascii_case("wowsreplay"))
-            .unwrap_or(false)
-        {
+        if is_served_file(&path) {
             let meta = entry.metadata()?;
             let modified_ms = meta
                 .modified()
@@ -788,6 +801,132 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        bridge.stop();
+    }
+
+    // ── tempArenaInfo.json (live battle) tests ────────────────────────────────
+
+    /// list_replays must include tempArenaInfo.json alongside *.wowsreplay.
+    #[test]
+    fn list_replays_includes_temp_arena_info() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("battle.wowsreplay"), b"replay").unwrap();
+        fs::write(tmp.path().join("tempArenaInfo.json"), b"{}").unwrap();
+        fs::write(tmp.path().join("other.txt"), b"ignored").unwrap();
+        let entries = list_replays(tmp.path()).unwrap();
+        assert_eq!(entries.len(), 2, "expected wowsreplay + tempArenaInfo.json");
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"battle.wowsreplay"));
+        assert!(names.contains(&"tempArenaInfo.json"));
+    }
+
+    /// GET /v1/replays must include tempArenaInfo.json in the JSON list.
+    #[test]
+    fn list_endpoint_includes_temp_arena_info() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("battle.wowsreplay"), b"replay").unwrap();
+        fs::write(tmp.path().join("tempArenaInfo.json"), b"{}").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/v1/replays", bridge.port());
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let replays = v["replays"].as_array().unwrap();
+        let names: Vec<&str> = replays.iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert!(
+            names.contains(&"tempArenaInfo.json"),
+            "list must contain tempArenaInfo.json, got: {names:?}"
+        );
+        assert!(names.contains(&"battle.wowsreplay"));
+        bridge.stop();
+    }
+
+    /// GET /v1/replays/tempArenaInfo.json must return the file bytes.
+    #[test]
+    fn fetch_temp_arena_info_returns_bytes() {
+        let tmp = TempDir::new().unwrap();
+        let content = br#"{"vehicles":[]}"#;
+        fs::write(tmp.path().join("tempArenaInfo.json"), content).unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/tempArenaInfo.json",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        assert_eq!(body.as_bytes(), content);
+        bridge.stop();
+    }
+
+    /// The watcher must bump generation when tempArenaInfo.json is CREATED.
+    #[test]
+    fn watch_generation_increments_on_temp_arena_info_create() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let initial_gen = bridge.generation();
+
+        fs::write(tmp.path().join("tempArenaInfo.json"), b"{}").unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if bridge.generation() > initial_gen {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("generation did not increment within 5 seconds after tempArenaInfo.json create");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        bridge.stop();
+    }
+
+    /// The watcher must bump generation when tempArenaInfo.json is DELETED.
+    /// We write the file before starting the bridge so the create event does
+    /// not pollute the baseline; the only bump we observe is the delete.
+    #[test]
+    fn watch_generation_increments_on_temp_arena_info_delete() {
+        let tmp = TempDir::new().unwrap();
+        // Write the file BEFORE starting the bridge so no create event fires.
+        let live_file = tmp.path().join("tempArenaInfo.json");
+        fs::write(&live_file, b"{}").unwrap();
+
+        let bridge = start_test_bridge(&tmp);
+        let initial_gen = bridge.generation();
+
+        fs::remove_file(&live_file).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if bridge.generation() > initial_gen {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("generation did not increment within 5 seconds after tempArenaInfo.json delete");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        bridge.stop();
+    }
+
+    /// /v1/health capabilities must include "live-v1".
+    #[test]
+    fn health_advertises_live_capability() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/v1/health", bridge.port());
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+        let caps: Vec<&str> = v["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap())
+            .collect();
+        assert!(
+            caps.contains(&"live-v1"),
+            "health capabilities must include 'live-v1', got: {caps:?}"
+        );
         bridge.stop();
     }
 }
