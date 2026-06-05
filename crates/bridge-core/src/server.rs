@@ -677,31 +677,34 @@ mod tests {
         bridge.stop();
     }
 
+    /// Verify that the public `start()` entry point falls back from 43210 to one
+    /// of the fallback ports when 43210 is already occupied.
     #[test]
     fn port_fallback_when_canonical_is_occupied() {
-        // Use OS-assigned ports to avoid collisions with other tests.
-        // Bind the first listener (canonical), then start the bridge with the
-        // same two "ports" (first=occupied, second=free-OS-assigned-0).
-        let first_listener = TcpListener::bind("127.0.0.1:0").expect("bind first");
-        let first_port = first_listener
-            .local_addr()
-            .unwrap()
-            .port();
+        // Pre-occupy port 43210.  If something else already holds it we skip —
+        // that would also mean start() would fall back, but we can't assert cleanly.
+        let occupied = match TcpListener::bind("127.0.0.1:43210") {
+            Ok(l) => l,
+            Err(_) => {
+                // Port already taken externally; skip this test to avoid flakiness.
+                eprintln!("port_fallback: 43210 already in use, skipping");
+                return;
+            }
+        };
 
         let tmp = TempDir::new().unwrap();
-        // Try [first_port, 0]: first is occupied, so bridge must fall back to port 0.
-        let bridge =
-            start_on_ports(tmp.path().to_path_buf(), None, &[first_port, 0])
-                .expect("bridge must start on fallback port");
+        // Call the real public entry point — it must skip 43210 and pick a fallback.
+        let bridge = start(tmp.path().to_path_buf(), None)
+            .expect("start() must succeed by falling back to a higher port");
 
-        assert_ne!(
-            bridge.port(),
-            first_port,
-            "bridge must not bind the occupied port"
+        assert_ne!(bridge.port(), 43210, "must not bind the occupied canonical port");
+        assert!(
+            FALLBACK_PORTS.contains(&bridge.port()),
+            "must bind one of the declared fallback ports, got {}",
+            bridge.port()
         );
-        // port > 0 means it bound successfully on an OS-assigned port
-        assert!(bridge.port() > 0, "bridge must have a valid port");
-        drop(first_listener);
+
+        drop(occupied); // release 43210 before stopping
         bridge.stop();
     }
 
