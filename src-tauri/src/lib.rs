@@ -131,6 +131,14 @@ pub fn run() {
 
     builder
         .manage(LaunchOnLoginItem(Mutex::new(None)))
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Hide instead of destroying the window so the tray Open item
+                // can revive it and the app stays alive in the tray.
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
