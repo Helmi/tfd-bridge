@@ -1,3 +1,5 @@
 .todos/
 AGENTS.md
 CLAUDE.md
+/target
+.DS_Store

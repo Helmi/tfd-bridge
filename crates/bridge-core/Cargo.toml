@@ -1,0 +1,8 @@
+[package]
+name = "bridge-core"
+version = "0.1.0"
+edition = "2021"
+description = "Placeholder for future TFD Bridge capability modules"
+license = "MIT"
+
+[dependencies]
