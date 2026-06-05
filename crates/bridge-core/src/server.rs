@@ -386,6 +386,17 @@ pub fn resolve_safe_path(replays_dir: &Path, name: &str) -> Result<PathBuf, Stri
         return Err("path traversal is not allowed".into());
     }
 
+    // Reject symlinks: a symlink inside the replays dir could point to an
+    // arbitrary file elsewhere on the filesystem, bypassing the starts_with check.
+    // Use symlink_metadata (does not follow symlinks) and only reject when the
+    // file exists AND is a symlink; non-existent files are allowed through (they
+    // will 404 at open time).
+    if let Ok(meta) = std::fs::symlink_metadata(&candidate) {
+        if meta.file_type().is_symlink() {
+            return Err("symlinks are not allowed".into());
+        }
+    }
+
     Ok(candidate)
 }
 
@@ -477,6 +488,29 @@ mod tests {
     fn resolve_safe_path_rejects_empty_name() {
         let tmp = TempDir::new().unwrap();
         assert!(resolve_safe_path(tmp.path(), "").is_err());
+    }
+
+    /// A symlink inside the replays dir that points outside must be rejected by
+    /// resolve_safe_path (symlink path-escape attack, AC#3).
+    #[cfg(unix)]
+    #[test]
+    fn resolve_safe_path_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        // Create a real target file outside the replays dir.
+        let target = tmp.path().parent().unwrap().join("secret.txt");
+        fs::write(&target, b"secret data").unwrap();
+        // Create a symlink inside the replays dir pointing to the external file.
+        let link = tmp.path().join("evil.wowsreplay");
+        symlink(&target, &link).unwrap();
+
+        // resolve_safe_path must reject the symlink.
+        let result = resolve_safe_path(tmp.path(), "evil.wowsreplay");
+        assert!(
+            result.is_err(),
+            "symlink pointing outside replays dir must be rejected"
+        );
     }
 
     // ── Integration tests ─────────────────────────────────────────────────────
@@ -677,6 +711,33 @@ mod tests {
         bridge.stop();
     }
 
+    /// A symlink placed inside the replays dir that points to an external file
+    /// must not be served over the loopback bridge (symlink path-escape, AC#3).
+    #[cfg(unix)]
+    #[test]
+    fn fetch_symlink_escape_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        // Create a sensitive file outside the replays dir.
+        let target = tmp.path().parent().unwrap().join("external_secret.txt");
+        fs::write(&target, b"should not be served").unwrap();
+        // Place a symlink with a .wowsreplay extension inside the replays dir.
+        symlink(&target, tmp.path().join("evil.wowsreplay")).unwrap();
+
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/evil.wowsreplay",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_ne!(
+            status, 200,
+            "symlink-escape: serving a symlink must not return 200"
+        );
+        bridge.stop();
+    }
+
     /// Verify that the public `start()` entry point falls back from 43210 to one
     /// of the fallback ports when 43210 is already occupied.
     #[test]
@@ -698,9 +759,10 @@ mod tests {
             .expect("start() must succeed by falling back to a higher port");
 
         assert_ne!(bridge.port(), 43210, "must not bind the occupied canonical port");
-        assert!(
-            FALLBACK_PORTS.contains(&bridge.port()),
-            "must bind one of the declared fallback ports, got {}",
+        assert_eq!(
+            bridge.port(),
+            43211,
+            "must bind the first fallback port (43211) when only 43210 is occupied, got {}",
             bridge.port()
         );
 
