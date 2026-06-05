@@ -1,4 +1,5 @@
 /// Tauri commands for first-start onboarding and replays-folder management.
+use crate::apply_replays_path;
 use bridge_core::{
     config::AppConfig,
     detection::{detect_replays_paths, validate_replays_folder, DetectedPath, SearchRoots},
@@ -70,6 +71,7 @@ pub fn confirm_replays_path(app: AppHandle, path: String) -> SetPathResult {
     cfg.replays_path = Some(candidate.clone());
     cfg.onboarding_done = true;
     save_config(&app, &cfg);
+    apply_replays_path(&app, candidate.clone());
 
     SetPathResult {
         ok: true,
@@ -117,6 +119,7 @@ pub fn pick_replays_folder(app: AppHandle) -> SetPathResult {
     cfg.replays_path = Some(folder_path.clone());
     cfg.onboarding_done = true;
     save_config(&app, &cfg);
+    apply_replays_path(&app, folder_path.clone());
 
     SetPathResult {
         ok: true,

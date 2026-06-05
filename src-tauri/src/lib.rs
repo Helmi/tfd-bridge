@@ -1,15 +1,26 @@
 mod commands;
 
 use bridge_core::server::{self, Bridge};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_store::StoreExt;
 
+// ── Bridge state ─────────────────────────────────────────────────────────────
+
+/// A running bridge paired with the path it is serving.
+struct ActiveBridge {
+    path: PathBuf,
+    bridge: Bridge,
+}
+
 /// Managed state that holds the bridge handle.
 /// `None` when the replays path is not yet configured.
-struct BridgeState(Mutex<Option<Bridge>>);
+struct BridgeState(Mutex<Option<ActiveBridge>>);
+
+// ── Tray state ────────────────────────────────────────────────────────────────
 
 /// Managed state for the launch-on-login tray item.
 /// Held so we can update the checkmark from the menu event handler.
@@ -19,6 +30,62 @@ struct LaunchOnLoginItem(Mutex<Option<CheckMenuItem<tauri::Wry>>>);
 
 const STORE_FILE: &str = "config.json";
 const KEY_LAUNCH_ON_LOGIN: &str = "launchOnLogin";
+
+// ── Bridge action logic ──────────────────────────────────────────────────────
+
+/// What should happen to the bridge when a new replays path is applied.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BridgeAction {
+    /// No bridge is running — start one.
+    Start,
+    /// The bridge is running on a different path — restart it.
+    Restart,
+    /// The bridge is already serving this exact path — nothing to do.
+    Noop,
+}
+
+/// Decide what bridge action to take based on the currently-served path and
+/// the newly-requested path.  Pure function — no I/O, easily testable.
+pub fn decide_bridge_action(current: Option<&Path>, requested: &Path) -> BridgeAction {
+    match current {
+        None => BridgeAction::Start,
+        Some(cur) if cur == requested => BridgeAction::Noop,
+        Some(_) => BridgeAction::Restart,
+    }
+}
+
+// ── Bridge management ────────────────────────────────────────────────────────
+
+/// Apply a new replays path: start, restart, or leave the bridge unchanged.
+/// Called from setup (on existing path) and from commands (after onboarding).
+pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
+    let state = app.state::<BridgeState>();
+    let mut guard = state.0.lock().unwrap();
+    let current = guard.as_ref().map(|ab| ab.path.as_path());
+    let action = decide_bridge_action(current, &path);
+
+    match action {
+        BridgeAction::Noop => {
+            log::info!("Bridge already serving {:?} — no change", path);
+        }
+        BridgeAction::Start | BridgeAction::Restart => {
+            // Stop the existing bridge (if any) before starting a new one.
+            if let Some(ab) = guard.take() {
+                ab.bridge.stop();
+            }
+            let dev_origin = std::env::var("TFD_BRIDGE_DEV_ORIGIN").ok();
+            match server::start(path.clone(), dev_origin) {
+                Ok(bridge) => {
+                    log::info!("Bridge started on port {}", bridge.port());
+                    *guard = Some(ActiveBridge { path, bridge });
+                }
+                Err(e) => {
+                    log::error!("Failed to start bridge: {e}");
+                }
+            }
+        }
+    }
+}
 
 // ── Autostart helpers ────────────────────────────────────────────────────────
 
@@ -94,6 +161,7 @@ pub fn run() {
             // ── Build tray menu ──────────────────────────────────────────────
             let launch_on_login_checked = read_launch_on_login(app.handle());
 
+            let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let launch_on_login = CheckMenuItem::with_id(
                 app,
                 "launch_on_login",
@@ -103,7 +171,7 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&launch_on_login, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &launch_on_login, &quit])?;
 
             // Store a reference to the check item so the event handler can
             // update the checkmark state without needing tray.menu().
@@ -113,6 +181,13 @@ pub fn run() {
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
                     "launch_on_login" => {
                         #[cfg(desktop)]
                         {
@@ -162,16 +237,7 @@ pub fn run() {
             // ── Start the bridge if onboarding is complete ──────────────────
             let cfg = commands::read_config(app.handle());
             if let Some(replays_path) = cfg.replays_path {
-                let dev_origin = std::env::var("TFD_BRIDGE_DEV_ORIGIN").ok();
-                match server::start(replays_path, dev_origin) {
-                    Ok(bridge) => {
-                        log::info!("Bridge started on port {}", bridge.port());
-                        *app.state::<BridgeState>().0.lock().unwrap() = Some(bridge);
-                    }
-                    Err(e) => {
-                        log::error!("Failed to start bridge: {e}");
-                    }
-                }
+                apply_replays_path(app.handle(), replays_path);
             }
 
             Ok(())
@@ -185,14 +251,14 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                if let Some(bridge) = app
+                if let Some(ab) = app
                     .state::<BridgeState>()
                     .0
                     .lock()
                     .unwrap()
                     .take()
                 {
-                    bridge.stop();
+                    ab.bridge.stop();
                 }
             }
         });
@@ -202,6 +268,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// Verify the pref-parsing logic: None → false (opt-in: OFF by default).
     #[test]
     fn launch_on_login_default_is_false() {
@@ -222,5 +290,32 @@ mod tests {
         let v = serde_json::json!(false);
         let result = Some(v).and_then(|v| v.as_bool()).unwrap_or(false);
         assert!(!result);
+    }
+
+    // ── decide_bridge_action tests ────────────────────────────────────────────
+
+    #[test]
+    fn bridge_action_start_when_no_current() {
+        let requested = Path::new("/game/replays");
+        assert_eq!(decide_bridge_action(None, requested), BridgeAction::Start);
+    }
+
+    #[test]
+    fn bridge_action_noop_when_same_path() {
+        let path = Path::new("/game/replays");
+        assert_eq!(
+            decide_bridge_action(Some(path), path),
+            BridgeAction::Noop
+        );
+    }
+
+    #[test]
+    fn bridge_action_restart_when_path_changes() {
+        let current = Path::new("/game/replays");
+        let new_path = Path::new("/other/replays");
+        assert_eq!(
+            decide_bridge_action(Some(current), new_path),
+            BridgeAction::Restart
+        );
     }
 }
