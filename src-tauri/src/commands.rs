@@ -16,6 +16,7 @@ const KEY_ONBOARDING_DONE: &str = "onboardingDone";
 // ── Response types ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OnboardingStatus {
     pub needs_onboarding: bool,
     pub detected: Vec<DetectedPath>,
@@ -23,6 +24,7 @@ pub struct OnboardingStatus {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SetPathResult {
     pub ok: bool,
     pub path: Option<PathBuf>,
@@ -177,5 +179,58 @@ fn platform_search_roots() -> SearchRoots {
             steam_roots: vec![],
             wgc_roots: vec![],
         }
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Guard the serde field-name contract. Tauri v2 does not auto-camelCase
+    /// return values; the struct must declare #[serde(rename_all = "camelCase")].
+    /// This test will fail if the derive attribute is removed.
+    #[test]
+    fn onboarding_status_serialises_camel_case() {
+        let status = OnboardingStatus {
+            needs_onboarding: true,
+            detected: vec![],
+            current_path: Some(std::path::PathBuf::from("/some/path")),
+        };
+        let v = serde_json::to_value(&status).expect("serialisation failed");
+        // camelCase keys must be present
+        assert!(
+            v.get("needsOnboarding").is_some(),
+            "expected 'needsOnboarding', got: {v}"
+        );
+        assert!(
+            v.get("currentPath").is_some(),
+            "expected 'currentPath', got: {v}"
+        );
+        // snake_case keys must NOT be present
+        assert!(
+            v.get("needs_onboarding").is_none(),
+            "snake_case 'needs_onboarding' must not appear in the serialised output"
+        );
+        assert!(
+            v.get("current_path").is_none(),
+            "snake_case 'current_path' must not appear in the serialised output"
+        );
+    }
+
+    #[test]
+    fn set_path_result_serialises_camel_case() {
+        let res = SetPathResult {
+            ok: true,
+            path: Some(std::path::PathBuf::from("/replays")),
+            error: None,
+        };
+        let v = serde_json::to_value(&res).expect("serialisation failed");
+        // Single-word fields are unchanged by camelCase, but the attribute must
+        // still be present and must not break serialisation.
+        assert!(v.get("ok").is_some());
+        assert!(v.get("path").is_some());
+        assert!(v.get("error").is_some());
     }
 }

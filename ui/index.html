@@ -120,10 +120,8 @@
 </div>
 
 <script>
-  // Tauri v2 invoke via global (withGlobalTauri not set; use the npm-less CDN approach)
-  // The Tauri IPC is available at window.__TAURI__ when packaged, but we call
-  // via __TAURI_INTERNALS__ bridge. For a simple no-build setup we use the
-  // window.__TAURI__.core.invoke path that Tauri v2 exposes.
+  // Tauri v2 IPC via window.__TAURI__.core.invoke — available because
+  // withGlobalTauri: true is set in tauri.conf.json.
   const invoke = (...args) => window.__TAURI__.core.invoke(...args);
 
   async function init() {

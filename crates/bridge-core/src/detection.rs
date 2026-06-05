@@ -59,19 +59,26 @@ impl SearchRoots {
                 PathBuf::from(r"C:\Program Files (x86)\Steam"),
                 PathBuf::from(r"C:\Program Files\Steam"),
             ],
-            wgc_roots: vec![wgc_appdata_default()],
+            // WGC installs WoWS to a user-chosen dir; the default is C:\Games\World_of_Warships.
+            // The replaysSettings dir value lives in the game's own preferences.xml, NOT in the
+            // WGC config dir (C:\ProgramData\Wargaming.net\GameCenter). We therefore list common
+            // WoWS game-install roots here. Programmatic WGC-metadata discovery (reading the WGC
+            // config to find an arbitrary install dir) is not implemented; the manual picker
+            // covers custom installs (AC#2). Verify on Windows T5.
+            wgc_roots: wgc_game_install_defaults(),
         }
     }
 }
 
-fn wgc_appdata_default() -> PathBuf {
-    // On Windows: %APPDATA%\Wargaming.net\GameCenter
-    // We use the env var here; on macOS it returns an empty path which is
-    // harmless (the directory won't exist).
-    let base = std::env::var("APPDATA").unwrap_or_default();
-    PathBuf::from(base)
-        .join("Wargaming.net")
-        .join("GameCenter")
+fn wgc_game_install_defaults() -> Vec<PathBuf> {
+    // C:\Games\World_of_Warships is the canonical WGC default install location.
+    // Additional common variants included for coverage.
+    vec![
+        PathBuf::from(r"C:\Games\World_of_Warships"),
+        PathBuf::from(r"C:\Games\WorldOfWarships"),
+        PathBuf::from(r"C:\Wargaming.net\WorldOfWarships"),
+        PathBuf::from(r"C:\Wargaming.net\World_of_Warships"),
+    ]
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
