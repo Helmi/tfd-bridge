@@ -3,9 +3,9 @@ mod commands;
 use bridge_core::server::{self, Bridge};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
 // ── Bridge state ─────────────────────────────────────────────────────────────
@@ -170,6 +170,8 @@ pub fn run() {
             let launch_on_login_checked = read_launch_on_login(app.handle());
 
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
+            let open_monitor =
+                MenuItem::with_id(app, "open_monitor", "Open Battle Monitor", true, None::<&str>)?;
             let launch_on_login = CheckMenuItem::with_id(
                 app,
                 "launch_on_login",
@@ -179,7 +181,9 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &launch_on_login, &quit])?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let menu =
+                Menu::with_items(app, &[&open, &open_monitor, &sep, &launch_on_login, &quit])?;
 
             // Store a reference to the check item so the event handler can
             // update the checkmark state without needing tray.menu().
@@ -194,6 +198,41 @@ pub fn run() {
                             let _ = window.unminimize();
                             let _ = window.show();
                             let _ = window.set_focus();
+                        }
+                    }
+                    "open_monitor" => {
+                        // If the window already exists (possibly hidden), bring it to the front.
+                        // Otherwise create a new one loading the remote monitor URL.
+                        //
+                        // SECURITY: This window has label "monitor", which is absent from every
+                        // capability's `windows` list (default.json only covers "main").
+                        // Tauri v2 grants no IPC permissions to windows not listed in any
+                        // capability, so the remote origin cannot invoke app commands.
+                        // `withGlobalTauri=true` injects window.__TAURI__ but invoke() calls
+                        // are blocked by the capability model — not by this code.
+                        //
+                        // NOTE: In-webview login depends on the identity provider permitting
+                        // requests from a desktop WebView user-agent. If engine.tfd.rocks blocks
+                        // embedded-webview login, users must log in via their browser; the local
+                        // bridge (the core feature) is unaffected either way.
+                        if let Some(win) = app.get_webview_window("monitor") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        } else {
+                            let url: tauri::Url =
+                                "https://engine.tfd.rocks/monitor".parse().unwrap();
+                            match WebviewWindowBuilder::new(
+                                app,
+                                "monitor",
+                                WebviewUrl::External(url),
+                            )
+                            .title("Battle Monitor")
+                            .inner_size(1280.0, 800.0)
+                            .build()
+                            {
+                                Ok(_) => {}
+                                Err(e) => log::error!("Failed to open monitor window: {e}"),
+                            }
                         }
                     }
                     "launch_on_login" => {
