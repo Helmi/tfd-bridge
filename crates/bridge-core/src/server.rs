@@ -7,7 +7,7 @@
 /// Endpoints
 ///   GET /v1/health             → JSON {name, version, capabilities}
 ///   GET /v1/replays            → JSON [{name, size, modified_ms}]  (*.wowsreplay + tempArenaInfo.json)
-///   GET /v1/replays/latest     → JSON {name, size, modified_ms} or 404
+///   GET /v1/replays/latest     → JSON {name, size, modified_ms} or 404  (newest *.wowsreplay; excludes the live file)
 ///   GET /v1/replays/{name}     → file bytes
 ///
 /// The `tempArenaInfo.json` file is the live battle roster written by WoWS at
@@ -282,12 +282,18 @@ fn handle_list(
 
 fn handle_latest(replays_dir: &Path) -> Response<std::io::Cursor<Vec<u8>>> {
     match list_replays(replays_dir) {
-        Ok(mut entries) => {
-            if entries.is_empty() {
+        Ok(entries) => {
+            // Only consider archive files — tempArenaInfo.json is excluded here
+            // even though list_replays() includes it for the /v1/replays list.
+            let mut archives: Vec<ReplayEntry> = entries
+                .into_iter()
+                .filter(|e| e.name.to_ascii_lowercase().ends_with(".wowsreplay"))
+                .collect();
+            if archives.is_empty() {
                 return make_json_response(StatusCode(404), r#"{"error":"no replays found"}"#, None);
             }
-            entries.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
-            let body = serde_json::to_string(&entries[0]).unwrap_or_default();
+            archives.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+            let body = serde_json::to_string(&archives[0]).unwrap_or_default();
             make_json_response(StatusCode(200), &body, None)
         }
         Err(e) => make_json_response(
@@ -711,6 +717,42 @@ mod tests {
         assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["name"], "new.wowsreplay");
+        bridge.stop();
+    }
+
+    /// Regression: /v1/replays/latest must return the newest .wowsreplay even
+    /// when a newer tempArenaInfo.json is also present in the directory.
+    #[test]
+    fn latest_ignores_temp_arena_info_prefers_wowsreplay() {
+        let tmp = TempDir::new().unwrap();
+        // Write the replay first (older mtime).
+        fs::write(tmp.path().join("battle.wowsreplay"), b"replay").unwrap();
+        // Small sleep to ensure mtime differs.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Write tempArenaInfo.json second so it has a newer mtime.
+        fs::write(tmp.path().join("tempArenaInfo.json"), b"{}").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/v1/replays/latest", bridge.port());
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["name"], "battle.wowsreplay",
+            "latest must return the .wowsreplay, not tempArenaInfo.json"
+        );
+        bridge.stop();
+    }
+
+    /// /v1/replays/latest returns 404 when the directory contains only
+    /// tempArenaInfo.json (no .wowsreplay archives).
+    #[test]
+    fn latest_returns_404_when_only_temp_arena_info_present() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("tempArenaInfo.json"), b"{}").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/v1/replays/latest", bridge.port());
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "latest must return 404 when no .wowsreplay archives exist");
         bridge.stop();
     }
 
