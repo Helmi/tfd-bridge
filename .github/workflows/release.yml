@@ -35,7 +35,7 @@ jobs:
           releaseBody: 'Windows installer — SmartScreen will show "More info → Run anyway" (unsigned for v1).'
           releaseDraft: false
           prerelease: true
-          uploadUpdaterJson: false
+          includeUpdaterJson: false
 
       - name: Upload installer as workflow artifact
         if: github.event_name == 'workflow_dispatch'
