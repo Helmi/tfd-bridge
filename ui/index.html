@@ -155,16 +155,29 @@
     if (detected && detected.length > 0) {
       document.getElementById('detected-section').style.display = 'block';
       const list = document.getElementById('candidates-list');
-      detected.forEach((d, i) => {
+      detected.forEach((d) => {
         const div = document.createElement('div');
         div.className = 'candidate';
-        div.innerHTML = `
-          <div class="source">${sourceLabel(d.source)}</div>
-          <div class="path">${d.path}</div>
-          <div class="actions" style="margin-top:0.5rem">
-            <button class="btn btn-primary btn-sm" data-path="${d.path}">Use this folder</button>
-          </div>`;
-        div.querySelector('button').addEventListener('click', () => confirmPath(d.path));
+
+        const src = document.createElement('div');
+        src.className = 'source';
+        src.textContent = sourceLabel(d.source);
+
+        const pathEl = document.createElement('div');
+        pathEl.className = 'path';
+        pathEl.textContent = d.path;
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        actions.style.marginTop = '0.5rem';
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-primary btn-sm';
+        btn.textContent = 'Use this folder';
+        btn.addEventListener('click', () => confirmPath(d.path));
+
+        actions.appendChild(btn);
+        div.append(src, pathEl, actions);
         list.appendChild(div);
       });
     } else {
