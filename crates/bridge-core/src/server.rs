@@ -19,9 +19,10 @@
 /// `https://engine.tfd.rocks`.  A secondary `dev_origin` can be passed for
 /// local development.  Requests from all other origins get no ACAO header.
 use notify::{RecursiveMode, Watcher};
+use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -29,6 +30,7 @@ use std::sync::{
 use std::thread;
 use std::time::UNIX_EPOCH;
 use tiny_http::{Header, Response, Server, StatusCode};
+use walkdir::WalkDir;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -133,7 +135,7 @@ fn start_on_ports(
     .map_err(|e| BridgeError::Watch(e.to_string()))?;
 
     watcher
-        .watch(&dir_clone, RecursiveMode::NonRecursive)
+        .watch(&dir_clone, RecursiveMode::Recursive)
         .map_err(|e| BridgeError::Watch(e.to_string()))?;
 
     // Spawn handler thread.
@@ -305,7 +307,16 @@ fn handle_latest(replays_dir: &Path) -> Response<std::io::Cursor<Vec<u8>>> {
 }
 
 fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    match resolve_safe_path(replays_dir, name) {
+    // Percent-decode the name: the monitor sends encodeURIComponent() so nested
+    // paths arrive as e.g. "13.1.0%2Ffile.wowsreplay".  Decode first, then
+    // resolve_safe_path validates component-by-component.
+    let decoded = match percent_decode_str(name).decode_utf8() {
+        Ok(s) => s.into_owned(),
+        Err(_) => {
+            return make_json_response(StatusCode(400), r#"{"error":"invalid UTF-8 in path"}"#, None);
+        }
+    };
+    match resolve_safe_path(replays_dir, &decoded) {
         Err(e) => make_json_response(StatusCode(400), &format!(r#"{{"error":"{}"}}"#, e), None),
         Ok(path) => {
             let mut file = match std::fs::File::open(&path) {
@@ -347,13 +358,24 @@ fn is_served_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// List all `.wowsreplay` files and `tempArenaInfo.json` in `dir`.
+/// List all `.wowsreplay` files and `tempArenaInfo.json` in `dir`, recursively.
+///
+/// Returns entries with forward-slash relative paths so that nested files
+/// appear as e.g. `"13.1.0/20260119_x.wowsreplay"`.  Symlinked directories
+/// are not followed (follow_links(false)) to prevent symlink escape.
 pub fn list_replays(dir: &Path) -> Result<Vec<ReplayEntry>, std::io::Error> {
     let mut entries = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
+    for result in WalkDir::new(dir).follow_links(false).min_depth(1) {
+        let entry = match result {
+            Ok(e) => e,
+            Err(_) => continue, // skip unreadable entries gracefully
+        };
+        // Skip symlinks (leaf files and dirs).
+        if entry.path_is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if is_served_file(&path) {
+        if entry.file_type().is_file() && is_served_file(path) {
             let meta = entry.metadata()?;
             let modified_ms = meta
                 .modified()
@@ -361,12 +383,18 @@ pub fn list_replays(dir: &Path) -> Result<Vec<ReplayEntry>, std::io::Error> {
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
+            // Build a forward-slash relative name from path components so it
+            // is correct on both Unix and Windows.
+            let rel = path.strip_prefix(dir).map_err(|e| {
+                std::io::Error::other(e.to_string())
+            })?;
+            let name = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             entries.push(ReplayEntry {
-                name: path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
+                name,
                 size: meta.len(),
                 modified_ms,
             });
@@ -375,44 +403,89 @@ pub fn list_replays(dir: &Path) -> Result<Vec<ReplayEntry>, std::io::Error> {
     Ok(entries)
 }
 
-/// Resolve a request name to an absolute path that is confirmed to live inside
-/// `replays_dir`.  Returns an error if the name contains any path separators,
-/// is absolute, or would escape the directory.
+/// Resolve a (possibly multi-segment, percent-decoded) relative path to an
+/// absolute path that is confirmed to live inside `replays_dir`.
+///
+/// # Security guarantees
+///
+/// - Rejects empty input.
+/// - Validates every path component: rejects `..` (`ParentDir`), absolute
+///   roots (`RootDir`), Windows drive prefixes (`Prefix`), and empty
+///   components.  Only `Normal` components are accepted.
+/// - Rejects backslash (`\`) anywhere in the input (on Windows `\` is a path
+///   separator — rejecting it here keeps behaviour consistent cross-platform).
+/// - After joining onto the *canonicalized* replays dir, if the file exists,
+///   canonicalizes the candidate and asserts it still starts with the
+///   canonicalized replays dir.  This catches symlink chains and intermediate
+///   symlinked directories that point outside.
+/// - Rejects leaf symlinks (file or directory symlink at the final path).
+/// - Non-existent files pass component validation and return the candidate
+///   path; the caller receives a 404 when opening.
 pub fn resolve_safe_path(replays_dir: &Path, name: &str) -> Result<PathBuf, String> {
-    // Reject multi-segment, absolute, or obviously traversal-flavoured names.
     if name.is_empty() {
         return Err("empty name".into());
     }
-    if name.contains('/') || name.contains('\\') {
-        return Err("name must be a single filename segment".into());
-    }
-    if Path::new(name).is_absolute() {
-        return Err("absolute paths are not allowed".into());
-    }
-    if name.contains("..") {
-        return Err("path traversal is not allowed".into());
+
+    // Reject backslash unconditionally: on Windows it is a path separator,
+    // so allowing it would bypass component-level validation on the real
+    // deployment target even though macOS treats it as a Normal character.
+    if name.contains('\\') {
+        return Err("backslash is not allowed in paths".into());
     }
 
-    // Canonicalize the replays dir and compute candidate.
+    // Validate every component of the relative path.
+    let rel = Path::new(name);
+    let mut validated_components: Vec<&std::ffi::OsStr> = Vec::new();
+    for component in rel.components() {
+        match component {
+            Component::Normal(seg) => {
+                validated_components.push(seg);
+            }
+            Component::ParentDir => {
+                return Err("path traversal is not allowed".into());
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err("absolute paths are not allowed".into());
+            }
+            Component::CurDir => {
+                // Silently skip "." segments — they are harmless but unusual.
+            }
+        }
+    }
+
+    if validated_components.is_empty() {
+        return Err("empty or root-only path".into());
+    }
+
+    // Canonicalize the replays dir so symlinks in its own path are resolved.
     let canonical_dir = replays_dir
         .canonicalize()
         .map_err(|e| format!("replays dir not accessible: {e}"))?;
-    let candidate = canonical_dir.join(name);
 
-    // Verify the result is still inside the replays dir.
-    // `starts_with` on a canonicalized parent is the safe check.
-    if !candidate.starts_with(&canonical_dir) {
-        return Err("path traversal is not allowed".into());
+    // Build the candidate by joining validated components.
+    let mut candidate = canonical_dir.clone();
+    for seg in &validated_components {
+        candidate.push(seg);
     }
 
-    // Reject symlinks: a symlink inside the replays dir could point to an
-    // arbitrary file elsewhere on the filesystem, bypassing the starts_with check.
-    // Use symlink_metadata (does not follow symlinks) and only reject when the
-    // file exists AND is a symlink; non-existent files are allowed through (they
-    // will 404 at open time).
+    // Reject leaf symlinks before attempting canonicalization: a symlink
+    // inside the replays dir could point to an arbitrary file elsewhere.
+    // symlink_metadata does NOT follow the link, so we see the link itself.
     if let Ok(meta) = std::fs::symlink_metadata(&candidate) {
         if meta.file_type().is_symlink() {
             return Err("symlinks are not allowed".into());
+        }
+    }
+
+    // If the target exists, canonicalize and confirm it is still inside the
+    // replays dir.  This catches intermediate symlinked directories that point
+    // outside and any remaining `..`-equivalent escape vectors.
+    if candidate.exists() {
+        let canonical_candidate = candidate
+            .canonicalize()
+            .map_err(|e| format!("cannot canonicalize path: {e}"))?;
+        if !canonical_candidate.starts_with(&canonical_dir) {
+            return Err("path traversal is not allowed".into());
         }
     }
 
@@ -491,10 +564,18 @@ mod tests {
         assert!(resolve_safe_path(tmp.path(), "../secret.txt").is_err());
     }
 
+    // Forward-slash nested paths are now ALLOWED (the resolver walks components
+    // and validates each one).  A safe nested path must resolve successfully.
     #[test]
-    fn resolve_safe_path_rejects_slash_in_name() {
+    fn resolve_safe_path_accepts_nested_path() {
         let tmp = TempDir::new().unwrap();
-        assert!(resolve_safe_path(tmp.path(), "sub/dir.wowsreplay").is_err());
+        let sub = tmp.path().join("13.1.0");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("battle.wowsreplay"), b"data").unwrap();
+        let result = resolve_safe_path(tmp.path(), "13.1.0/battle.wowsreplay");
+        assert!(result.is_ok(), "nested path must be accepted: {result:?}");
+        let p = result.unwrap();
+        assert!(p.starts_with(tmp.path().canonicalize().unwrap()));
     }
 
     #[test]
@@ -948,6 +1029,197 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         bridge.stop();
+    }
+
+    // ── Recursive listing tests ───────────────────────────────────────────────
+
+    /// list_replays must walk subdirectories and return forward-slash relative
+    /// paths for nested files.
+    #[test]
+    fn list_replays_recursive_returns_nested_files() {
+        let tmp = TempDir::new().unwrap();
+        // Top-level file
+        fs::write(tmp.path().join("top.wowsreplay"), b"top").unwrap();
+        // Nested file under a version subdirectory
+        let sub = tmp.path().join("13.1.0");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("nested.wowsreplay"), b"nested").unwrap();
+        // Ignored file
+        fs::write(tmp.path().join("readme.txt"), b"ignored").unwrap();
+
+        let entries = list_replays(tmp.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"top.wowsreplay"), "top-level file must be listed");
+        assert!(
+            names.contains(&"13.1.0/nested.wowsreplay"),
+            "nested file must use forward-slash: {names:?}"
+        );
+    }
+
+    /// GET /v1/replays must include nested files with forward-slash names.
+    #[test]
+    fn list_endpoint_returns_nested_files() {
+        let tmp = TempDir::new().unwrap();
+        let sub = tmp.path().join("13.1.0");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("nested.wowsreplay"), b"data").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/v1/replays", bridge.port());
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let replays = v["replays"].as_array().unwrap();
+        let names: Vec<&str> = replays.iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert!(
+            names.contains(&"13.1.0/nested.wowsreplay"),
+            "nested file must appear in list with forward-slash path: {names:?}"
+        );
+        bridge.stop();
+    }
+
+    /// GET /v1/replays/{url-encoded nested path} must return the file bytes.
+    #[test]
+    fn fetch_nested_file_returns_bytes() {
+        let tmp = TempDir::new().unwrap();
+        let sub = tmp.path().join("13.1.0");
+        fs::create_dir_all(&sub).unwrap();
+        let content = b"nested replay bytes";
+        fs::write(sub.join("battle.wowsreplay"), content).unwrap();
+        let bridge = start_test_bridge(&tmp);
+        // The monitor sends encodeURIComponent("13.1.0/battle.wowsreplay")
+        // which encodes the "/" as "%2F".
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/13.1.0%2Fbattle.wowsreplay",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200, "nested file must be served");
+        assert_eq!(body.as_bytes(), content);
+        bridge.stop();
+    }
+
+    /// Nested traversal attempts must be rejected.
+    #[test]
+    fn fetch_nested_traversal_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        // "13.1.0/../../secret" encodes as "13.1.0%2F..%2F..%2Fsecret"
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/13.1.0%2F..%2F..%2Fsecret",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_ne!(status, 200, "nested traversal must not return 200");
+        bridge.stop();
+    }
+
+    /// "../secret" (bare traversal) must be rejected even when percent-encoded.
+    #[test]
+    fn fetch_bare_traversal_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/..%2Fsecret.txt",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_ne!(status, 200, "bare traversal must not return 200");
+        bridge.stop();
+    }
+
+    /// resolve_safe_path must reject a path with ".." in the middle of nested segments.
+    #[test]
+    fn resolve_safe_path_rejects_nested_dotdot() {
+        let tmp = TempDir::new().unwrap();
+        let sub = tmp.path().join("13.1.0");
+        fs::create_dir_all(&sub).unwrap();
+        assert!(
+            resolve_safe_path(tmp.path(), "13.1.0/../../secret").is_err(),
+            "nested .. must be rejected"
+        );
+    }
+
+    /// resolve_safe_path must reject absolute paths.
+    #[test]
+    fn resolve_safe_path_rejects_absolute_path() {
+        let tmp = TempDir::new().unwrap();
+        assert!(
+            resolve_safe_path(tmp.path(), "/etc/passwd").is_err(),
+            "absolute path must be rejected"
+        );
+    }
+
+    /// The recursive watcher must bump generation when a file is created in a subfolder.
+    #[test]
+    fn watch_generation_increments_on_nested_create() {
+        let tmp = TempDir::new().unwrap();
+        let sub = tmp.path().join("13.1.0");
+        fs::create_dir_all(&sub).unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let initial_gen = bridge.generation();
+        // Create a replay in the subfolder.
+        fs::write(sub.join("new_battle.wowsreplay"), b"data").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if bridge.generation() > initial_gen {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("generation did not increment within 5 seconds after nested create");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        bridge.stop();
+    }
+
+    /// The recursive watcher must bump generation when a nested replay is deleted.
+    #[test]
+    fn watch_generation_increments_on_nested_delete() {
+        let tmp = TempDir::new().unwrap();
+        let sub = tmp.path().join("13.1.0");
+        fs::create_dir_all(&sub).unwrap();
+        let replay = sub.join("old_battle.wowsreplay");
+        fs::write(&replay, b"data").unwrap();
+        // Start bridge after file exists so no create event pollutes the baseline.
+        let bridge = start_test_bridge(&tmp);
+        let initial_gen = bridge.generation();
+        fs::remove_file(&replay).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if bridge.generation() > initial_gen {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("generation did not increment within 5 seconds after nested delete");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        bridge.stop();
+    }
+
+    /// A symlinked subdirectory inside the replays dir pointing outside must not
+    /// allow files inside it to be listed or fetched.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_safe_path_rejects_symlinked_subdir_escape() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        // Create a secret directory outside the replays dir with a file inside.
+        let outside_dir = tmp.path().parent().unwrap().join("outside_dir");
+        fs::create_dir_all(&outside_dir).unwrap();
+        fs::write(outside_dir.join("secret.wowsreplay"), b"secret").unwrap();
+        // Symlink the outside directory INTO the replays dir.
+        let evil_sub = tmp.path().join("evil");
+        symlink(&outside_dir, &evil_sub).unwrap();
+
+        // Accessing a file through the symlinked directory must be rejected.
+        let result = resolve_safe_path(tmp.path(), "evil/secret.wowsreplay");
+        assert!(
+            result.is_err(),
+            "file accessed through a symlinked subdir pointing outside must be rejected"
+        );
     }
 
     /// /v1/health capabilities must include "live-v1".

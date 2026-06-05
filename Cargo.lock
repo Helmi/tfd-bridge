@@ -235,12 +235,14 @@ version = "0.1.0"
 dependencies = [
  "log",
  "notify",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tiny_http",
  "ureq",
+ "walkdir",
 ]
 
 [[package]]
