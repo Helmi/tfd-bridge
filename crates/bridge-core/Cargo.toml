@@ -2,7 +2,13 @@
 name = "bridge-core"
 version = "0.1.0"
 edition = "2021"
-description = "Placeholder for future TFD Bridge capability modules"
+description = "OS-agnostic logic for the TFD Bridge: detection, parsing, config"
 license = "MIT"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1.0"

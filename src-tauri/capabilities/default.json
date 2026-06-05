@@ -1,11 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "Default capability for TFD Bridge main window",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-open",
+    "store:allow-load",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-save"
   ]
 }

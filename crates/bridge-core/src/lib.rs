@@ -1,7 +1,7 @@
-/// Placeholder for future TFD Bridge capability modules.
-///
-/// This crate will host OS-agnostic logic for the local replay bridge,
-/// file watching, and wows-toolkit integration in follow-up tasks.
+pub mod config;
+pub mod detection;
+pub mod vdf;
+
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

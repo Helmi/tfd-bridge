@@ -4,8 +4,227 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TFD Bridge</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    .card {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 540px;
+      width: 100%;
+    }
+    h1 { font-size: 1.4rem; color: #e94560; margin-bottom: 0.4rem; }
+    p  { color: #a0a0b0; font-size: 0.9rem; line-height: 1.5; margin-bottom: 1rem; }
+    .status-running {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      color: #4caf50;
+      font-size: 0.95rem;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #4caf50;
+      flex-shrink: 0;
+    }
+    .section { margin-top: 1.5rem; }
+    .section h2 { font-size: 1rem; color: #c0c0d0; margin-bottom: 0.75rem; }
+    .candidate {
+      background: #0f3460;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.5rem;
+      font-size: 0.85rem;
+      word-break: break-all;
+    }
+    .candidate .source {
+      font-size: 0.75rem;
+      color: #8090b0;
+      margin-bottom: 0.25rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .candidate .path { color: #e0e0f0; }
+    .btn {
+      display: inline-block;
+      padding: 0.5rem 1.1rem;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary   { background: #e94560; color: #fff; }
+    .btn-secondary { background: #0f3460; color: #c0d0f0; border: 1px solid #1a4a80; }
+    .btn-sm { padding: 0.35rem 0.8rem; font-size: 0.8rem; }
+    .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+    .error { color: #ff6b6b; font-size: 0.85rem; margin-top: 0.5rem; }
+    #main-status { display: none; }
+    #onboarding  { display: none; }
+  </style>
 </head>
 <body>
-  <p>TFD Bridge is running.</p>
+<div class="card">
+  <h1>TFD Bridge</h1>
+  <p>Local companion for the TFD World of Warships community.</p>
+
+  <!-- Running state (onboarding already done) -->
+  <div id="main-status">
+    <div class="status-running"><span class="dot"></span> Bridge is running.</div>
+    <div class="section">
+      <h2>Replays folder</h2>
+      <div id="current-path" class="candidate" style="display:none">
+        <div class="source">configured</div>
+        <div class="path" id="current-path-text"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-start onboarding -->
+  <div id="onboarding">
+    <div class="section">
+      <h2>Set up replays folder</h2>
+      <p>TFD Bridge needs access to your World of Warships replays folder.</p>
+
+      <!-- Auto-detected candidates -->
+      <div id="detected-section" style="display:none">
+        <p style="margin-bottom:0.5rem">Found automatically:</p>
+        <div id="candidates-list"></div>
+      </div>
+
+      <!-- No candidates found -->
+      <div id="no-detect-msg" style="display:none">
+        <p>No WoWS installation was detected automatically.</p>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-secondary" id="btn-pick">Browse…</button>
+      </div>
+      <div id="error-msg" class="error" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Tauri v2 IPC via window.__TAURI__.core.invoke — available because
+  // withGlobalTauri: true is set in tauri.conf.json.
+  const invoke = (...args) => window.__TAURI__.core.invoke(...args);
+
+  async function init() {
+    try {
+      const status = await invoke('get_onboarding_status');
+
+      if (!status.needsOnboarding) {
+        showRunning(status.currentPath);
+      } else {
+        showOnboarding(status.detected);
+      }
+    } catch (err) {
+      console.error('Failed to get onboarding status:', err);
+      // Show onboarding as fallback
+      showOnboarding([]);
+    }
+  }
+
+  function showRunning(path) {
+    document.getElementById('main-status').style.display = 'block';
+    if (path) {
+      const el = document.getElementById('current-path');
+      document.getElementById('current-path-text').textContent = path;
+      el.style.display = 'block';
+    }
+  }
+
+  function showOnboarding(detected) {
+    document.getElementById('onboarding').style.display = 'block';
+
+    if (detected && detected.length > 0) {
+      document.getElementById('detected-section').style.display = 'block';
+      const list = document.getElementById('candidates-list');
+      detected.forEach((d, i) => {
+        const div = document.createElement('div');
+        div.className = 'candidate';
+        div.innerHTML = `
+          <div class="source">${sourceLabel(d.source)}</div>
+          <div class="path">${d.path}</div>
+          <div class="actions" style="margin-top:0.5rem">
+            <button class="btn btn-primary btn-sm" data-path="${d.path}">Use this folder</button>
+          </div>`;
+        div.querySelector('button').addEventListener('click', () => confirmPath(d.path));
+        list.appendChild(div);
+      });
+    } else {
+      document.getElementById('no-detect-msg').style.display = 'block';
+    }
+  }
+
+  function sourceLabel(src) {
+    switch (src) {
+      case 'steam':            return 'Steam';
+      case 'steam_fallback':   return 'Steam (default path)';
+      case 'wargaming_game_center': return 'Wargaming Game Center';
+      default: return src;
+    }
+  }
+
+  async function confirmPath(path) {
+    clearError();
+    try {
+      const result = await invoke('confirm_replays_path', { path });
+      if (result.ok) {
+        document.getElementById('onboarding').style.display = 'none';
+        showRunning(result.path);
+      } else if (result.error) {
+        showError(result.error);
+      }
+    } catch (err) {
+      showError(String(err));
+    }
+  }
+
+  document.getElementById('btn-pick').addEventListener('click', async () => {
+    clearError();
+    try {
+      const result = await invoke('pick_replays_folder');
+      if (result.ok) {
+        document.getElementById('onboarding').style.display = 'none';
+        showRunning(result.path);
+      } else if (result.error) {
+        showError(result.error);
+      }
+      // result.ok false + no error = user cancelled; do nothing
+    } catch (err) {
+      showError(String(err));
+    }
+  });
+
+  function showError(msg) {
+    const el = document.getElementById('error-msg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function clearError() {
+    const el = document.getElementById('error-msg');
+    el.textContent = '';
+    el.style.display = 'none';
+  }
+
+  init();
+</script>
 </body>
 </html>
