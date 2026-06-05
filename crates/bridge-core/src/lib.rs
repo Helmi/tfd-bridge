@@ -1,5 +1,6 @@
 pub mod config;
 pub mod detection;
+pub mod server;
 pub mod vdf;
 
 pub fn version() -> &'static str {

@@ -127,6 +127,12 @@ pub fn pick_replays_folder(app: AppHandle) -> SetPathResult {
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
+/// Read the persisted config.  Exposed so `lib.rs` can check the replays path
+/// at startup without duplicating store access logic.
+pub fn read_config(app: &AppHandle) -> AppConfig {
+    load_config(app)
+}
+
 fn load_config(app: &AppHandle) -> AppConfig {
     let store = match app.store(STORE_FILE) {
         Ok(s) => s,
