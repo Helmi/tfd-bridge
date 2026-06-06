@@ -5,124 +5,432 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TFD Bridge</title>
   <style>
+    /* ── Bundled brand font (Space Grotesk, matches engine.tfd.rocks) ───────── */
+    @font-face {
+      font-family: "Space Grotesk";
+      font-style: normal;
+      font-weight: 300 700;
+      font-display: swap;
+      src: url("fonts/space-grotesk.woff2") format("woff2");
+    }
+
+    /* ── Brand tokens (derived from engine.tfd.rocks dark theme) ───────────── */
+    :root {
+      --bg:            #05070e;
+      --bg-grad:       #0b1018;
+      --surface:       #0e1624;
+      --surface-2:     #11192a;
+      --border:        rgba(255, 255, 255, 0.10);
+      --border-strong: rgba(255, 255, 255, 0.16);
+      --fg:            #dfe6e8;
+      --fg-muted:      #8a949a;
+      --fg-faint:      #5e676d;
+      --accent:        #00d1a7;
+      --accent-hi:     #1ce6bd;
+      --accent-fg:     #04130f;
+      --accent-soft:   rgba(0, 209, 167, 0.12);
+      --danger:        #e05563;
+      --topbar-h:      40px;
+      --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { height: 100%; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #1a1a2e;
-      color: #e0e0e0;
+      font-family: var(--font-sans);
+      color: var(--fg);
+      background:
+        radial-gradient(120% 90% at 50% -10%, var(--bg-grad) 0%, var(--bg) 60%);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Frameless topbar ──────────────────────────────────────────────────── */
+    .topbar {
+      height: var(--topbar-h);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 0.45rem 0 0.85rem;
+      background: rgba(5, 7, 14, 0.72);
+      border-bottom: 1px solid var(--border);
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    /* Brand sits inside the drag region; pointer-events:none lets the mousedown
+       fall through to the topbar so dragging works even over the logo/title. */
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      pointer-events: none;
+    }
+    .topbar-brand svg { display: block; width: 18px; height: 18px; }
+    .topbar-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--fg);
+    }
+    .topbar-title .accent { color: var(--accent); }
+
+    .win-controls { display: flex; align-items: center; gap: 2px; }
+    .win-btn {
+      width: 30px;
+      height: 28px;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      padding: 2rem;
+      border: none;
+      background: transparent;
+      color: var(--fg-muted);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
     }
+    .win-btn svg { display: block; width: 12px; height: 12px; }
+    .win-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--fg); }
+    .win-btn.close:hover { background: var(--danger); color: #fff; }
+
+    /* ── Content ───────────────────────────────────────────────────────────── */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 1.75rem 1.75rem;
+      display: flex;
+      justify-content: center;
+    }
+    .shell { width: 100%; max-width: 560px; }
+
+    .lede {
+      margin-bottom: 1.25rem;
+    }
+    .lede h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--fg);
+    }
+    .lede h1 .accent { color: var(--accent); }
+    .lede p {
+      margin-top: 0.3rem;
+      color: var(--fg-muted);
+      font-size: 0.86rem;
+      line-height: 1.5;
+    }
+
     .card {
-      background: #16213e;
-      border: 1px solid #0f3460;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 2rem;
-      max-width: 540px;
-      width: 100%;
+      padding: 1.1rem 1.2rem;
+      margin-bottom: 0.85rem;
     }
-    h1 { font-size: 1.4rem; color: #e94560; margin-bottom: 0.4rem; }
-    p  { color: #a0a0b0; font-size: 0.9rem; line-height: 1.5; margin-bottom: 1rem; }
-    .status-running {
+    .card-head {
       display: flex;
       align-items: center;
-      gap: 0.6rem;
-      color: #4caf50;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .card h2 {
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--fg-faint);
+    }
+
+    /* Status row */
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
       font-size: 0.95rem;
+      font-weight: 500;
     }
     .dot {
-      width: 10px; height: 10px;
+      width: 9px; height: 9px;
       border-radius: 50%;
-      background: #4caf50;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
       flex-shrink: 0;
     }
-    .section { margin-top: 1.5rem; }
-    .section h2 { font-size: 1rem; color: #c0c0d0; margin-bottom: 0.75rem; }
-    .candidate {
-      background: #0f3460;
+
+    /* Replays-path display */
+    .path-row { margin-top: 0.85rem; }
+    .path-box {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 0.75rem 1rem;
-      margin-bottom: 0.5rem;
-      font-size: 0.85rem;
+      padding: 0.6rem 0.8rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--fg);
       word-break: break-all;
+      line-height: 1.45;
     }
-    .candidate .source {
-      font-size: 0.75rem;
-      color: #8090b0;
-      margin-bottom: 0.25rem;
+    .path-source {
+      font-size: 0.68rem;
+      letter-spacing: 0.05em;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      color: var(--fg-faint);
+      margin-bottom: 0.3rem;
+      font-family: var(--font-sans);
     }
-    .candidate .path { color: #e0e0f0; }
+
+    /* Onboarding candidates */
+    .candidate {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.7rem 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+    .candidate:last-child { margin-bottom: 0; }
+    .candidate .path {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--fg);
+      word-break: break-all;
+      margin-top: 0.15rem;
+    }
+    .hint {
+      color: var(--fg-muted);
+      font-size: 0.84rem;
+      line-height: 1.5;
+      margin-bottom: 0.8rem;
+    }
+
+    /* ── Buttons ───────────────────────────────────────────────────────────── */
     .btn {
-      display: inline-block;
-      padding: 0.5rem 1.1rem;
-      border-radius: 6px;
-      border: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      padding: 0.55rem 1.05rem;
+      border-radius: 8px;
+      border: 1px solid transparent;
       cursor: pointer;
-      font-size: 0.875rem;
+      font-family: var(--font-sans);
+      font-size: 0.85rem;
       font-weight: 600;
-      transition: opacity 0.15s;
+      line-height: 1;
+      transition: background 0.13s, border-color 0.13s, color 0.13s, opacity 0.13s;
     }
-    .btn:hover { opacity: 0.85; }
-    .btn-primary   { background: #e94560; color: #fff; }
-    .btn-secondary { background: #0f3460; color: #c0d0f0; border: 1px solid #1a4a80; }
-    .btn-sm { padding: 0.35rem 0.8rem; font-size: 0.8rem; }
-    .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
-    .error { color: #ff6b6b; font-size: 0.85rem; margin-top: 0.5rem; }
+    .btn svg { width: 15px; height: 15px; display: block; }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--accent-fg);
+    }
+    .btn-primary:hover { background: var(--accent-hi); }
+    .btn-secondary {
+      background: transparent;
+      color: var(--fg);
+      border-color: var(--border-strong);
+    }
+    .btn-secondary:hover { background: rgba(255, 255, 255, 0.06); }
+    .btn-sm { padding: 0.4rem 0.85rem; font-size: 0.8rem; }
+    .btn[disabled] {
+      cursor: default;
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .btn-block { width: 100%; }
+
+    .actions { display: flex; gap: 0.55rem; margin-top: 0.85rem; flex-wrap: wrap; }
+
+    .badge-soon {
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--fg-faint);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.12rem 0.45rem;
+    }
+
+    /* ── Launch-on-login toggle (visual slot — wired in a later task) ──────── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .toggle-row .label { font-size: 0.88rem; font-weight: 500; color: var(--fg); }
+    .toggle-row .sub { font-size: 0.78rem; color: var(--fg-muted); margin-top: 0.15rem; }
+    .switch {
+      position: relative;
+      width: 40px; height: 22px;
+      flex-shrink: 0;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-strong);
+      cursor: default;
+      opacity: 0.55;
+    }
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--fg-muted);
+      transition: transform 0.15s;
+    }
+
+    .error {
+      color: var(--danger);
+      font-size: 0.83rem;
+      margin-top: 0.7rem;
+    }
+
     #main-status { display: none; }
     #onboarding  { display: none; }
   </style>
 </head>
 <body>
-<div class="card">
-  <h1>TFD Bridge</h1>
-  <p>Local companion for the TFD World of Warships community.</p>
 
-  <!-- Running state (onboarding already done) -->
-  <div id="main-status">
-    <div class="status-running"><span class="dot"></span> Bridge is running.</div>
-    <div class="section">
-      <h2>Replays folder</h2>
-      <div id="current-path" class="candidate" style="display:none">
-        <div class="source">configured</div>
-        <div class="path" id="current-path-text"></div>
+  <!-- ── Frameless custom topbar ──────────────────────────────────────────── -->
+  <header class="topbar" data-tauri-drag-region>
+    <div class="topbar-brand" data-tauri-drag-region>
+      <svg viewBox="0 0 24 24" fill="none" stroke="#00d1a7" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 10.189V14" />
+        <path d="M12 2v3" />
+        <path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6" />
+        <path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76" />
+        <path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" />
+      </svg>
+      <span class="topbar-title">TFD <span class="accent">Bridge</span></span>
+    </div>
+    <div class="win-controls">
+      <button class="win-btn" id="win-minimize" type="button" title="Minimize" aria-label="Minimize">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+          <line x1="2" y1="6" x2="10" y2="6" />
+        </svg>
+      </button>
+      <button class="win-btn close" id="win-close" type="button" title="Close to tray" aria-label="Close to tray">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+          <line x1="3" y1="3" x2="9" y2="9" />
+          <line x1="9" y1="3" x2="3" y2="9" />
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Dashboard ────────────────────────────────────────────────────────── -->
+  <main class="content">
+    <div class="shell">
+      <div class="lede">
+        <h1>TFD <span class="accent">Bridge</span></h1>
+        <p>Local companion for the TFD World of Warships community.</p>
+      </div>
+
+      <!-- Running state (onboarding already done) -->
+      <div id="main-status">
+        <div class="card">
+          <div class="status"><span class="dot"></span> Bridge is running</div>
+          <div class="path-row" id="current-path" style="display:none">
+            <div class="path-source">Replays folder</div>
+            <div class="path-box" id="current-path-text"></div>
+          </div>
+        </div>
+
+        <!-- Open Battle Monitor — primary action slot (wired in a later task) -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Battle Monitor</h2>
+            <span class="badge-soon">Soon</span>
+          </div>
+          <p class="hint" style="margin-top:0.6rem;margin-bottom:0.85rem">
+            Open the live Battle Monitor for real-time match tracking.
+          </p>
+          <button class="btn btn-primary btn-block" id="btn-open-monitor" type="button" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 3h6v6" />
+              <path d="M10 14 21 3" />
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            </svg>
+            Open Battle Monitor
+          </button>
+        </div>
+
+        <!-- Launch-on-login — onboarding toggle slot (wired in a later task) -->
+        <div class="card">
+          <div class="toggle-row">
+            <div>
+              <div class="label">
+                Launch on login
+                <span class="badge-soon" style="margin-left:0.4rem">Soon</span>
+              </div>
+              <div class="sub">Start TFD Bridge automatically when you sign in.</div>
+            </div>
+            <div class="switch" id="toggle-launch" aria-hidden="true"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- First-start onboarding -->
+      <div id="onboarding">
+        <div class="card">
+          <div class="card-head">
+            <h2>Set up replays folder</h2>
+          </div>
+          <p class="hint" style="margin-top:0.6rem">
+            TFD Bridge needs access to your World of Warships replays folder.
+          </p>
+
+          <!-- Auto-detected candidates -->
+          <div id="detected-section" style="display:none">
+            <div class="path-source" style="margin-bottom:0.5rem">Found automatically</div>
+            <div id="candidates-list"></div>
+          </div>
+
+          <!-- No candidates found -->
+          <div id="no-detect-msg" style="display:none">
+            <p class="hint">No WoWS installation was detected automatically.</p>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn-secondary" id="btn-pick" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+              </svg>
+              Browse…
+            </button>
+          </div>
+          <div id="error-msg" class="error" style="display:none"></div>
+        </div>
       </div>
     </div>
-  </div>
-
-  <!-- First-start onboarding -->
-  <div id="onboarding">
-    <div class="section">
-      <h2>Set up replays folder</h2>
-      <p>TFD Bridge needs access to your World of Warships replays folder.</p>
-
-      <!-- Auto-detected candidates -->
-      <div id="detected-section" style="display:none">
-        <p style="margin-bottom:0.5rem">Found automatically:</p>
-        <div id="candidates-list"></div>
-      </div>
-
-      <!-- No candidates found -->
-      <div id="no-detect-msg" style="display:none">
-        <p>No WoWS installation was detected automatically.</p>
-      </div>
-
-      <div class="actions">
-        <button class="btn btn-secondary" id="btn-pick">Browse…</button>
-      </div>
-      <div id="error-msg" class="error" style="display:none"></div>
-    </div>
-  </div>
-</div>
+  </main>
 
 <script>
   // Tauri v2 IPC via window.__TAURI__.core.invoke — available because
   // withGlobalTauri: true is set in tauri.conf.json.
   const invoke = (...args) => window.__TAURI__.core.invoke(...args);
+
+  // ── Frameless window controls ─────────────────────────────────────────────
+  // getCurrentWindow() comes from the global Tauri API (withGlobalTauri).
+  // .close() routes through the Rust CloseRequested handler, which prevents the
+  // close and hides the window to the tray (see src-tauri/src/lib.rs).
+  const appWindow = window.__TAURI__.window.getCurrentWindow();
+  document.getElementById('win-minimize').addEventListener('click', () => {
+    appWindow.minimize();
+  });
+  document.getElementById('win-close').addEventListener('click', () => {
+    appWindow.close();
+  });
 
   async function init() {
     try {
@@ -160,7 +468,7 @@
         div.className = 'candidate';
 
         const src = document.createElement('div');
-        src.className = 'source';
+        src.className = 'path-source';
         src.textContent = sourceLabel(d.source);
 
         const pathEl = document.createElement('div');
@@ -169,10 +477,10 @@
 
         const actions = document.createElement('div');
         actions.className = 'actions';
-        actions.style.marginTop = '0.5rem';
 
         const btn = document.createElement('button');
         btn.className = 'btn btn-primary btn-sm';
+        btn.type = 'button';
         btn.textContent = 'Use this folder';
         btn.addEventListener('click', () => confirmPath(d.path));
 
