@@ -28,7 +28,7 @@ Versioning follows [SemVer](https://semver.org/).
 ## [0.1.1] — 2026-06-05
 
 ### Added
-- Live battle detection: `/v1/tempArenaInfo` serves `tempArenaInfo.json` when a battle is in progress.
+- Live battle detection: `tempArenaInfo.json` is now included in the `/v1/replays` listing and served via `GET /v1/replays/tempArenaInfo.json` when a battle is in progress.
 
 ### Fixed
 - `/v1/replays/latest` is now archive-only (no longer returns `tempArenaInfo.json`).
