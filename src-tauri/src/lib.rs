@@ -2,6 +2,7 @@ mod commands;
 
 use bridge_core::server::{self, Bridge};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -97,6 +98,12 @@ struct BridgeState(Mutex<Option<ActiveBridge>>);
 /// Managed state for the launch-on-login tray item.
 /// Held so we can update the checkmark from the menu event handler.
 struct LaunchOnLoginItem(Mutex<Option<CheckMenuItem<tauri::Wry>>>);
+
+/// Set to `true` just before `app.exit()` (from the tray Quit item).
+/// The window-close handler checks this: while `false` it closes-to-tray
+/// (prevent_close + hide); once `true` it lets every window close so the
+/// exit is not vetoed by `prevent_close` (which deadlocks shutdown).
+struct Quitting(AtomicBool);
 
 // ── Store constants ─────────────────────────────────────────────────────────
 
@@ -277,10 +284,17 @@ pub fn run() {
 
     builder
         .manage(LaunchOnLoginItem(Mutex::new(None)))
+        .manage(Quitting(AtomicBool::new(false)))
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Hide instead of destroying the window so the tray Open item
-                // can revive it and the app stays alive in the tray.
+                // Once Quit has set the flag, do NOT prevent the close: vetoing
+                // it here deadlocks `app.exit()` (each window would veto its own
+                // close), which is what made the app unquittable. Let it close.
+                if window.state::<Quitting>().0.load(Ordering::SeqCst) {
+                    return;
+                }
+                // Otherwise close-to-tray: keep the app alive in the tray so the
+                // tray "Open" item can revive the window.
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -373,6 +387,9 @@ pub fn run() {
                         set_launch_on_login_internal(app, !currently_enabled);
                     }
                     "quit" => {
+                        // Mark quitting so the window-close handler stops vetoing
+                        // closes, then exit (RunEvent::Exit stops the bridge).
+                        app.state::<Quitting>().0.store(true, Ordering::SeqCst);
                         app.exit(0);
                     }
                     _ => {}
