@@ -13,6 +13,7 @@ use tauri_plugin_store::StoreExt;
 const STORE_FILE: &str = "config.json";
 const KEY_REPLAYS_PATH: &str = "replaysPath";
 const KEY_ONBOARDING_DONE: &str = "onboardingDone";
+const KEY_LAUNCH_ON_LOGIN: &str = "launchOnLogin";
 
 // ── Response types ─────────────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ pub struct OnboardingStatus {
     pub needs_onboarding: bool,
     pub detected: Vec<DetectedPath>,
     pub current_path: Option<PathBuf>,
+    pub launch_on_login: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,6 +40,7 @@ pub struct SetPathResult {
 #[tauri::command]
 pub fn get_onboarding_status(app: AppHandle) -> OnboardingStatus {
     let cfg = load_config(&app);
+    let launch_on_login = read_launch_on_login_pref(&app);
 
     let detected = if cfg.needs_onboarding() {
         let roots = platform_search_roots();
@@ -50,7 +53,15 @@ pub fn get_onboarding_status(app: AppHandle) -> OnboardingStatus {
         needs_onboarding: cfg.needs_onboarding(),
         detected,
         current_path: cfg.replays_path,
+        launch_on_login,
     }
+}
+
+/// Enable or disable launch-on-login. Toggles OS autostart, persists the pref,
+/// and syncs the tray checkmark via the shared helper.
+#[tauri::command]
+pub fn set_launch_on_login(app: AppHandle, enabled: bool) {
+    crate::set_launch_on_login_internal(&app, enabled);
 }
 
 /// Confirm a detected or manually entered path and persist it.
@@ -174,6 +185,17 @@ fn save_config(app: &AppHandle, cfg: &AppConfig) {
     }
 }
 
+/// Read the persisted launch-on-login pref from the store.
+fn read_launch_on_login_pref(app: &AppHandle) -> bool {
+    let Ok(store) = app.store(STORE_FILE) else {
+        return false;
+    };
+    store
+        .get(KEY_LAUNCH_ON_LOGIN)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 /// Returns the platform-appropriate search roots.
 /// On non-Windows platforms this returns empty roots — detection simply
 /// finds nothing, which is the correct behaviour on macOS in production.
@@ -206,6 +228,7 @@ mod tests {
             needs_onboarding: true,
             detected: vec![],
             current_path: Some(std::path::PathBuf::from("/some/path")),
+            launch_on_login: false,
         };
         let v = serde_json::to_value(&status).expect("serialisation failed");
         // camelCase keys must be present
@@ -217,6 +240,10 @@ mod tests {
             v.get("currentPath").is_some(),
             "expected 'currentPath', got: {v}"
         );
+        assert!(
+            v.get("launchOnLogin").is_some(),
+            "expected 'launchOnLogin', got: {v}"
+        );
         // snake_case keys must NOT be present
         assert!(
             v.get("needs_onboarding").is_none(),
@@ -225,6 +252,10 @@ mod tests {
         assert!(
             v.get("current_path").is_none(),
             "snake_case 'current_path' must not appear in the serialised output"
+        );
+        assert!(
+            v.get("launch_on_login").is_none(),
+            "snake_case 'launch_on_login' must not appear in the serialised output"
         );
     }
 
