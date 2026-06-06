@@ -11,6 +11,16 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.2.2] — 2026-06-06
+
+### Changed
+- Battle Monitor now opens **inside the main window** (no separate window), with a "← Dashboard" bar to go back. Consistent frameless look with the dashboard.
+
+### Fixed
+- Links in Battle Monitor that open a new tab now open in your **default browser** instead of doing nothing.
+
+---
+
 ## [0.2.1] — 2026-06-06
 
 ### Fixed
@@ -75,7 +85,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/Helmi/tfd-bridge/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Helmi/tfd-bridge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Helmi/tfd-bridge/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/Helmi/tfd-bridge/compare/v0.1.1...v0.1.2

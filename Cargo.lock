@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "bridge-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "log",
  "notify",
@@ -4443,7 +4443,7 @@ dependencies = [
 
 [[package]]
 name = "tfd-bridge"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bridge-core",
  "log",
