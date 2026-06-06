@@ -27,10 +27,17 @@ jobs:
         id: notes
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          SECTION="$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found && /^\[/{exit} found{print}" CHANGELOG.md)"
-          if [ -z "$SECTION" ]; then
-            SECTION="See CHANGELOG.md for details."
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            # Match the literal "## [<version>]" heading via an awk variable
+            # (index/prefix match, not a regex) so version or ref characters
+            # can never be interpreted as regex / break awk.
+            SECTION="$(awk -v hdr="## [$VERSION]" 'index($0,hdr)==1{f=1;next} f&&/^## \[/{exit} f&&/^\[/{exit} f{print}' CHANGELOG.md)"
+            if [ -z "$SECTION" ]; then
+              SECTION="See CHANGELOG.md for details."
+            fi
+          else
+            SECTION="Test build from ${GITHUB_REF_NAME} (not a tagged release)."
           fi
           BODY="${SECTION}
 
