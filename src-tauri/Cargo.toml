@@ -27,6 +27,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 bridge-core = { path = "../crates/bridge-core" }
 tauri-plugin-updater = "2"
+tauri-plugin-opener = "2"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.1"
