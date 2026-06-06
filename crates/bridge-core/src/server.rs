@@ -222,15 +222,25 @@ fn handle_requests(
         // Strip query string for routing
         let path_no_qs = path.split('?').next().unwrap_or(&path);
 
-        let response = match path_no_qs {
-            "/v1/health" => handle_health(),
-            "/v1/replays" => handle_list(replays_dir, generation),
-            "/v1/replays/latest" => handle_latest(replays_dir),
-            p if p.starts_with("/v1/replays/") => {
-                let name = &p["/v1/replays/".len()..];
-                handle_fetch(replays_dir, name)
+        let response = match request.method() {
+            tiny_http::Method::Get => match path_no_qs {
+                "/v1/health" => handle_health(),
+                "/v1/replays" => handle_list(replays_dir, generation),
+                "/v1/replays/latest" => handle_latest(replays_dir),
+                p if p.starts_with("/v1/replays/") => {
+                    let name = &p["/v1/replays/".len()..];
+                    handle_fetch(replays_dir, name)
+                }
+                _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+            },
+            tiny_http::Method::Options => {
+                make_json_response(StatusCode(204), "", None)
             }
-            _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+            _ => make_json_response(
+                StatusCode(405),
+                r#"{"error":"method not allowed"}"#,
+                None,
+            ),
         };
 
         let response = attach_cors(response, cors_origin.as_deref());
@@ -319,6 +329,11 @@ fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<
     match resolve_safe_path(replays_dir, &decoded) {
         Err(e) => make_json_response(StatusCode(400), &format!(r#"{{"error":"{}"}}"#, e), None),
         Ok(path) => {
+            // Only serve files that are part of the listing contract:
+            // *.wowsreplay archives and tempArenaInfo.json.
+            if !is_served_file(&path) {
+                return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None);
+            }
             let mut file = match std::fs::File::open(&path) {
                 Ok(f) => f,
                 Err(_) => {
@@ -1220,6 +1235,58 @@ mod tests {
             result.is_err(),
             "file accessed through a symlinked subdir pointing outside must be rejected"
         );
+    }
+
+    /// GET /v1/replays/<non-served-file> must return 404 even when the file
+    /// exists on disk.  The allowlist is *.wowsreplay + tempArenaInfo.json;
+    /// any other file type must not be readable through the bridge.
+    #[test]
+    fn fetch_non_served_file_returns_404() {
+        let tmp = TempDir::new().unwrap();
+        // Create a file that is NOT in the served-file allowlist.
+        fs::write(tmp.path().join("notes.txt"), b"sensitive data").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/notes.txt",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "non-served file type must return 404, not {status}");
+        bridge.stop();
+    }
+
+    /// Regression: *.wowsreplay files are still served after the allowlist fix.
+    #[test]
+    fn fetch_allowlisted_wowsreplay_still_200() {
+        let tmp = TempDir::new().unwrap();
+        let content = b"replay bytes";
+        fs::write(tmp.path().join("game.wowsreplay"), content).unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200, "wowsreplay must still be served");
+        assert_eq!(body.as_bytes(), content);
+        bridge.stop();
+    }
+
+    /// Regression: tempArenaInfo.json is still served after the allowlist fix.
+    #[test]
+    fn fetch_allowlisted_temp_arena_info_still_200() {
+        let tmp = TempDir::new().unwrap();
+        let content = br#"{"vehicles":[]}"#;
+        fs::write(tmp.path().join("tempArenaInfo.json"), content).unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/tempArenaInfo.json",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200, "tempArenaInfo.json must still be served");
+        assert_eq!(body.as_bytes(), content);
+        bridge.stop();
     }
 
     /// /v1/health capabilities must include "live-v1".

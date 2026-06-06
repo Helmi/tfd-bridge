@@ -138,14 +138,20 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
 
     match action {
         BridgeAction::Noop => {
-            log::info!("Bridge already serving {:?} — no change", path);
+            log::info!("Bridge already serving the configured path — no change");
         }
         BridgeAction::Start | BridgeAction::Restart => {
             // Stop the existing bridge (if any) before starting a new one.
             if let Some(ab) = guard.take() {
                 ab.bridge.stop();
             }
-            let dev_origin = std::env::var("TFD_BRIDGE_DEV_ORIGIN").ok();
+            // Only honour TFD_BRIDGE_DEV_ORIGIN in debug builds so release
+            // builds keep CORS strictly limited to https://engine.tfd.rocks.
+            let dev_origin = if cfg!(debug_assertions) {
+                std::env::var("TFD_BRIDGE_DEV_ORIGIN").ok()
+            } else {
+                None
+            };
             match server::start(path.clone(), dev_origin) {
                 Ok(bridge) => {
                     log::info!("Bridge started on port {}", bridge.port());
