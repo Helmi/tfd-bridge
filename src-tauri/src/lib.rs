@@ -4,8 +4,8 @@ use bridge_core::server::{self, Bridge};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
 // ── Bridge state ─────────────────────────────────────────────────────────────
@@ -145,6 +145,41 @@ pub(crate) fn set_launch_on_login_internal(app: &tauri::AppHandle, enabled: bool
     }
 }
 
+// ── Monitor window ───────────────────────────────────────────────────────────
+
+/// Open (or focus) the Battle Monitor webview window.
+///
+/// If the window already exists (possibly hidden), it is shown and focused.
+/// Otherwise a new WebviewWindow is created loading the remote monitor URL.
+///
+/// SECURITY: This window has label "monitor", which is absent from every
+/// capability's `windows` list (default.json only covers "main").
+/// Tauri v2 grants no IPC permissions to windows not listed in any
+/// capability, so the remote origin cannot invoke app commands.
+/// `withGlobalTauri=true` injects window.__TAURI__ but invoke() calls
+/// are blocked by the capability model — not by this code.
+///
+/// NOTE: In-webview login depends on the identity provider permitting
+/// requests from a desktop WebView user-agent. If engine.tfd.rocks blocks
+/// embedded-webview login, users must log in via their browser; the local
+/// bridge (the core feature) is unaffected either way.
+pub(crate) fn open_monitor_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("monitor") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    } else {
+        let url: tauri::Url = "https://engine.tfd.rocks/monitor".parse().unwrap();
+        match WebviewWindowBuilder::new(app, "monitor", WebviewUrl::External(url))
+            .title("Battle Monitor")
+            .inner_size(1280.0, 800.0)
+            .build()
+        {
+            Ok(_) => {}
+            Err(e) => log::error!("Failed to open monitor window: {e}"),
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -224,6 +259,17 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        open_monitor_window(tray.app_handle());
+                    }
+                })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -233,39 +279,7 @@ pub fn run() {
                         }
                     }
                     "open_monitor" => {
-                        // If the window already exists (possibly hidden), bring it to the front.
-                        // Otherwise create a new one loading the remote monitor URL.
-                        //
-                        // SECURITY: This window has label "monitor", which is absent from every
-                        // capability's `windows` list (default.json only covers "main").
-                        // Tauri v2 grants no IPC permissions to windows not listed in any
-                        // capability, so the remote origin cannot invoke app commands.
-                        // `withGlobalTauri=true` injects window.__TAURI__ but invoke() calls
-                        // are blocked by the capability model — not by this code.
-                        //
-                        // NOTE: In-webview login depends on the identity provider permitting
-                        // requests from a desktop WebView user-agent. If engine.tfd.rocks blocks
-                        // embedded-webview login, users must log in via their browser; the local
-                        // bridge (the core feature) is unaffected either way.
-                        if let Some(win) = app.get_webview_window("monitor") {
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        } else {
-                            let url: tauri::Url =
-                                "https://engine.tfd.rocks/monitor".parse().unwrap();
-                            match WebviewWindowBuilder::new(
-                                app,
-                                "monitor",
-                                WebviewUrl::External(url),
-                            )
-                            .title("Battle Monitor")
-                            .inner_size(1280.0, 800.0)
-                            .build()
-                            {
-                                Ok(_) => {}
-                                Err(e) => log::error!("Failed to open monitor window: {e}"),
-                            }
-                        }
+                        open_monitor_window(app);
                     }
                     "launch_on_login" => {
                         // Read current OS state to determine new toggle value.
@@ -306,6 +320,7 @@ pub fn run() {
             commands::confirm_replays_path,
             commands::pick_replays_folder,
             commands::set_launch_on_login,
+            commands::open_monitor,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
