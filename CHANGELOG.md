@@ -9,11 +9,23 @@ Versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.2.0] — 2026-06-06
+
 ### Added
-- Frameless dashboard UI matching `engine.tfd.rocks` design; custom topbar; TFD ship icon.
-- Onboarding launch-on-login toggle (opt-in, persisted via store).
-- Tray left-click now opens Battle Monitor directly.
-- Auto-update client via signed GitHub Releases (`tauri-plugin-updater`). Update artifacts and `latest.json` are published as GitHub Release assets; the app checks `https://github.com/Helmi/tfd-bridge/releases/latest/download/latest.json` on startup.
+- Frameless dashboard UI matching the `engine.tfd.rocks` look, with a custom topbar (drag to move, minimize, close-to-tray) and a TFD ship icon.
+- Onboarding **Launch on login (Recommended)** option — pre-checked, persisted, and kept in sync with the tray toggle.
+- **Left-click the tray icon** now opens Battle Monitor directly (right-click still shows the menu).
+- Auto-update: the app checks for updates on launch and self-updates from signed GitHub Release artifacts (`tauri-plugin-updater`, ed25519-signed; `latest.json` published on GitHub Releases).
+
+### Changed
+- Releases are now published as full GitHub releases (no longer pre-releases) so the updater feed (`/releases/latest/`) resolves.
+
+### Security
+- The bridge serves only replay files on fetch (`*.wowsreplay`, `tempArenaInfo.json`); any other file inside the folder returns `404`.
+- Release builds enforce strict CORS to `https://engine.tfd.rocks` (the dev-origin override is debug-build only).
+- Non-`GET` requests now return `405`.
 
 ---
 
@@ -40,8 +52,8 @@ Versioning follows [SemVer](https://semver.org/).
 Initial release.
 
 ### Added
-- Tauri v2 desktop app: system tray, OS webview shell, single-instance enforcement.
-- First-run onboarding: auto-detects WoWS replays folder (Steam / Wargaming Game Center paths); manual picker fallback.
+- Tauri v2 desktop app: system tray and OS webview shell.
+- First-run onboarding: auto-detects the WoWS replays folder (Steam / Wargaming Game Center paths); manual picker fallback.
 - Localhost bridge (`127.0.0.1:43210`, fallback 43211–43214): read-only, strict CORS to `https://engine.tfd.rocks`.
   - `GET /v1/health` — version and capability info.
   - `GET /v1/replays` — directory listing.
@@ -56,7 +68,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Helmi/tfd-bridge/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/Helmi/tfd-bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Helmi/tfd-bridge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Helmi/tfd-bridge/releases/tag/v0.1.0
