@@ -23,6 +23,23 @@ jobs:
         with:
           workspaces: '. -> target'
 
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SECTION="$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## \[/{exit} found && /^\[/{exit} found{print}" CHANGELOG.md)"
+          if [ -z "$SECTION" ]; then
+            SECTION="See CHANGELOG.md for details."
+          fi
+          BODY="${SECTION}
+
+          ---
+          *Windows installer — SmartScreen may show \"More info → Run anyway\". This is because the executable is not Authenticode-signed (no TFD legal entity for v1). The Tauri updater signature (ed25519) covers artifact integrity separately and is unrelated to SmartScreen.*"
+          echo "body<<RELEASE_BODY_EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_BODY_EOF" >> "$GITHUB_OUTPUT"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -34,9 +51,9 @@ jobs:
           args: '--bundles nsis'
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: 'TFD Bridge ${{ github.ref_name }}'
-          releaseBody: 'Windows installer — SmartScreen will show "More info → Run anyway" (unsigned for v1).'
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
-          prerelease: true
+          prerelease: false
           includeUpdaterJson: true
 
       - name: Upload installer as workflow artifact
