@@ -609,7 +609,7 @@
       if (result.ok) {
         await applyLaunchOnLogin();
         document.getElementById('onboarding').style.display = 'none';
-        showRunning(result.path);
+        showRunning(result.path, getLaunchOnLoginPref());
       } else if (result.error) {
         showError(result.error);
       }
@@ -625,7 +625,7 @@
       if (result.ok) {
         await applyLaunchOnLogin();
         document.getElementById('onboarding').style.display = 'none';
-        showRunning(result.path);
+        showRunning(result.path, getLaunchOnLoginPref());
       } else if (result.error) {
         showError(result.error);
       }
