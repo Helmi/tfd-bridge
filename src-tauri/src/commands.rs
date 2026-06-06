@@ -64,6 +64,14 @@ pub fn set_launch_on_login(app: AppHandle, enabled: bool) {
     crate::set_launch_on_login_internal(&app, enabled);
 }
 
+/// Open (or focus) the Battle Monitor window.
+/// Only callable from the "main" window — the "monitor" window is absent
+/// from every capability's windows list, so it has no IPC access.
+#[tauri::command]
+pub fn open_monitor(app: AppHandle) {
+    crate::open_monitor_window(&app);
+}
+
 /// Confirm a detected or manually entered path and persist it.
 #[tauri::command]
 pub fn confirm_replays_path(app: AppHandle, path: String) -> SetPathResult {

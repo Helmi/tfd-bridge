@@ -398,16 +398,15 @@
           </div>
         </div>
 
-        <!-- Open Battle Monitor — primary action slot (wired in a later task) -->
+        <!-- Open Battle Monitor -->
         <div class="card">
           <div class="card-head">
             <h2>Battle Monitor</h2>
-            <span class="badge-soon">Soon</span>
           </div>
           <p class="hint" style="margin-top:0.6rem;margin-bottom:0.85rem">
             Open the live Battle Monitor for real-time match tracking.
           </p>
-          <button class="btn btn-primary btn-block" id="btn-open-monitor" type="button" disabled>
+          <button class="btn btn-primary btn-block" id="btn-open-monitor" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M15 3h6v6" />
@@ -527,6 +526,15 @@
     }
     setDashboardToggle(!!launchOnLogin);
   }
+
+  // Open Battle Monitor button.
+  document.getElementById('btn-open-monitor').addEventListener('click', async () => {
+    try {
+      await invoke('open_monitor');
+    } catch (err) {
+      console.error('open_monitor failed:', err);
+    }
+  });
 
   // Dashboard toggle click: read current visual state, invert, call IPC.
   document.getElementById('toggle-launch').addEventListener('click', async () => {
