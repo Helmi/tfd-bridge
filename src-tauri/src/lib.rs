@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_store::StoreExt;
 
 // ── Auto-update ──────────────────────────────────────────────────────────────
@@ -104,6 +104,10 @@ struct LaunchOnLoginItem(Mutex<Option<CheckMenuItem<tauri::Wry>>>);
 /// (prevent_close + hide); once `true` it lets every window close so the
 /// exit is not vetoed by `prevent_close` (which deadlocks shutdown).
 struct Quitting(AtomicBool);
+
+/// The main window's initial (local dashboard) URL, captured at setup so the
+/// embedded monitor's "← Dashboard" sentinel can navigate back to it.
+struct DashboardUrl(Mutex<Option<tauri::Url>>);
 
 // ── Store constants ─────────────────────────────────────────────────────────
 
@@ -230,38 +234,75 @@ pub(crate) fn set_launch_on_login_internal(app: &tauri::AppHandle, enabled: bool
     }
 }
 
-// ── Monitor window ───────────────────────────────────────────────────────────
+// ── Battle Monitor (embedded in the main window) ───────────────────────────────
 
-/// Open (or focus) the Battle Monitor webview window.
-///
-/// If the window already exists (possibly hidden), it is shown and focused.
-/// Otherwise a new WebviewWindow is created loading the remote monitor URL.
-///
-/// SECURITY: This window has label "monitor", which is absent from every
-/// capability's `windows` list (default.json only covers "main").
-/// Tauri v2 grants no IPC permissions to windows not listed in any
-/// capability, so the remote origin cannot invoke app commands.
-/// `withGlobalTauri=true` injects window.__TAURI__ but invoke() calls
-/// are blocked by the capability model — not by this code.
-///
-/// NOTE: In-webview login depends on the identity provider permitting
-/// requests from a desktop WebView user-agent. If engine.tfd.rocks blocks
-/// embedded-webview login, users must log in via their browser; the local
-/// bridge (the core feature) is unaffected either way.
+const MONITOR_URL: &str = "https://engine.tfd.rocks/monitor";
+/// Same-origin sentinel paths the injected JS navigates to. The `monitor-embed`
+/// plugin's `on_navigation` hook intercepts and cancels them BEFORE the request
+/// goes out, then performs the real action (open browser / go to dashboard).
+const SENTINEL_EXTERNAL: &str = "/__tfd_open_external";
+const SENTINEL_DASHBOARD: &str = "/__tfd_dashboard";
+
+/// JS injected into every page (via the `monitor-embed` plugin). On the remote
+/// Battle Monitor origin it adds a slim top bar with a Back-to-Dashboard control
+/// and routes explicit new-tab links to the system browser through a same-origin
+/// sentinel — so the OAuth redirect flow and internal navigation stay in-app and
+/// the remote page needs NO Tauri IPC. On the local dashboard it is a no-op.
+const MONITOR_EMBED_JS: &str = r#"
+(function () {
+  if (location.origin !== 'https://engine.tfd.rocks') return;
+  var ORIGIN = 'https://engine.tfd.rocks';
+  function openExternal(href) {
+    if (href) location.assign(ORIGIN + '/__tfd_open_external?url=' + encodeURIComponent(href));
+  }
+  // Only intercept explicit new-tab links; same-window navigation (incl. the
+  // Wargaming OAuth redirect) is left untouched so login still works in-app.
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (a && a.target === '_blank') { e.preventDefault(); openExternal(a.href); }
+  }, true);
+  function injectBar() {
+    if (document.getElementById('tfd-embed-bar') || !document.body) return;
+    var bar = document.createElement('div');
+    bar.id = 'tfd-embed-bar';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:0 12px;background:#05070e;border-bottom:1px solid rgba(255,255,255,0.1);font:600 12px/1 -apple-system,Segoe UI,sans-serif;color:#dfe6e8;';
+    var back = document.createElement('button');
+    back.textContent = '← Dashboard';
+    back.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.16);color:#dfe6e8;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;';
+    back.addEventListener('click', function () { location.assign(ORIGIN + '/__tfd_dashboard'); });
+    var title = document.createElement('span');
+    title.appendChild(document.createTextNode('TFD Bridge — Battle Monitor'));
+    bar.appendChild(back);
+    bar.appendChild(title);
+    document.documentElement.appendChild(bar);
+    document.body.style.paddingTop = '34px';
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectBar);
+  } else {
+    injectBar();
+  }
+})();
+"#;
+
+/// Navigate the main window to the embedded Battle Monitor and bring it forward.
 pub(crate) fn open_monitor_window(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("monitor") {
+    if let Some(win) = app.get_webview_window("main") {
+        if let Ok(url) = MONITOR_URL.parse::<tauri::Url>() {
+            let _ = win.navigate(url);
+        }
+        let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
-    } else {
-        let url: tauri::Url = "https://engine.tfd.rocks/monitor".parse().unwrap();
-        match WebviewWindowBuilder::new(app, "monitor", WebviewUrl::External(url))
-            .title("Battle Monitor")
-            .inner_size(1280.0, 800.0)
-            .build()
-        {
-            Ok(_) => {}
-            Err(e) => log::error!("Failed to open monitor window: {e}"),
-        }
+    }
+}
+
+/// Bring the main window forward (tray "Open" / tray left-click).
+fn show_main_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
     }
 }
 
@@ -271,6 +312,50 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(
+            // Embeds the Battle Monitor in the main window: injects a slim
+            // top bar + new-tab→browser routing, and intercepts the same-origin
+            // sentinel URLs. The remote page never gets Tauri IPC.
+            tauri::plugin::Builder::<tauri::Wry>::new("monitor-embed")
+                .js_init_script(MONITOR_EMBED_JS.to_string())
+                .on_navigation(|webview, url| {
+                    if url.host_str() == Some("engine.tfd.rocks") {
+                        match url.path() {
+                            SENTINEL_EXTERNAL => {
+                                use tauri_plugin_opener::OpenerExt;
+                                if let Some(target) = url
+                                    .query_pairs()
+                                    .find(|(k, _)| k == "url")
+                                    .map(|(_, v)| v.into_owned())
+                                {
+                                    let _ = webview
+                                        .app_handle()
+                                        .opener()
+                                        .open_url(target, None::<&str>);
+                                }
+                                return false;
+                            }
+                            SENTINEL_DASHBOARD => {
+                                let app = webview.app_handle().clone();
+                                tauri::async_runtime::spawn(async move {
+                                    let dash =
+                                        app.state::<DashboardUrl>().0.lock().unwrap().clone();
+                                    if let (Some(win), Some(url)) =
+                                        (app.get_webview_window("main"), dash)
+                                    {
+                                        let _ = win.navigate(url);
+                                    }
+                                });
+                                return false;
+                            }
+                            _ => {}
+                        }
+                    }
+                    true
+                })
+                .build(),
+        )
         .manage(BridgeState(Mutex::new(None)));
 
     // Register autostart plugin on desktop platforms only.
@@ -285,6 +370,7 @@ pub fn run() {
     builder
         .manage(LaunchOnLoginItem(Mutex::new(None)))
         .manage(Quitting(AtomicBool::new(false)))
+        .manage(DashboardUrl(Mutex::new(None)))
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Once Quit has set the flag, do NOT prevent the close: vetoing
@@ -360,7 +446,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        open_monitor_window(tray.app_handle());
+                        show_main_window(tray.app_handle());
                     }
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -395,6 +481,13 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // ── Capture the local dashboard URL for the monitor "← Dashboard" ─
+            if let Some(main) = app.get_webview_window("main") {
+                if let Ok(url) = main.url() {
+                    *app.state::<DashboardUrl>().0.lock().unwrap() = Some(url);
+                }
+            }
 
             // ── If launched via autostart, stay silent in the tray ──────────
             let autostart_launch = std::env::args().any(|a| a == "--autostart");
