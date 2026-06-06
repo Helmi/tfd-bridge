@@ -19,6 +19,9 @@ Versioning follows [SemVer](https://semver.org/).
 ### Fixed
 - Links in Battle Monitor that open a new tab now open in your **default browser** instead of doing nothing.
 
+### Security
+- The external-link opener only accepts `http`/`https` URLs (non-web schemes are ignored).
+
 ---
 
 ## [0.2.1] — 2026-06-06

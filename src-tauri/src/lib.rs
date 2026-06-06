@@ -253,7 +253,10 @@ const MONITOR_EMBED_JS: &str = r#"
   if (location.origin !== 'https://engine.tfd.rocks') return;
   var ORIGIN = 'https://engine.tfd.rocks';
   function openExternal(href) {
-    if (href) location.assign(ORIGIN + '/__tfd_open_external?url=' + encodeURIComponent(href));
+    // Defence in depth: only route http(s) links to the system browser.
+    if (href && /^https?:\/\//i.test(href)) {
+      location.assign(ORIGIN + '/__tfd_open_external?url=' + encodeURIComponent(href));
+    }
   }
   // Only intercept explicit new-tab links; same-window navigation (incl. the
   // Wargaming OAuth redirect) is left untouched so login still works in-app.
@@ -329,10 +332,17 @@ pub fn run() {
                                     .find(|(k, _)| k == "url")
                                     .map(|(_, v)| v.into_owned())
                                 {
-                                    let _ = webview
-                                        .app_handle()
-                                        .opener()
-                                        .open_url(target, None::<&str>);
+                                    // Only hand http/https to the system opener — never
+                                    // file://, custom schemes, or anything else the OS
+                                    // default handler might act on.
+                                    if let Ok(parsed) = tauri::Url::parse(&target) {
+                                        if matches!(parsed.scheme(), "http" | "https") {
+                                            let _ = webview
+                                                .app_handle()
+                                                .opener()
+                                                .open_url(parsed.as_str(), None::<&str>);
+                                        }
+                                    }
                                 }
                                 return false;
                             }
