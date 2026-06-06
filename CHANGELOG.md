@@ -11,6 +11,13 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.2.1] — 2026-06-06
+
+### Fixed
+- The app could not be quit and had to be killed via Task Manager — most noticeable after opening Battle Monitor. Quit (from the tray menu) now reliably exits the app.
+
+---
+
 ## [0.2.0] — 2026-06-06
 
 ### Added
@@ -68,7 +75,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Helmi/tfd-bridge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Helmi/tfd-bridge/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/Helmi/tfd-bridge/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Helmi/tfd-bridge/compare/v0.1.0...v0.1.1
