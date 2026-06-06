@@ -27,6 +27,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: '.'
           args: '--bundles nsis'
@@ -35,7 +37,7 @@ jobs:
           releaseBody: 'Windows installer — SmartScreen will show "More info → Run anyway" (unsigned for v1).'
           releaseDraft: false
           prerelease: true
-          includeUpdaterJson: false
+          includeUpdaterJson: true
 
       - name: Upload installer as workflow artifact
         if: github.event_name == 'workflow_dispatch'
