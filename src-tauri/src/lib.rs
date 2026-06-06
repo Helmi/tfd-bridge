@@ -113,6 +113,38 @@ fn save_launch_on_login(app: &tauri::AppHandle, enabled: bool) {
     }
 }
 
+/// Toggle OS autostart, persist the pref, and sync the tray checkmark.
+/// Single source of truth for all callers (tray handler, IPC command).
+pub(crate) fn set_launch_on_login_internal(app: &tauri::AppHandle, enabled: bool) {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let autostart = app.autolaunch();
+        if enabled {
+            if let Err(e) = autostart.enable() {
+                log::error!("Failed to enable autostart: {e}");
+                return;
+            }
+        } else if let Err(e) = autostart.disable() {
+            log::error!("Failed to disable autostart: {e}");
+            return;
+        }
+    }
+
+    save_launch_on_login(app, enabled);
+
+    // Sync the tray checkmark via the stored reference.
+    if let Some(item) = app
+        .state::<LaunchOnLoginItem>()
+        .0
+        .lock()
+        .unwrap()
+        .as_ref()
+    {
+        let _ = item.set_checked(enabled);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -236,36 +268,16 @@ pub fn run() {
                         }
                     }
                     "launch_on_login" => {
+                        // Read current OS state to determine new toggle value.
                         #[cfg(desktop)]
-                        {
+                        let currently_enabled = {
                             use tauri_plugin_autostart::ManagerExt;
-                            let autostart = app.autolaunch();
-                            let currently_enabled = autostart.is_enabled().unwrap_or(false);
-                            let new_state = !currently_enabled;
+                            app.autolaunch().is_enabled().unwrap_or(false)
+                        };
+                        #[cfg(not(desktop))]
+                        let currently_enabled = read_launch_on_login(app);
 
-                            if new_state {
-                                if let Err(e) = autostart.enable() {
-                                    log::error!("Failed to enable autostart: {e}");
-                                    return;
-                                }
-                            } else if let Err(e) = autostart.disable() {
-                                log::error!("Failed to disable autostart: {e}");
-                                return;
-                            }
-
-                            save_launch_on_login(app, new_state);
-
-                            // Update checkmark via stored reference.
-                            if let Some(item) = app
-                                .state::<LaunchOnLoginItem>()
-                                .0
-                                .lock()
-                                .unwrap()
-                                .as_ref()
-                            {
-                                let _ = item.set_checked(new_state);
-                            }
-                        }
+                        set_launch_on_login_internal(app, !currently_enabled);
                     }
                     "quit" => {
                         app.exit(0);
@@ -293,6 +305,7 @@ pub fn run() {
             commands::get_onboarding_status,
             commands::confirm_replays_path,
             commands::pick_replays_folder,
+            commands::set_launch_on_login,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

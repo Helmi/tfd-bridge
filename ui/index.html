@@ -257,6 +257,52 @@
       padding: 0.12rem 0.45rem;
     }
 
+    /* ── Launch-on-login onboarding row ────────────────────────────────────── */
+    .launch-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+    .launch-row input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      flex-shrink: 0;
+      border-radius: 4px;
+      border: 1.5px solid var(--border-strong);
+      background: var(--surface-2);
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+      position: relative;
+    }
+    .launch-row input[type="checkbox"]:checked {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .launch-row input[type="checkbox"]:checked::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8l3.5 3.5L13 5' stroke='%2304130f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E") center/12px no-repeat;
+    }
+    .launch-row label {
+      font-size: 0.86rem;
+      color: var(--fg);
+      cursor: pointer;
+      line-height: 1.4;
+    }
+    .launch-row label .rec {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-left: 0.35rem;
+    }
+
     /* ── Launch-on-login toggle (visual slot — wired in a later task) ──────── */
     .toggle-row {
       display: flex;
@@ -273,8 +319,8 @@
       border-radius: 999px;
       background: var(--surface-2);
       border: 1px solid var(--border-strong);
-      cursor: default;
-      opacity: 0.55;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
     }
     .switch::after {
       content: "";
@@ -283,7 +329,15 @@
       width: 16px; height: 16px;
       border-radius: 50%;
       background: var(--fg-muted);
-      transition: transform 0.15s;
+      transition: transform 0.15s, background 0.15s;
+    }
+    .switch.on {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+    }
+    .switch.on::after {
+      background: var(--accent);
+      transform: translateX(18px);
     }
 
     .error {
@@ -364,17 +418,14 @@
           </button>
         </div>
 
-        <!-- Launch-on-login — onboarding toggle slot (wired in a later task) -->
+        <!-- Launch-on-login toggle (dashboard) -->
         <div class="card">
           <div class="toggle-row">
             <div>
-              <div class="label">
-                Launch on login
-                <span class="badge-soon" style="margin-left:0.4rem">Soon</span>
-              </div>
+              <div class="label">Launch on login</div>
               <div class="sub">Start TFD Bridge automatically when you sign in.</div>
             </div>
-            <div class="switch" id="toggle-launch" aria-hidden="true"></div>
+            <div class="switch" id="toggle-launch" role="switch" aria-label="Launch on login"></div>
           </div>
         </div>
       </div>
@@ -398,6 +449,14 @@
           <!-- No candidates found -->
           <div id="no-detect-msg" style="display:none">
             <p class="hint">No WoWS installation was detected automatically.</p>
+          </div>
+
+          <div class="launch-row">
+            <input type="checkbox" id="onboarding-launch-on-login" checked />
+            <label for="onboarding-launch-on-login">
+              Launch on login
+              <span class="rec">Recommended</span>
+            </label>
           </div>
 
           <div class="actions">
@@ -437,7 +496,7 @@
       const status = await invoke('get_onboarding_status');
 
       if (!status.needsOnboarding) {
-        showRunning(status.currentPath);
+        showRunning(status.currentPath, status.launchOnLogin);
       } else {
         showOnboarding(status.detected);
       }
@@ -448,14 +507,41 @@
     }
   }
 
-  function showRunning(path) {
+  function setDashboardToggle(enabled) {
+    const sw = document.getElementById('toggle-launch');
+    if (!sw) return;
+    if (enabled) {
+      sw.classList.add('on');
+    } else {
+      sw.classList.remove('on');
+    }
+    sw.setAttribute('aria-checked', String(enabled));
+  }
+
+  function showRunning(path, launchOnLogin) {
     document.getElementById('main-status').style.display = 'block';
     if (path) {
       const el = document.getElementById('current-path');
       document.getElementById('current-path-text').textContent = path;
       el.style.display = 'block';
     }
+    setDashboardToggle(!!launchOnLogin);
   }
+
+  // Dashboard toggle click: read current visual state, invert, call IPC.
+  document.getElementById('toggle-launch').addEventListener('click', async () => {
+    const sw = document.getElementById('toggle-launch');
+    const currentlyOn = sw.classList.contains('on');
+    const newState = !currentlyOn;
+    setDashboardToggle(newState);
+    try {
+      await invoke('set_launch_on_login', { enabled: newState });
+    } catch (err) {
+      // Revert on failure.
+      setDashboardToggle(currentlyOn);
+      console.error('set_launch_on_login failed:', err);
+    }
+  });
 
   function showOnboarding(detected) {
     document.getElementById('onboarding').style.display = 'block';
@@ -502,13 +588,28 @@
     }
   }
 
+  function getLaunchOnLoginPref() {
+    const cb = document.getElementById('onboarding-launch-on-login');
+    return cb ? cb.checked : false;
+  }
+
+  async function applyLaunchOnLogin() {
+    try {
+      await invoke('set_launch_on_login', { enabled: getLaunchOnLoginPref() });
+    } catch (err) {
+      // Non-fatal: log but don't block onboarding completion.
+      console.warn('set_launch_on_login failed:', err);
+    }
+  }
+
   async function confirmPath(path) {
     clearError();
     try {
       const result = await invoke('confirm_replays_path', { path });
       if (result.ok) {
+        await applyLaunchOnLogin();
         document.getElementById('onboarding').style.display = 'none';
-        showRunning(result.path);
+        showRunning(result.path, getLaunchOnLoginPref());
       } else if (result.error) {
         showError(result.error);
       }
@@ -522,8 +623,9 @@
     try {
       const result = await invoke('pick_replays_folder');
       if (result.ok) {
+        await applyLaunchOnLogin();
         document.getElementById('onboarding').style.display = 'none';
-        showRunning(result.path);
+        showRunning(result.path, getLaunchOnLoginPref());
       } else if (result.error) {
         showError(result.error);
       }
