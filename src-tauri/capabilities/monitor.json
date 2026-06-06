@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "monitor-remote",
+  "description": "Window controls (drag / minimize / close) for the embedded Battle Monitor's remote engine.tfd.rocks page. Deliberately grants ONLY window manipulation — no file, bridge, store, dialog, or app commands — so the remote page can manage its own window but cannot reach anything sensitive.",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "https://engine.tfd.rocks"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-close"
+  ]
+}

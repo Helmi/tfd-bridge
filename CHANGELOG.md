@@ -11,6 +11,17 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.2.3] — 2026-06-06
+
+### Added
+- Battle Monitor view now has **full window controls** — drag to move, minimize, and close — so the window behaves the same whether you're on the dashboard or the monitor.
+- Diagnostic **file logging** (written to the app log folder) so issues can be investigated without a special build.
+
+### Changed
+- Reworked the Battle Monitor **"← Dashboard"** navigation to return to the exact dashboard URL.
+
+---
+
 ## [0.2.2] — 2026-06-06
 
 ### Changed
@@ -88,7 +99,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/Helmi/tfd-bridge/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Helmi/tfd-bridge/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Helmi/tfd-bridge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Helmi/tfd-bridge/compare/v0.1.2...v0.2.0

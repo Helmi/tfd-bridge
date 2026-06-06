@@ -264,19 +264,40 @@ const MONITOR_EMBED_JS: &str = r#"
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (a && a.target === '_blank') { e.preventDefault(); openExternal(a.href); }
   }, true);
+  function winApi() {
+    try { return window.__TAURI__.window.getCurrentWindow(); } catch (e) { return null; }
+  }
+  function mkBtn(label, tip, onClick) {
+    var b = document.createElement('button');
+    b.textContent = label;
+    b.title = tip;
+    b.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.16);color:#dfe6e8;border-radius:6px;padding:4px 9px;cursor:pointer;font:inherit;line-height:1;';
+    b.addEventListener('click', onClick);
+    return b;
+  }
   function injectBar() {
     if (document.getElementById('tfd-embed-bar') || !document.body) return;
     var bar = document.createElement('div');
     bar.id = 'tfd-embed-bar';
-    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:0 12px;background:#05070e;border-bottom:1px solid rgba(255,255,255,0.1);font:600 12px/1 -apple-system,Segoe UI,sans-serif;color:#dfe6e8;';
-    var back = document.createElement('button');
-    back.textContent = '← Dashboard';
-    back.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.16);color:#dfe6e8;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;';
-    back.addEventListener('click', function () { location.assign(ORIGIN + '/__tfd_dashboard'); });
+    // The bar itself is the drag handle (buttons inside stay clickable: Tauri
+    // only starts a drag when the mousedown target carries the attribute).
+    bar.setAttribute('data-tauri-drag-region', '');
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;display:flex;align-items:center;gap:8px;padding:0 8px;background:#05070e;border-bottom:1px solid rgba(255,255,255,0.1);font:600 12px/1 -apple-system,Segoe UI,sans-serif;color:#dfe6e8;-webkit-user-select:none;user-select:none;';
+    var back = mkBtn('← Dashboard', 'Back to Dashboard', function () { location.assign(ORIGIN + '/__tfd_dashboard'); });
     var title = document.createElement('span');
-    title.appendChild(document.createTextNode('TFD Bridge — Battle Monitor'));
+    title.setAttribute('data-tauri-drag-region', '');
+    title.style.cssText = 'pointer-events:none;opacity:0.7;';
+    title.appendChild(document.createTextNode('Battle Monitor'));
+    var spacer = document.createElement('div');
+    spacer.setAttribute('data-tauri-drag-region', '');
+    spacer.style.cssText = 'flex:1;';
+    var min = mkBtn('—', 'Minimize', function () { var w = winApi(); if (w) w.minimize(); });
+    var close = mkBtn('✕', 'Close to tray', function () { var w = winApi(); if (w) w.close(); });
     bar.appendChild(back);
     bar.appendChild(title);
+    bar.appendChild(spacer);
+    bar.appendChild(min);
+    bar.appendChild(close);
     document.documentElement.appendChild(bar);
     document.body.style.paddingTop = '34px';
   }
@@ -291,8 +312,22 @@ const MONITOR_EMBED_JS: &str = r#"
 /// Navigate the main window to the embedded Battle Monitor and bring it forward.
 pub(crate) fn open_monitor_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
-        if let Ok(url) = MONITOR_URL.parse::<tauri::Url>() {
-            let _ = win.navigate(url);
+        // Capture the dashboard URL we are currently on (fully loaded) so the
+        // monitor's "← Dashboard" can navigate back to the exact same URL.
+        match win.url() {
+            Ok(current) => {
+                log::info!("open_monitor: captured dashboard URL {current}");
+                *app.state::<DashboardUrl>().0.lock().unwrap() = Some(current);
+            }
+            Err(e) => log::warn!("open_monitor: could not capture dashboard URL: {e}"),
+        }
+        match MONITOR_URL.parse::<tauri::Url>() {
+            Ok(url) => {
+                if let Err(e) = win.navigate(url) {
+                    log::error!("open_monitor: navigate to monitor failed: {e}");
+                }
+            }
+            Err(e) => log::error!("open_monitor: bad monitor URL: {e}"),
         }
         let _ = win.unminimize();
         let _ = win.show();
@@ -323,6 +358,7 @@ pub fn run() {
             tauri::plugin::Builder::<tauri::Wry>::new("monitor-embed")
                 .js_init_script(MONITOR_EMBED_JS.to_string())
                 .on_navigation(|webview, url| {
+                    log::info!("on_navigation: {url}");
                     if url.host_str() == Some("engine.tfd.rocks") {
                         match url.path() {
                             SENTINEL_EXTERNAL => {
@@ -351,10 +387,16 @@ pub fn run() {
                                 tauri::async_runtime::spawn(async move {
                                     let dash =
                                         app.state::<DashboardUrl>().0.lock().unwrap().clone();
-                                    if let (Some(win), Some(url)) =
-                                        (app.get_webview_window("main"), dash)
-                                    {
-                                        let _ = win.navigate(url);
+                                    log::info!("back-to-dashboard: target {dash:?}");
+                                    match (app.get_webview_window("main"), dash) {
+                                        (Some(win), Some(url)) => {
+                                            if let Err(e) = win.navigate(url) {
+                                                log::error!("back-to-dashboard navigate failed: {e}");
+                                            }
+                                        }
+                                        _ => log::error!(
+                                            "back-to-dashboard: missing window or captured URL"
+                                        ),
                                     }
                                 });
                                 return false;
@@ -396,13 +438,14 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Log to a file (and stdout) in ALL builds so field issues on
+            // Windows are debuggable without a custom build. Written to the
+            // platform log dir (Windows: %APPDATA%/rocks.tfd.bridge/logs).
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
 
             // ── Reconcile autostart OS state with stored pref ──────────────
             #[cfg(desktop)]
