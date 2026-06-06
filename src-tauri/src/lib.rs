@@ -8,6 +8,78 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_store::StoreExt;
 
+// ── Auto-update ──────────────────────────────────────────────────────────────
+
+/// Check for an update and, when found, prompt the user to install it.
+/// On an `--autostart` (silent/login) launch, the modal is skipped — the check
+/// still runs so the result is logged, but we never pop a dialog at login.
+async fn check_for_update(app: AppHandle, silent: bool) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            log::warn!("Updater not available: {e}");
+            return;
+        }
+    };
+
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            log::info!("TFD Bridge is up to date");
+            return;
+        }
+        Err(e) => {
+            log::warn!("Update check failed (will retry next launch): {e}");
+            return;
+        }
+    };
+
+    log::info!(
+        "Update available: {} → {}",
+        env!("CARGO_PKG_VERSION"),
+        update.version
+    );
+
+    if silent {
+        // Do not interrupt a login-triggered launch with a modal.
+        return;
+    }
+
+    let confirmed = {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        app.dialog()
+            .message(format!(
+                "TFD Bridge {} is available. Install and restart now?",
+                update.version
+            ))
+            .title("Update Available")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Install".to_string(),
+                "Later".to_string(),
+            ))
+            .blocking_show()
+    };
+
+    if !confirmed {
+        return;
+    }
+
+    if let Err(e) = update
+        .download_and_install(
+            |_chunk, _total| {},
+            || log::info!("Update download finished"),
+        )
+        .await
+    {
+        log::error!("Failed to install update: {e}");
+        return;
+    }
+
+    app.restart();
+}
+
 // ── Bridge state ─────────────────────────────────────────────────────────────
 
 /// A running bridge paired with the path it is serving.
@@ -183,6 +255,7 @@ pub(crate) fn open_monitor_window(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(BridgeState(Mutex::new(None)));
@@ -301,10 +374,19 @@ pub fn run() {
                 .build(app)?;
 
             // ── If launched via autostart, stay silent in the tray ──────────
-            if std::env::args().any(|a| a == "--autostart") {
+            let autostart_launch = std::env::args().any(|a| a == "--autostart");
+            if autostart_launch {
                 for (_, window) in app.webview_windows() {
                     let _ = window.hide();
                 }
+            }
+
+            // ── Check for updates in the background ──────────────────────────
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    check_for_update(handle, autostart_launch).await;
+                });
             }
 
             // ── Start the bridge if onboarding is complete ──────────────────
