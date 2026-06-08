@@ -12,10 +12,22 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 // ── Auto-update ──────────────────────────────────────────────────────────────
 
-/// Check for an update and, when found, prompt the user to install it.
-/// On an `--autostart` (silent/login) launch, the modal is skipped — the check
-/// still runs so the result is logged, but we never pop a dialog at login.
-async fn check_for_update(app: AppHandle, silent: bool) {
+/// Controls how `check_for_update` behaves on each call site.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckMode {
+    /// Login / `--autostart` launch: run the check but never show any dialog.
+    Login,
+    /// Hourly background check: prompt only when an update is actually available.
+    Hourly,
+    /// Manual tray item: prompt on update AND show an "up to date" confirmation.
+    Manual,
+}
+
+/// Check for an update and handle the result according to `mode`:
+/// - `Login`  — silent; no dialog even when an update is found.
+/// - `Hourly` — quiet when up to date; prompts when an update is available.
+/// - `Manual` — always shows a result (update prompt or "up to date" dialog).
+async fn check_for_update(app: AppHandle, mode: CheckMode) {
     use tauri_plugin_updater::UpdaterExt;
 
     let updater = match app.updater() {
@@ -30,6 +42,13 @@ async fn check_for_update(app: AppHandle, silent: bool) {
         Ok(Some(u)) => u,
         Ok(None) => {
             log::info!("TFD Bridge is up to date");
+            if mode == CheckMode::Manual {
+                use tauri_plugin_dialog::DialogExt;
+                app.dialog()
+                    .message("TFD Bridge is already up to date.")
+                    .title("No Update Available")
+                    .blocking_show();
+            }
             return;
         }
         Err(e) => {
@@ -44,7 +63,7 @@ async fn check_for_update(app: AppHandle, silent: bool) {
         update.version
     );
 
-    if silent {
+    if mode == CheckMode::Login {
         // Do not interrupt a login-triggered launch with a modal.
         return;
     }
@@ -500,6 +519,13 @@ pub fn run() {
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let open_monitor =
                 MenuItem::with_id(app, "open_monitor", "Open Battle Monitor", true, None::<&str>)?;
+            let check_updates = MenuItem::with_id(
+                app,
+                "check_updates",
+                "Check for updates now",
+                true,
+                None::<&str>,
+            )?;
             let launch_on_login = CheckMenuItem::with_id(
                 app,
                 "launch_on_login",
@@ -510,8 +536,19 @@ pub fn run() {
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
-            let menu =
-                Menu::with_items(app, &[&open, &open_monitor, &sep, &launch_on_login, &quit])?;
+            let sep2 = PredefinedMenuItem::separator(app)?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &open,
+                    &open_monitor,
+                    &sep,
+                    &check_updates,
+                    &sep2,
+                    &launch_on_login,
+                    &quit,
+                ],
+            )?;
 
             // Store a reference to the check item so the event handler can
             // update the checkmark state without needing tray.menu().
@@ -541,6 +578,12 @@ pub fn run() {
                     }
                     "open_monitor" => {
                         open_monitor_window(app);
+                    }
+                    "check_updates" => {
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            check_for_update(handle, CheckMode::Manual).await;
+                        });
                     }
                     "launch_on_login" => {
                         // Read current OS state to determine new toggle value.
@@ -582,8 +625,26 @@ pub fn run() {
             // ── Check for updates in the background ──────────────────────────
             {
                 let handle = app.handle().clone();
+                let startup_mode = if autostart_launch {
+                    CheckMode::Login
+                } else {
+                    CheckMode::Hourly
+                };
                 tauri::async_runtime::spawn(async move {
-                    check_for_update(handle, autostart_launch).await;
+                    check_for_update(handle, startup_mode).await;
+                });
+            }
+
+            // ── Hourly background update checks ──────────────────────────────
+            // First fire is +1h so it doesn't overlap the startup check.
+            // Hourly: only surfaces a prompt when an update is actually available.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                        check_for_update(handle.clone(), CheckMode::Hourly).await;
+                    }
                 });
             }
 
