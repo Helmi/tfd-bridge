@@ -1,5 +1,6 @@
-.todos/
+.todos
 AGENTS.md
 CLAUDE.md
+private-sync/
 /target
 .DS_Store
