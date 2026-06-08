@@ -11,6 +11,18 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.2.4] — 2026-06-08
+
+### Added
+- **Window size and position are remembered.** The app reopens at the size, position, and maximized state you left it in, instead of always opening at the default 820×600.
+- **Hourly update checks** while the app is running, plus a tray **"Check for updates now"** item that reports the result (including when you're already up to date).
+- **Last view is restored on launch.** If Battle Monitor was open when you closed the app, it reopens on the monitor; otherwise it opens on the dashboard. (The monitor view is only restored once onboarding is complete.)
+
+### Fixed
+- **Battle Monitor no longer over-scrolls** past the bottom by the height of the top bar — content now sits flush below the bar with no dead gap.
+
+---
+
 ## [0.2.3] — 2026-06-06
 
 ### Added
@@ -99,7 +111,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/Helmi/tfd-bridge/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/Helmi/tfd-bridge/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Helmi/tfd-bridge/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Helmi/tfd-bridge/compare/v0.2.0...v0.2.1
