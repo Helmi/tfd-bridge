@@ -133,6 +133,7 @@ struct DashboardUrl(Mutex<Option<tauri::Url>>);
 
 const STORE_FILE: &str = "config.json";
 const KEY_LAUNCH_ON_LOGIN: &str = "launchOnLogin";
+const KEY_LAST_VIEW: &str = "lastView";
 
 // ── Bridge action logic ──────────────────────────────────────────────────────
 
@@ -220,6 +221,29 @@ fn save_launch_on_login(app: &tauri::AppHandle, enabled: bool) {
     if let Err(e) = store.save() {
         log::error!("Failed to save launch-on-login pref: {e}");
     }
+}
+
+/// Persist the last-active view (`"dashboard"` or `"monitor"`).
+fn save_last_view(app: &tauri::AppHandle, view: &str) {
+    let Ok(store) = app.store(STORE_FILE) else {
+        log::error!("Failed to open store when saving last-view pref");
+        return;
+    };
+    store.set(KEY_LAST_VIEW, serde_json::json!(view));
+    if let Err(e) = store.save() {
+        log::error!("Failed to save last-view pref: {e}");
+    }
+}
+
+/// Read the persisted last-active view.
+/// Returns `None` when the key is absent (first run) or cannot be parsed.
+fn read_last_view(app: &tauri::AppHandle) -> Option<String> {
+    let Ok(store) = app.store(STORE_FILE) else {
+        return None;
+    };
+    store
+        .get(KEY_LAST_VIEW)
+        .and_then(|v| v.as_str().map(|s| s.to_owned()))
 }
 
 /// Toggle OS autostart, persist the pref, and sync the tray checkmark.
@@ -356,6 +380,8 @@ pub(crate) fn open_monitor_window(app: &AppHandle) {
             Ok(url) => {
                 if let Err(e) = win.navigate(url) {
                     log::error!("open_monitor: navigate to monitor failed: {e}");
+                } else {
+                    save_last_view(app, "monitor");
                 }
             }
             Err(e) => log::error!("open_monitor: bad monitor URL: {e}"),
@@ -422,6 +448,7 @@ pub fn run() {
                                 return false;
                             }
                             SENTINEL_DASHBOARD => {
+                                save_last_view(webview.app_handle(), "dashboard");
                                 let app = webview.app_handle().clone();
                                 tauri::async_runtime::spawn(async move {
                                     let dash =
@@ -650,8 +677,31 @@ pub fn run() {
 
             // ── Start the bridge if onboarding is complete ──────────────────
             let cfg = commands::read_config(app.handle());
+            let onboarding_complete = !cfg.needs_onboarding();
             if let Some(replays_path) = cfg.replays_path {
                 apply_replays_path(app.handle(), replays_path);
+            }
+
+            // ── Restore last-active view (monitor or dashboard) ─────────────
+            // Only restore monitor when onboarding is complete — navigating to
+            // the remote monitor before the replays path is configured is wrong.
+            // Navigate directly (not via open_monitor_window) so window
+            // visibility is not touched; the autostart-hide block already handled that.
+            if onboarding_complete
+                && read_last_view(app.handle()).as_deref() == Some("monitor")
+            {
+                if let Some(win) = app.get_webview_window("main") {
+                    match MONITOR_URL.parse::<tauri::Url>() {
+                        Ok(url) => {
+                            if let Err(e) = win.navigate(url) {
+                                log::error!(
+                                    "startup view restore: navigate to monitor failed: {e}"
+                                );
+                            }
+                        }
+                        Err(e) => log::error!("startup view restore: bad monitor URL: {e}"),
+                    }
+                }
             }
 
             Ok(())
@@ -706,6 +756,29 @@ mod tests {
         let v = serde_json::json!(false);
         let result = Some(v).and_then(|v| v.as_bool()).unwrap_or(false);
         assert!(!result);
+    }
+
+    // ── last-view store parsing ───────────────────────────────────────────────
+
+    #[test]
+    fn last_view_absent_is_none() {
+        let v: Option<serde_json::Value> = None;
+        let result = v.and_then(|v| v.as_str().map(|s| s.to_owned()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn last_view_monitor_parses() {
+        let v = serde_json::json!("monitor");
+        let result = Some(v).and_then(|v| v.as_str().map(|s| s.to_owned()));
+        assert_eq!(result.as_deref(), Some("monitor"));
+    }
+
+    #[test]
+    fn last_view_dashboard_parses() {
+        let v = serde_json::json!("dashboard");
+        let result = Some(v).and_then(|v| v.as_str().map(|s| s.to_owned()));
+        assert_eq!(result.as_deref(), Some("dashboard"));
     }
 
     // ── decide_bridge_action tests ────────────────────────────────────────────
