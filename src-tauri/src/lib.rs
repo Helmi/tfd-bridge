@@ -8,6 +8,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_store::StoreExt;
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 // ── Auto-update ──────────────────────────────────────────────────────────────
 
@@ -358,6 +359,14 @@ fn show_main_window(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(
+            // Persist SIZE + POSITION + MAXIMIZED only.
+            // VISIBLE is intentionally excluded: show/hide is managed by the
+            // tray and the --autostart path; restoring VISIBLE would fight that.
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
@@ -444,6 +453,15 @@ pub fn run() {
                 }
                 // Otherwise close-to-tray: keep the app alive in the tray so the
                 // tray "Open" item can revive the window.
+                // Persist geometry now — the plugin's auto-save fires on RunEvent::Exit
+                // (real quit), but prevent_close() blocks the window's own close event
+                // from reaching the disk-write path, so we must flush explicitly here.
+                if let Err(e) = window
+                    .app_handle()
+                    .save_window_state(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+                {
+                    log::warn!("Failed to save window state on close-to-tray: {e}");
+                }
                 api.prevent_close();
                 let _ = window.hide();
             }
