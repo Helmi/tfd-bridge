@@ -299,7 +299,18 @@ const MONITOR_EMBED_JS: &str = r#"
     bar.appendChild(min);
     bar.appendChild(close);
     document.documentElement.appendChild(bar);
-    document.body.style.paddingTop = '34px';
+    // Push page content below the fixed bar WITHOUT adding to total scroll height.
+    // body { padding-top } alone makes 100vh children overflow by the bar height
+    // (100vh + 34px = overscroll). Instead: offset body down by 34px AND shrink
+    // min-h-screen / h-screen by the same amount so the net height stays 100vh.
+    var style = document.createElement('style');
+    style.id = 'tfd-embed-bar-style';
+    style.textContent = [
+      'body{padding-top:34px!important;}',
+      '.min-h-screen{min-height:calc(100vh - 34px)!important;}',
+      '.h-screen{height:calc(100vh - 34px)!important;}'
+    ].join('');
+    document.head.appendChild(style);
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', injectBar);
