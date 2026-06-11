@@ -1,12 +1,13 @@
 /// Tauri commands for first-start onboarding and replays-folder management.
 use crate::apply_replays_path;
+use crate::donation::DonationConsent;
 use bridge_core::{
     config::AppConfig,
     detection::{detect_replays_paths, validate_replays_folder, DetectedPath, SearchRoots},
 };
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_store::StoreExt;
 
@@ -15,6 +16,12 @@ const KEY_REPLAYS_PATH: &str = "replaysPath";
 const KEY_ONBOARDING_DONE: &str = "onboardingDone";
 const KEY_LAUNCH_ON_LOGIN: &str = "launchOnLogin";
 const KEY_REPLAY_WATERMARK: &str = "replayWatermarkMs";
+const KEY_DONATION_CONSENT: &str = "donationConsent";
+
+/// Event fired at the dashboard whenever the donation status may have changed
+/// (a consent decision, or an engine feature-flag refresh). Payload is a
+/// `DonationStatus`.
+pub const EVENT_DONATION_STATUS: &str = "donation-status-changed";
 
 // ── Response types ─────────────────────────────────────────────────────────────
 
@@ -33,6 +40,18 @@ pub struct SetPathResult {
     pub ok: bool,
     pub path: Option<PathBuf>,
     pub error: Option<String>,
+}
+
+/// Snapshot of the replay-donation status for the dashboard: the persisted
+/// tri-state consent plus the engine's `replay_donation` feature flag. The
+/// UI keeps the consent controls visible either way and only annotates the
+/// flag; the actual uploads-allowed AND-gate lives with the uploader
+/// (td-c8973d).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DonationStatus {
+    pub consent: DonationConsent,
+    pub remote_enabled: bool,
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────────
@@ -71,6 +90,31 @@ pub fn set_launch_on_login(app: AppHandle, enabled: bool) {
 #[tauri::command]
 pub fn open_monitor(app: AppHandle) {
     crate::open_monitor_window(&app);
+}
+
+/// Return the donation consent + remote-flag snapshot for the dashboard.
+/// While consent reads `unset` the UI shows the one active ask (onboarding
+/// for new installs, first dashboard run after update for existing ones).
+#[tauri::command]
+pub fn get_donation_status(app: AppHandle) -> DonationStatus {
+    donation_status(&app)
+}
+
+/// Persist a donation decision (from the active ask or the settings toggle).
+/// `opted_in: true` → OptedIn, `false` → Declined — the UI can never write
+/// `Unset` back, so once answered the ask never returns. The in-memory cache
+/// is synced before the event fires, so revoking stops the uploader
+/// (td-c8973d) immediately.
+#[tauri::command]
+pub fn set_donation_consent(app: AppHandle, opted_in: bool) {
+    let consent = if opted_in {
+        DonationConsent::OptedIn
+    } else {
+        DonationConsent::Declined
+    };
+    save_donation_consent(&app, consent);
+    crate::donation::set_consent(consent);
+    emit_donation_status(&app);
 }
 
 /// Confirm a detected or manually entered path and persist it.
@@ -226,6 +270,51 @@ fn advance_watermark(existing: Option<u64>, candidate: u64) -> Option<u64> {
     }
 }
 
+/// Build the current donation snapshot, reading consent through the store so
+/// the answer is correct even if a call races the startup cache seeding; the
+/// uploader's cache is re-synced from the same read.
+fn donation_status(app: &AppHandle) -> DonationStatus {
+    let consent = read_donation_consent(app);
+    crate::donation::set_consent(consent);
+    DonationStatus {
+        consent,
+        remote_enabled: crate::engine::features().replay_donation,
+    }
+}
+
+/// Emit the donation-status event so the dashboard updates live — fired after
+/// a consent decision and after an engine feature-flag refresh (lib.rs).
+pub fn emit_donation_status(app: &AppHandle) {
+    if let Err(e) = app.emit(EVENT_DONATION_STATUS, donation_status(app)) {
+        log::warn!("Failed to emit donation status: {e}");
+    }
+}
+
+/// Read the persisted donation consent from the store. Absent or garbled
+/// values read as `Unset` (see `DonationConsent::from_store_value`). Public
+/// so lib.rs can seed the uploader-facing cache at startup.
+pub fn read_donation_consent(app: &AppHandle) -> DonationConsent {
+    let Ok(store) = app.store(STORE_FILE) else {
+        return DonationConsent::Unset;
+    };
+    DonationConsent::from_store_value(store.get(KEY_DONATION_CONSENT).as_ref())
+}
+
+/// Persist the donation consent decision.
+fn save_donation_consent(app: &AppHandle, consent: DonationConsent) {
+    let Ok(store) = app.store(STORE_FILE) else {
+        log::error!("Failed to open store when saving donation consent");
+        return;
+    };
+    store.set(
+        KEY_DONATION_CONSENT,
+        serde_json::to_value(consent).unwrap_or(serde_json::Value::Null),
+    );
+    if let Err(e) = store.save() {
+        log::error!("Failed to save donation consent: {e}");
+    }
+}
+
 /// Read the persisted launch-on-login pref from the store.
 fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     let Ok(store) = app.store(STORE_FILE) else {
@@ -316,6 +405,32 @@ mod tests {
     fn watermark_never_moves_backwards_or_repeats() {
         assert_eq!(advance_watermark(Some(200), 200), None);
         assert_eq!(advance_watermark(Some(200), 100), None);
+    }
+
+    /// Guard the donation-status wire contract: camelCase field names, and
+    /// the consent enum as its snake_case string value (what the UI's
+    /// renderDonation switches on).
+    #[test]
+    fn donation_status_serialises_camel_case() {
+        let status = DonationStatus {
+            consent: DonationConsent::OptedIn,
+            remote_enabled: true,
+        };
+        let v = serde_json::to_value(&status).expect("serialisation failed");
+        assert_eq!(
+            v.get("consent").and_then(|c| c.as_str()),
+            Some("opted_in"),
+            "consent must serialise as its snake_case string, got: {v}"
+        );
+        assert_eq!(
+            v.get("remoteEnabled").and_then(|r| r.as_bool()),
+            Some(true),
+            "expected 'remoteEnabled', got: {v}"
+        );
+        assert!(
+            v.get("remote_enabled").is_none(),
+            "snake_case 'remote_enabled' must not appear in the serialised output"
+        );
     }
 
     #[test]
