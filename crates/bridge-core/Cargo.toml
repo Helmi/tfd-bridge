@@ -1,6 +1,6 @@
 [package]
 name = "bridge-core"
-version = "0.2.4"
+version = "0.3.0"
 edition = "2021"
 description = "OS-agnostic logic for the TFD Bridge: detection, parsing, config"
 license = "MIT"

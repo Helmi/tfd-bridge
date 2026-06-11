@@ -1,6 +1,6 @@
 [package]
 name = "tfd-bridge"
-version = "0.2.4"
+version = "0.3.0"
 description = "TFD Bridge — local companion app for the TFD World of Warships community"
 authors = []
 license = "MIT"

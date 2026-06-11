@@ -11,6 +11,19 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.3.0] — 2026-06-11
+
+### Added
+- **Replay donation (opt-in).** Donate your replays to the TFD community archive — the app asks once, and you can change your answer any time in settings.
+- **App version** shown in the dashboard title bar and the tray menu.
+- **Remote configuration.** The app checks `engine.tfd.rocks` hourly — replay donation can be paused server-side in case of problems, and an update prompt appears when the server requires a newer bridge version.
+
+### Security
+- The loopback bridge validates the `Host` header, blocking DNS-rebinding attacks against the local replay server.
+- Restrictive Content-Security-Policy for the bundled dashboard UI.
+
+---
+
 ## [0.2.4] — 2026-06-08
 
 ### Added
@@ -111,7 +124,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Helmi/tfd-bridge/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/Helmi/tfd-bridge/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/Helmi/tfd-bridge/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/Helmi/tfd-bridge/compare/v0.2.1...v0.2.2
