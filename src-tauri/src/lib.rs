@@ -392,6 +392,13 @@ pub(crate) fn open_monitor_window(app: &AppHandle) {
     }
 }
 
+/// Label for the disabled tray version item, e.g. "TFD Bridge v0.2.4".
+/// The version comes from the bundle version (`tauri.conf.json`) via
+/// `app.package_info().version` — never a hardcoded literal.
+fn tray_version_label(version: impl std::fmt::Display) -> String {
+    format!("TFD Bridge v{version}")
+}
+
 /// Bring the main window forward (tray "Open" / tray left-click).
 fn show_main_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
@@ -543,6 +550,15 @@ pub fn run() {
             // ── Build tray menu ──────────────────────────────────────────────
             let launch_on_login_checked = read_launch_on_login(app.handle());
 
+            // Disabled (greyed, non-clickable) version label at the top of the
+            // menu — an inert build indicator, so it gets no click-handler arm.
+            let version = MenuItem::with_id(
+                app,
+                "version",
+                tray_version_label(&app.package_info().version),
+                false,
+                None::<&str>,
+            )?;
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let open_monitor =
                 MenuItem::with_id(app, "open_monitor", "Open Battle Monitor", true, None::<&str>)?;
@@ -562,11 +578,14 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let sep_version = PredefinedMenuItem::separator(app)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let sep2 = PredefinedMenuItem::separator(app)?;
             let menu = Menu::with_items(
                 app,
                 &[
+                    &version,
+                    &sep_version,
                     &open,
                     &open_monitor,
                     &sep,
@@ -779,6 +798,21 @@ mod tests {
         let v = serde_json::json!("dashboard");
         let result = Some(v).and_then(|v| v.as_str().map(|s| s.to_owned()));
         assert_eq!(result.as_deref(), Some("dashboard"));
+    }
+
+    // ── tray version label ────────────────────────────────────────────────────
+
+    #[test]
+    fn tray_version_label_formats_semver() {
+        assert_eq!(tray_version_label("0.2.4"), "TFD Bridge v0.2.4");
+    }
+
+    #[test]
+    fn tray_version_label_tracks_package_version() {
+        // The label must follow whatever the package version is — no drift.
+        let label = tray_version_label(env!("CARGO_PKG_VERSION"));
+        assert_eq!(label, format!("TFD Bridge v{}", env!("CARGO_PKG_VERSION")));
+        assert!(label.starts_with("TFD Bridge v"));
     }
 
     // ── decide_bridge_action tests ────────────────────────────────────────────
