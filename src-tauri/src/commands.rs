@@ -114,6 +114,11 @@ pub fn set_donation_consent(app: AppHandle, opted_in: bool) {
     };
     save_donation_consent(&app, consent);
     crate::donation::set_consent(consent);
+    // The uploader (td-c8973d) reacts to the decision: opting in triggers
+    // the one-time 30-day backfill scan, revoking clears its queue.  The
+    // cache write above is what stops uploads immediately — this only
+    // handles the queue/backfill bookkeeping.
+    crate::on_donation_consent_changed(&app, consent);
     emit_donation_status(&app);
 }
 
