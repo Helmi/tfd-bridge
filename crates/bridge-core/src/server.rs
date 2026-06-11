@@ -18,6 +18,10 @@
 /// All responses include CORS headers that allow the canonical origin
 /// `https://engine.tfd.rocks`.  A secondary `dev_origin` can be passed for
 /// local development.  Requests from all other origins get no ACAO header.
+///
+/// As a DNS-rebinding defence, every request must carry a Host header of
+/// exactly `127.0.0.1:<bound-port>` or `localhost:<bound-port>`; anything
+/// else is rejected with 403 (and no CORS headers) before routing.
 use notify::{RecursiveMode, Watcher};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
@@ -152,7 +156,7 @@ fn start_on_ports(
     };
 
     thread::spawn(move || {
-        handle_requests(&server_clone, &replays_dir, &allowed_origins, &gen_clone2);
+        handle_requests(&server_clone, &replays_dir, &allowed_origins, &gen_clone2, port);
     });
 
     Ok(Bridge {
@@ -195,12 +199,36 @@ fn handle_requests(
     replays_dir: &Path,
     allowed_origins: &[String],
     generation: &AtomicU64,
+    port: u16,
 ) {
     loop {
         let request = match server.recv() {
             Ok(r) => r,
             Err(_) => break,
         };
+
+        // DNS-rebinding defence: validate the Host header BEFORE routing so
+        // every endpoint is covered.  A browser request that was DNS-rebound
+        // to 127.0.0.1 still carries the attacker's hostname in Host, so only
+        // the two loopback spellings with the actual bound port are accepted.
+        // Rejections get a 403 with no CORS headers.
+        let host = request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("Host"))
+            .map(|h| h.value.as_str().to_string());
+        let host_ok = host
+            .as_deref()
+            .map(|h| is_allowed_host(h, port))
+            .unwrap_or(false);
+        if !host_ok {
+            let response =
+                make_json_response(StatusCode(403), r#"{"error":"forbidden"}"#, None);
+            if let Err(e) = request.respond(response) {
+                log::warn!("Bridge: failed to send response: {e}");
+            }
+            continue;
+        }
 
         let origin = request
             .headers()
@@ -356,6 +384,16 @@ fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<
 }
 
 // ── Pure helpers ───────────────────────────────────────────────────────────────
+
+/// Returns `true` iff `host` is exactly `127.0.0.1:<port>` or
+/// `localhost:<port>` for the actually-bound port.  This defeats DNS
+/// rebinding: a rebound request always carries the attacker's hostname in
+/// Host, never a loopback spelling.  The match is deliberately exact
+/// (fail-closed) — browsers send lowercase hostnames and always include a
+/// non-default port, so no other spellings are needed.
+fn is_allowed_host(host: &str, port: u16) -> bool {
+    host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
+}
 
 /// Returns `true` for files that the bridge serves and watches:
 /// - `*.wowsreplay` archive files
@@ -628,6 +666,33 @@ mod tests {
         );
     }
 
+    /// is_allowed_host accepts exactly the two loopback spellings with the
+    /// bound port (DNS-rebinding defence, td-a5cdbb).
+    #[test]
+    fn is_allowed_host_accepts_loopback_spellings() {
+        assert!(is_allowed_host("127.0.0.1:43210", 43210));
+        assert!(is_allowed_host("localhost:43210", 43210));
+    }
+
+    /// is_allowed_host rejects everything that is not an exact loopback match.
+    #[test]
+    fn is_allowed_host_rejects_everything_else() {
+        // Attacker hostname — the DNS-rebinding case.
+        assert!(!is_allowed_host("attacker.com:43210", 43210));
+        // Right hostname, wrong port.
+        assert!(!is_allowed_host("127.0.0.1:43211", 43210));
+        assert!(!is_allowed_host("localhost:43211", 43210));
+        // Missing port (browsers always send the non-default port).
+        assert!(!is_allowed_host("127.0.0.1", 43210));
+        assert!(!is_allowed_host("localhost", 43210));
+        // Exact match is deliberate: no alternative loopback spellings.
+        assert!(!is_allowed_host("LOCALHOST:43210", 43210));
+        assert!(!is_allowed_host("[::1]:43210", 43210));
+        // Hostname that merely starts with the loopback IP.
+        assert!(!is_allowed_host("127.0.0.1.attacker.com:43210", 43210));
+        assert!(!is_allowed_host("", 43210));
+    }
+
     // ── Integration tests ─────────────────────────────────────────────────────
 
     /// Bind port 0 (OS-assigned) instead of a fixed port to avoid collisions
@@ -692,6 +757,31 @@ mod tests {
             .map(|(_, v)| v.clone())
     }
 
+    /// Send a raw HTTP/1.1 GET with an arbitrary Host header.  ureq always
+    /// derives Host from the URL, so Host-spoofing tests need a raw TCP
+    /// request.  Always sends the allowed Origin so that CORS-header
+    /// assertions on the response are meaningful.
+    /// Returns (status, full raw response text incl. headers).
+    fn raw_get_with_host(port: u16, path: &str, host: &str) -> (u16, String) {
+        use std::io::Write;
+        use std::net::TcpStream;
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let request = format!(
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nOrigin: https://engine.tfd.rocks\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw).unwrap();
+        // Status line looks like "HTTP/1.1 403 Forbidden".
+        let status: u16 = raw
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("no status code in response: {raw:?}"));
+        (status, raw)
+    }
+
     #[test]
     fn health_returns_200_with_json() {
         let tmp = TempDir::new().unwrap();
@@ -734,6 +824,86 @@ mod tests {
             acao.is_none(),
             "ACAO header must NOT be present for unknown origin, got: {acao:?}"
         );
+        bridge.stop();
+    }
+
+    // ── Host-header validation tests (DNS-rebinding defence, td-a5cdbb) ──────
+
+    /// A request whose Host is a foreign hostname (the DNS-rebound case) must
+    /// be rejected with 403 on EVERY endpoint — the check runs before routing.
+    #[test]
+    fn host_validation_rejects_foreign_host_on_all_endpoints() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let host = format!("attacker.com:{}", bridge.port());
+        for path in [
+            "/v1/health",
+            "/v1/replays",
+            "/v1/replays/latest",
+            "/v1/replays/game.wowsreplay",
+        ] {
+            let (status, _) = raw_get_with_host(bridge.port(), path, &host);
+            assert_eq!(status, 403, "{path} must return 403 for foreign Host");
+        }
+        bridge.stop();
+    }
+
+    /// The 403 rejection must NOT carry CORS headers, even though the request
+    /// sends the allowed Origin (raw_get_with_host always does).
+    #[test]
+    fn host_validation_403_has_no_cors_headers() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let host = format!("attacker.com:{}", bridge.port());
+        let (status, raw) = raw_get_with_host(bridge.port(), "/v1/health", &host);
+        assert_eq!(status, 403);
+        assert!(
+            !raw.to_ascii_lowercase().contains("access-control-allow-"),
+            "403 must not include CORS headers, got:\n{raw}"
+        );
+        bridge.stop();
+    }
+
+    /// Right hostname but wrong port in Host must be rejected.
+    #[test]
+    fn host_validation_rejects_wrong_port() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let host = format!("127.0.0.1:{}", bridge.port().wrapping_add(1));
+        let (status, _) = raw_get_with_host(bridge.port(), "/v1/health", &host);
+        assert_eq!(status, 403, "wrong port in Host must return 403");
+        bridge.stop();
+    }
+
+    /// Regression: the genuine loopback Host (`127.0.0.1:<port>`, what browsers
+    /// send when fetching the bridge URL) must still get 200 on every endpoint.
+    #[test]
+    fn host_validation_accepts_loopback_ip_on_all_endpoints() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let host = format!("127.0.0.1:{}", bridge.port());
+        for path in [
+            "/v1/health",
+            "/v1/replays",
+            "/v1/replays/latest",
+            "/v1/replays/game.wowsreplay",
+        ] {
+            let (status, _) = raw_get_with_host(bridge.port(), path, &host);
+            assert_eq!(status, 200, "{path} must return 200 for loopback Host");
+        }
+        bridge.stop();
+    }
+
+    /// `localhost:<port>` is the other accepted Host spelling.
+    #[test]
+    fn host_validation_accepts_localhost() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let host = format!("localhost:{}", bridge.port());
+        let (status, _) = raw_get_with_host(bridge.port(), "/v1/health", &host);
+        assert_eq!(status, 200, "localhost Host must be accepted");
         bridge.stop();
     }
 
