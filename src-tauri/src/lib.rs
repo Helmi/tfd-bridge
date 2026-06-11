@@ -1,4 +1,5 @@
 mod commands;
+pub mod donation;
 pub mod engine;
 
 use bridge_core::finalize::{FinalizeOptions, FinalizedCallback};
@@ -109,7 +110,13 @@ async fn check_for_update(app: AppHandle, mode: CheckMode) {
 /// demands a newer bridge (HTTP 426, or `min_bridge_version` above the
 /// running version), surface the existing updater flow as a visible nudge.
 async fn refresh_engine_config(app: AppHandle) {
-    let needs_nudge = match engine::refresh_config().await {
+    let outcome = engine::refresh_config().await;
+    // A fresh config may have flipped the replay_donation flag — let the
+    // dashboard's donation card reflect it without waiting for a reload.
+    if matches!(outcome, engine::RefreshOutcome::Updated { .. }) {
+        commands::emit_donation_status(&app);
+    }
+    let needs_nudge = match outcome {
         engine::RefreshOutcome::Updated { upgrade_nudge } => upgrade_nudge,
         engine::RefreshOutcome::UpgradeRequired => true,
         engine::RefreshOutcome::Skipped | engine::RefreshOutcome::Failed => false,
@@ -754,6 +761,13 @@ pub fn run() {
                 });
             }
 
+            // ── Seed the donation-consent cache from the store ──────────────
+            // The uploader (td-c8973d) reads donation::consent() without an
+            // AppHandle — seed it here so an autostart run where the dashboard
+            // never loads still sees the persisted decision; the donation
+            // commands keep it in sync from then on.
+            donation::set_consent(commands::read_donation_consent(app.handle()));
+
             // ── Start the bridge if onboarding is complete ──────────────────
             let cfg = commands::read_config(app.handle());
             let onboarding_complete = !cfg.needs_onboarding();
@@ -791,6 +805,8 @@ pub fn run() {
             commands::pick_replays_folder,
             commands::set_launch_on_login,
             commands::open_monitor,
+            commands::get_donation_status,
+            commands::set_donation_consent,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
