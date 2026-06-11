@@ -22,6 +22,13 @@
 /// As a DNS-rebinding defence, every request must carry a Host header of
 /// exactly `127.0.0.1:<bound-port>` or `localhost:<bound-port>`; anything
 /// else is rejected with 403 (and no CORS headers) before routing.
+///
+/// The same file watcher that drives the generation counter also feeds the
+/// optional replay-finalized detector (see `finalize.rs`): `tempArenaInfo.json`
+/// transitions are battle start/end signals, and a battle end triggers the
+/// stability + structural checks that announce the newest `.wowsreplay` as
+/// finalized.  There is exactly ONE watcher per bridge.
+use crate::finalize::{FinalizeDetector, FinalizeOptions, TEMP_ARENA_INFO};
 use notify::{RecursiveMode, Watcher};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
@@ -62,6 +69,9 @@ pub struct Bridge {
     server: Arc<Server>,
     /// Monotonically increasing counter incremented on every replay-dir change.
     generation: Arc<AtomicU64>,
+    /// Replay-finalized detector (None when started without finalize options).
+    /// Held so `stop()` can cancel in-flight finalize workers.
+    detector: Option<Arc<FinalizeDetector>>,
     /// Keep the watcher alive as long as the bridge is alive.
     _watcher: notify::RecommendedWatcher,
 }
@@ -78,8 +88,12 @@ impl Bridge {
     }
 
     /// Signal the HTTP server to stop and wait for the handler thread to exit.
-    /// Consuming `self` ensures the watcher is also dropped.
+    /// Consuming `self` ensures the watcher is also dropped.  In-flight
+    /// finalize workers are cancelled so no events fire after stop.
     pub fn stop(self) {
+        if let Some(det) = &self.detector {
+            det.cancel();
+        }
         self.server.unblock();
     }
 }
@@ -103,18 +117,33 @@ pub struct ReplayEntry {
 /// Tries to bind 43210 first, falls back through 43211-43214.
 /// Returns an error only if all five ports are occupied.
 pub fn start(replays_dir: PathBuf, dev_origin: Option<String>) -> Result<Bridge, BridgeError> {
+    start_with_finalize(replays_dir, dev_origin, None)
+}
+
+/// Start the bridge server with optional replay-finalized detection.
+///
+/// When `finalize` is `Some`, the bridge's file watcher additionally drives a
+/// [`FinalizeDetector`]: battle-end transitions (and a startup catch-up scan
+/// gated by the caller's watermark) emit [`crate::finalize::ReplayFinalizedEvent`]s
+/// through the callback in the options.
+pub fn start_with_finalize(
+    replays_dir: PathBuf,
+    dev_origin: Option<String>,
+    finalize: Option<FinalizeOptions>,
+) -> Result<Bridge, BridgeError> {
     let candidates: Vec<u16> = std::iter::once(CANONICAL_PORT)
         .chain(FALLBACK_PORTS)
         .collect();
-    start_on_ports(replays_dir, dev_origin, &candidates)
+    start_on_ports(replays_dir, dev_origin, &candidates, finalize)
 }
 
 /// Internal start that accepts an explicit list of ports to try in order.
 /// Port 0 means "let the OS pick" (used in tests to avoid collisions).
-fn start_on_ports(
+pub(crate) fn start_on_ports(
     replays_dir: PathBuf,
     dev_origin: Option<String>,
     ports: &[u16],
+    finalize: Option<FinalizeOptions>,
 ) -> Result<Bridge, BridgeError> {
     let (server, port) = bind_server(ports)?;
 
@@ -124,11 +153,25 @@ fn start_on_ports(
     let gen_clone = Arc::clone(&generation);
     let dir_clone = replays_dir.clone();
 
+    // Replay-finalized detection shares THIS watcher: the detector is fed
+    // tempArenaInfo.json transitions from the same callback that bumps the
+    // generation counter, so there is exactly one notify watcher per bridge.
+    let detector = finalize.map(|opts| FinalizeDetector::new(replays_dir.clone(), opts));
+    let det_clone = detector.clone();
+
     // File watcher: bump generation on any change to served files in the replays dir.
     // Covers *.wowsreplay archives and tempArenaInfo.json (live battle roster).
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             if event.kind.is_create() || event.kind.is_modify() || event.kind.is_remove() {
+                // Feed roster transitions to the finalize detector BEFORE the
+                // generation bump, so anyone who observed the bump can rely on
+                // the detector having seen the same event.
+                if let Some(det) = &det_clone {
+                    for p in event.paths.iter().filter(|p| is_temp_arena_info(p)) {
+                        det.observe_temp_file(p);
+                    }
+                }
                 let affects_replays = event.paths.iter().any(|p| is_served_file(p));
                 if affects_replays {
                     gen_clone.fetch_add(1, Ordering::SeqCst);
@@ -141,6 +184,13 @@ fn start_on_ports(
     watcher
         .watch(&dir_clone, RecursiveMode::Recursive)
         .map_err(|e| BridgeError::Watch(e.to_string()))?;
+
+    // Startup catch-up: emit finalized events for archives that landed while
+    // the app was not running (modified after the caller's watermark).  Spawned
+    // AFTER the watcher is active so a battle ending mid-scan is still seen.
+    if let Some(det) = &detector {
+        det.start_catch_up();
+    }
 
     // Spawn handler thread.
     let server_clone = Arc::clone(&server);
@@ -163,6 +213,7 @@ fn start_on_ports(
         port,
         server,
         generation,
+        detector,
         _watcher: watcher,
     })
 }
@@ -395,6 +446,14 @@ fn is_allowed_host(host: &str, port: u16) -> bool {
     host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
 }
 
+/// Returns `true` iff `path` is the live battle roster file
+/// `tempArenaInfo.json` (case-insensitive), at any depth.
+fn is_temp_arena_info(path: &Path) -> bool {
+    path.file_name()
+        .map(|n| n.eq_ignore_ascii_case(TEMP_ARENA_INFO))
+        .unwrap_or(false)
+}
+
 /// Returns `true` for files that the bridge serves and watches:
 /// - `*.wowsreplay` archive files
 /// - `tempArenaInfo.json` (the live battle roster, case-insensitive)
@@ -406,9 +465,7 @@ fn is_served_file(path: &Path) -> bool {
     {
         return true;
     }
-    path.file_name()
-        .map(|n| n.eq_ignore_ascii_case("tempArenaInfo.json"))
-        .unwrap_or(false)
+    is_temp_arena_info(path)
 }
 
 /// List all `.wowsreplay` files and `tempArenaInfo.json` in `dir`, recursively.
@@ -698,7 +755,7 @@ mod tests {
     /// Bind port 0 (OS-assigned) instead of a fixed port to avoid collisions
     /// between parallel tests or an already-running bridge.
     fn start_test_bridge(tmp_dir: &TempDir) -> Bridge {
-        start_on_ports(tmp_dir.path().to_path_buf(), None, &[0])
+        start_on_ports(tmp_dir.path().to_path_buf(), None, &[0], None)
             .expect("bridge start failed")
     }
 

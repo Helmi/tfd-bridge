@@ -14,6 +14,7 @@ const STORE_FILE: &str = "config.json";
 const KEY_REPLAYS_PATH: &str = "replaysPath";
 const KEY_ONBOARDING_DONE: &str = "onboardingDone";
 const KEY_LAUNCH_ON_LOGIN: &str = "launchOnLogin";
+const KEY_REPLAY_WATERMARK: &str = "replayWatermarkMs";
 
 // ── Response types ─────────────────────────────────────────────────────────────
 
@@ -167,10 +168,12 @@ fn load_config(app: &AppHandle) -> AppConfig {
         .get(KEY_ONBOARDING_DONE)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let replay_watermark_ms = store.get(KEY_REPLAY_WATERMARK).and_then(|v| v.as_u64());
 
     AppConfig {
         replays_path,
         onboarding_done,
+        replay_watermark_ms,
     }
 }
 
@@ -187,9 +190,39 @@ fn save_config(app: &AppHandle, cfg: &AppConfig) {
         );
     }
     store.set(KEY_ONBOARDING_DONE, serde_json::json!(cfg.onboarding_done));
+    if let Some(wm) = cfg.replay_watermark_ms {
+        store.set(KEY_REPLAY_WATERMARK, serde_json::json!(wm));
+    }
 
     if let Err(e) = store.save() {
         log::error!("Failed to save store: {e}");
+    }
+}
+
+/// Persist the replay-finalized watermark if `candidate` advances it.
+/// Called from the bridge's finalized-event callback (worker thread) and from
+/// the first-run seeding in `lib.rs` — the monotonic guard makes both safe.
+pub fn save_replay_watermark(app: &AppHandle, candidate_ms: u64) {
+    let Ok(store) = app.store(STORE_FILE) else {
+        log::error!("Failed to open store when saving replay watermark");
+        return;
+    };
+    let existing = store.get(KEY_REPLAY_WATERMARK).and_then(|v| v.as_u64());
+    let Some(next) = advance_watermark(existing, candidate_ms) else {
+        return; // candidate does not advance the watermark — nothing to write
+    };
+    store.set(KEY_REPLAY_WATERMARK, serde_json::json!(next));
+    if let Err(e) = store.save() {
+        log::error!("Failed to save replay watermark: {e}");
+    }
+}
+
+/// Pure monotonic-advance rule for the watermark: returns the new value only
+/// when `candidate` is strictly greater than the existing one.
+fn advance_watermark(existing: Option<u64>, candidate: u64) -> Option<u64> {
+    match existing {
+        Some(e) if candidate <= e => None,
+        _ => Some(candidate),
     }
 }
 
@@ -265,6 +298,24 @@ mod tests {
             v.get("launch_on_login").is_none(),
             "snake_case 'launch_on_login' must not appear in the serialised output"
         );
+    }
+
+    // ── replay watermark advance rule ────────────────────────────────────────
+
+    #[test]
+    fn watermark_seeds_when_absent() {
+        assert_eq!(advance_watermark(None, 100), Some(100));
+    }
+
+    #[test]
+    fn watermark_advances_on_newer_candidate() {
+        assert_eq!(advance_watermark(Some(100), 200), Some(200));
+    }
+
+    #[test]
+    fn watermark_never_moves_backwards_or_repeats() {
+        assert_eq!(advance_watermark(Some(200), 200), None);
+        assert_eq!(advance_watermark(Some(200), 100), None);
     }
 
     #[test]
