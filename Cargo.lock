@@ -4462,6 +4462,9 @@ version = "0.2.4"
 dependencies = [
  "bridge-core",
  "log",
+ "reqwest",
+ "rustls",
+ "semver",
  "serde",
  "serde_json",
  "tauri",
@@ -4473,6 +4476,7 @@ dependencies = [
  "tauri-plugin-store",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tiny_http",
  "tokio",
 ]
 

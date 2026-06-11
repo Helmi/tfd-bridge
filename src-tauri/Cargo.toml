@@ -30,6 +30,19 @@ tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 tokio = { version = "1", features = ["time"] }
+# Engine-facing HTTP client (src/engine.rs). The feature choice mirrors
+# tauri-plugin-updater's stack exactly (reqwest with rustls-no-provider, plus
+# the ring provider pinned on rustls directly) so no second TLS stack is
+# pulled into the build.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+semver = "1"
+
+[dev-dependencies]
+# Local mock engine for src/engine.rs tests (no live network in cargo test);
+# already in the tree via bridge-core.
+tiny_http = "0.12"
+tokio = { version = "1", features = ["macros", "rt"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.1"

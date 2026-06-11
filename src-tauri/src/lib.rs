@@ -1,4 +1,5 @@
 mod commands;
+pub mod engine;
 
 use bridge_core::server::{self, Bridge};
 use std::path::{Path, PathBuf};
@@ -99,6 +100,24 @@ async fn check_for_update(app: AppHandle, mode: CheckMode) {
     }
 
     app.restart();
+}
+
+// ── Engine remote config ─────────────────────────────────────────────────────
+
+/// Refresh the engine bridge-config (see `engine.rs`) and, when the engine
+/// demands a newer bridge (HTTP 426, or `min_bridge_version` above the
+/// running version), surface the existing updater flow as a visible nudge.
+async fn refresh_engine_config(app: AppHandle) {
+    let needs_nudge = match engine::refresh_config().await {
+        engine::RefreshOutcome::Updated { upgrade_nudge } => upgrade_nudge,
+        engine::RefreshOutcome::UpgradeRequired => true,
+        engine::RefreshOutcome::Skipped | engine::RefreshOutcome::Failed => false,
+    };
+    // claim_update_nudge() succeeds once per run, so the nudge can never nag
+    // on every hourly refresh.
+    if needs_nudge && engine::claim_update_nudge() {
+        check_for_update(app, CheckMode::Hourly).await;
+    }
 }
 
 // ── Bridge state ─────────────────────────────────────────────────────────────
@@ -668,7 +687,7 @@ pub fn run() {
                 }
             }
 
-            // ── Check for updates in the background ──────────────────────────
+            // ── Check for updates + fetch engine config in the background ────
             {
                 let handle = app.handle().clone();
                 let startup_mode = if autostart_launch {
@@ -677,19 +696,25 @@ pub fn run() {
                     CheckMode::Hourly
                 };
                 tauri::async_runtime::spawn(async move {
-                    check_for_update(handle, startup_mode).await;
+                    check_for_update(handle.clone(), startup_mode).await;
+                    // Engine config follows the update check sequentially so a
+                    // possible update dialog never overlaps the 426 nudge.
+                    refresh_engine_config(handle).await;
                 });
             }
 
-            // ── Hourly background update checks ──────────────────────────────
+            // ── Hourly background update checks + engine-config refresh ──────
             // First fire is +1h so it doesn't overlap the startup check.
             // Hourly: only surfaces a prompt when an update is actually available.
+            // The engine bridge-config refresh piggybacks the same timer, so a
+            // server-side feature-flag flip takes effect within the hour.
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     loop {
                         tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                         check_for_update(handle.clone(), CheckMode::Hourly).await;
+                        refresh_engine_config(handle.clone()).await;
                     }
                 });
             }
