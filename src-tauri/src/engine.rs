@@ -32,6 +32,8 @@ use std::time::Duration;
 
 const ENGINE_BASE_URL: &str = "https://engine.tfd.rocks";
 const CONFIG_PATH: &str = "/api/v1/bridge/config";
+/// Replay-donation intake (the uploader's endpoint, td-c8973d).
+pub(crate) const DONATE_REPLAY_PATH: &str = "/api/v1/bridge/donate-replay";
 const VERSION_HEADER: &str = "X-TFD-Bridge-Version";
 /// The running bridge version, straight from the package metadata.
 const BRIDGE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -133,6 +135,17 @@ pub async fn refresh_config() -> RefreshOutcome {
 /// Returns `true` exactly once so hourly refreshes can never nag repeatedly.
 pub fn claim_update_nudge() -> bool {
     claim_nudge_of(&STATE)
+}
+
+/// The shared engine client, for other engine-facing modules (the donation
+/// uploader): every request through it carries the contract headers.
+pub(crate) fn shared_client() -> &'static reqwest::Client {
+    http_client()
+}
+
+/// Absolute engine URL for an API `path` — always the production base.
+pub(crate) fn endpoint(path: &str) -> String {
+    format!("{ENGINE_BASE_URL}{path}")
 }
 
 // ── Implementation ───────────────────────────────────────────────────────────

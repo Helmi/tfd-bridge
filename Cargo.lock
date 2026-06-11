@@ -4461,12 +4461,14 @@ name = "tfd-bridge"
 version = "0.2.4"
 dependencies = [
  "bridge-core",
+ "hex",
  "log",
  "reqwest",
  "rustls",
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -4476,6 +4478,7 @@ dependencies = [
  "tauri-plugin-store",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tempfile",
  "tiny_http",
  "tokio",
 ]

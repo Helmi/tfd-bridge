@@ -342,7 +342,10 @@ fn handle_health() -> Response<std::io::Cursor<Vec<u8>>> {
     let body = serde_json::to_string(&Health {
         name: "tfd-bridge",
         version: crate::version(),
-        capabilities: &["replays-v1", "live-v1"],
+        // "replay_donation" advertises the donation upload pipeline
+        // (td-c8973d) for the browser-side probe; the bridge uploads
+        // directly to the engine — the loopback API itself is unchanged.
+        capabilities: &["replays-v1", "live-v1", "replay_donation"],
     })
     .unwrap_or_default();
 
@@ -1534,6 +1537,29 @@ mod tests {
         assert!(
             caps.contains(&"live-v1"),
             "health capabilities must include 'live-v1', got: {caps:?}"
+        );
+        bridge.stop();
+    }
+
+    /// /v1/health capabilities must include "replay_donation" (td-c8973d) so
+    /// the browser-side probe can detect the donation upload pipeline.
+    #[test]
+    fn health_advertises_replay_donation_capability() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/v1/health", bridge.port());
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+        let caps: Vec<&str> = v["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap())
+            .collect();
+        assert!(
+            caps.contains(&"replay_donation"),
+            "health capabilities must include 'replay_donation', got: {caps:?}"
         );
         bridge.stop();
     }

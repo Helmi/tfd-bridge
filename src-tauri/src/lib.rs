@@ -1,6 +1,7 @@
 mod commands;
 pub mod donation;
 pub mod engine;
+pub mod uploader;
 
 use bridge_core::finalize::{FinalizeOptions, FinalizedCallback};
 use bridge_core::server::{self, Bridge};
@@ -140,6 +141,11 @@ struct ActiveBridge {
 /// `None` when the replays path is not yet configured.
 struct BridgeState(Mutex<Option<ActiveBridge>>);
 
+/// Managed state for the donation upload pipeline (td-c8973d).  One uploader
+/// per active bridge — created alongside it in `apply_replays_path`, so
+/// `None` exactly while no bridge runs.
+struct UploaderState(Mutex<Option<Arc<uploader::Uploader>>>);
+
 // ── Tray state ────────────────────────────────────────────────────────────────
 
 /// Managed state for the launch-on-login tray item.
@@ -200,9 +206,14 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             log::info!("Bridge already serving the configured path — no change");
         }
         BridgeAction::Start | BridgeAction::Restart => {
-            // Stop the existing bridge (if any) before starting a new one.
+            // Stop the existing bridge (if any) before starting a new one,
+            // and the donation uploader tied to it — a fresh one is created
+            // below against the (possibly different) replays dir.
             if let Some(ab) = guard.take() {
                 ab.bridge.stop();
+            }
+            if let Some(up) = app.state::<UploaderState>().0.lock().unwrap().take() {
+                up.cancel();
             }
             // Only honour TFD_BRIDGE_DEV_ORIGIN in debug builds so release
             // builds keep CORS strictly limited to https://engine.tfd.rocks.
@@ -211,12 +222,19 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             } else {
                 None
             };
+            // Donation upload pipeline (td-c8973d): consumes the finalized
+            // events below; gates on consent + the engine feature flag itself.
+            let donation_uploader = uploader::Uploader::new(uploader::UploaderOptions::production(
+                path.clone(),
+                donation_ledger_path(app),
+            ));
             // Replay-finalized detection: subscribe with a callback that logs
-            // the event and persists the watermark so catch-up after a restart
-            // never re-emits.  The donation uploader (td-c8973d) will hook in
-            // here as an additional subscriber action.
+            // the event, persists the watermark so catch-up after a restart
+            // never re-emits, and hands the file to the donation uploader
+            // (which only queues it — heavy work stays off this callback).
             let watermark_ms = ensure_replay_watermark(app);
             let handle = app.clone();
+            let uploader_cb = Arc::clone(&donation_uploader);
             let on_finalized: FinalizedCallback = Arc::new(move |event| {
                 log::info!(
                     "Replay finalized: {} ({} bytes, mtime {} ms)",
@@ -225,15 +243,25 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
                     event.modified_ms
                 );
                 commands::save_replay_watermark(&handle, event.modified_ms);
+                uploader_cb.on_replay_finalized(&event.path);
             });
             let finalize = FinalizeOptions::new(watermark_ms, on_finalized);
             match server::start_with_finalize(path.clone(), dev_origin, Some(finalize)) {
                 Ok(bridge) => {
                     log::info!("Bridge started on port {}", bridge.port());
                     *guard = Some(ActiveBridge { path, bridge });
+                    // Startup catch-up + backfill resume: scan for donate-able
+                    // replays (30-day window, not in the ledger).  No-op while
+                    // consent is not opted in; the opt-in command triggers the
+                    // scan for users who consent later.
+                    if donation::consent().is_opted_in() {
+                        donation_uploader.spawn_scan();
+                    }
+                    *app.state::<UploaderState>().0.lock().unwrap() = Some(donation_uploader);
                 }
                 Err(e) => {
                     log::error!("Failed to start bridge: {e}");
+                    donation_uploader.cancel();
                 }
             }
         }
@@ -256,6 +284,41 @@ fn ensure_replay_watermark(app: &tauri::AppHandle) -> u64 {
         .unwrap_or(0);
     commands::save_replay_watermark(app, now_ms);
     now_ms
+}
+
+/// Where the donation upload ledger lives — next to the config store in the
+/// per-app data dir (Windows: %APPDATA%/rocks.tfd.bridge/donation-ledger.json).
+fn donation_ledger_path(app: &tauri::AppHandle) -> PathBuf {
+    match app.path().app_data_dir() {
+        Ok(dir) => dir.join("donation-ledger.json"),
+        Err(e) => {
+            // Practically unreachable on desktop; fall back to the working
+            // dir rather than disabling the (fail-safe) ledger entirely.
+            log::error!("Cannot resolve the app data dir for the donation ledger: {e}");
+            PathBuf::from("donation-ledger.json")
+        }
+    }
+}
+
+/// React to a donation-consent decision (called by the consent command):
+/// opting in triggers the one-time 30-day backfill scan; revoking clears the
+/// upload queue immediately (the consent cache already gates the worker).
+pub(crate) fn on_donation_consent_changed(
+    app: &tauri::AppHandle,
+    consent: donation::DonationConsent,
+) {
+    let state = app.state::<UploaderState>();
+    let guard = state.0.lock().unwrap();
+    let Some(up) = guard.as_ref() else {
+        // No bridge yet (onboarding incomplete) — apply_replays_path runs the
+        // scan itself once the uploader exists, consent permitting.
+        return;
+    };
+    match consent {
+        donation::DonationConsent::OptedIn => up.spawn_scan(),
+        donation::DonationConsent::Declined => up.revoke(),
+        donation::DonationConsent::Unset => {}
+    }
 }
 
 // ── Autostart helpers ────────────────────────────────────────────────────────
@@ -542,7 +605,8 @@ pub fn run() {
                 })
                 .build(),
         )
-        .manage(BridgeState(Mutex::new(None)));
+        .manage(BridgeState(Mutex::new(None)))
+        .manage(UploaderState(Mutex::new(None)));
 
     // Register autostart plugin on desktop platforms only.
     // Pass --autostart so we can detect a login-triggered launch and stay
@@ -820,6 +884,9 @@ pub fn run() {
                     .take()
                 {
                     ab.bridge.stop();
+                }
+                if let Some(up) = app.state::<UploaderState>().0.lock().unwrap().take() {
+                    up.cancel();
                 }
             }
         });
