@@ -841,4 +841,72 @@ mod tests {
             BridgeAction::Restart
         );
     }
+
+    // ── bundled-UI CSP (tauri.conf.json + ui/index.html) ─────────────────────
+    //
+    // The CSP only ships with bundled assets served over the tauri protocol;
+    // Tauri appends a nonce for the inline <style> to style-src and a sha256
+    // hash for the inline <script> to script-src at serve time. These tests
+    // guard the invariants that keep that working.
+
+    const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+    const INDEX_HTML: &str = include_str!("../../ui/index.html");
+
+    fn bundled_csp() -> String {
+        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
+        conf["app"]["security"]["csp"]
+            .as_str()
+            .expect("security.csp must be a non-null string")
+            .to_owned()
+    }
+
+    fn csp_directive(csp: &str, name: &str) -> String {
+        csp.split(';')
+            .map(str::trim)
+            .find(|d| d.starts_with(name))
+            .unwrap_or_else(|| panic!("CSP must have a {name} directive"))
+            .to_owned()
+    }
+
+    #[test]
+    fn csp_is_set_and_restrictive() {
+        let csp = bundled_csp();
+        assert!(csp.contains("default-src 'self'"));
+        // Tauri injects the nonces/hashes for the bundled inline <style> and
+        // <script> itself — adding 'unsafe-inline' manually would be both
+        // pointless (ignored next to a nonce) and a loosening elsewhere.
+        assert!(!csp.contains("unsafe-inline"));
+        assert!(!csp.contains("unsafe-eval"));
+        // Pure local UI: no remote script/style/connect sources.
+        assert!(!csp.contains("https://"));
+    }
+
+    #[test]
+    fn csp_allows_tauri_ipc() {
+        // Tauri v2 IPC is a fetch() of ipc://localhost (macOS/Linux) or
+        // http://ipc.localhost (Windows); both belong in connect-src.
+        let connect = csp_directive(&bundled_csp(), "connect-src");
+        assert!(connect.contains(" ipc:"));
+        assert!(connect.contains("http://ipc.localhost"));
+    }
+
+    #[test]
+    fn csp_allows_data_images() {
+        // The onboarding checkbox check-mark is a data: SVG CSS background,
+        // which is governed by img-src.
+        let img = csp_directive(&bundled_csp(), "img-src");
+        assert!(img.contains("data:"));
+    }
+
+    #[test]
+    fn index_html_has_no_inline_style_attributes() {
+        // Inline style attributes cannot carry the Tauri-injected style-src
+        // nonce, and that nonce makes 'unsafe-inline' ineffective — under the
+        // CSP they would be silently dropped. Static styling must live in the
+        // <style> block (CSSOM toggling from JS is unaffected).
+        assert!(
+            !INDEX_HTML.contains("style=\""),
+            "ui/index.html must not use inline style attributes (CSP-blocked)"
+        );
+    }
 }
