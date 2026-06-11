@@ -1,9 +1,10 @@
 mod commands;
 
+use bridge_core::finalize::{FinalizeOptions, FinalizedCallback};
 use bridge_core::server::{self, Bridge};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent};
@@ -184,7 +185,23 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             } else {
                 None
             };
-            match server::start(path.clone(), dev_origin) {
+            // Replay-finalized detection: subscribe with a callback that logs
+            // the event and persists the watermark so catch-up after a restart
+            // never re-emits.  The donation uploader (td-c8973d) will hook in
+            // here as an additional subscriber action.
+            let watermark_ms = ensure_replay_watermark(app);
+            let handle = app.clone();
+            let on_finalized: FinalizedCallback = Arc::new(move |event| {
+                log::info!(
+                    "Replay finalized: {} ({} bytes, mtime {} ms)",
+                    event.name,
+                    event.size,
+                    event.modified_ms
+                );
+                commands::save_replay_watermark(&handle, event.modified_ms);
+            });
+            let finalize = FinalizeOptions::new(watermark_ms, on_finalized);
+            match server::start_with_finalize(path.clone(), dev_origin, Some(finalize)) {
                 Ok(bridge) => {
                     log::info!("Bridge started on port {}", bridge.port());
                     *guard = Some(ActiveBridge { path, bridge });
@@ -195,6 +212,24 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             }
         }
     }
+}
+
+/// Read the persisted replay-finalized watermark, seeding it with "now" on
+/// first run.  Seeding (instead of 0) keeps the first catch-up scan from
+/// re-announcing the user's entire replay history as freshly finalized — the
+/// deliberate, throttled 30-day backfill is the donation uploader's concern
+/// (td-c8973d).  The seed is persisted immediately so battles finished while
+/// the app is closed are caught up from here on.
+fn ensure_replay_watermark(app: &tauri::AppHandle) -> u64 {
+    if let Some(wm) = commands::read_config(app).replay_watermark_ms {
+        return wm;
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    commands::save_replay_watermark(app, now_ms);
+    now_ms
 }
 
 // ── Autostart helpers ────────────────────────────────────────────────────────
