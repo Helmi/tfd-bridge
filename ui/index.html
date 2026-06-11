@@ -352,8 +352,20 @@
       margin-top: 0.7rem;
     }
 
-    #main-status { display: none; }
-    #onboarding  { display: none; }
+    /* ── Initial visibility + spacing (former inline style attributes) ──────
+       The CSP (tauri.conf.json) gives style-src a Tauri-injected nonce, which
+       makes the webview ignore 'unsafe-inline' — inline style attributes
+       would be silently dropped. Static styling lives here; JS still toggles
+       element.style via the CSSOM, which CSP does not restrict. */
+    #main-status      { display: none; }
+    #onboarding       { display: none; }
+    #current-path     { display: none; }
+    #detected-section { display: none; }
+    #no-detect-msg    { display: none; }
+    #error-msg        { display: none; }
+    .card-head + .hint { margin-top: 0.6rem; }
+    #main-status .hint { margin-bottom: 0.85rem; }
+    #detected-section > .path-source { margin-bottom: 0.5rem; }
   </style>
 </head>
 <body>
@@ -398,7 +410,7 @@
       <div id="main-status">
         <div class="card">
           <div class="status"><span class="dot"></span> Bridge is running</div>
-          <div class="path-row" id="current-path" style="display:none">
+          <div class="path-row" id="current-path">
             <div class="path-source">Replays folder</div>
             <div class="path-box" id="current-path-text"></div>
           </div>
@@ -409,7 +421,7 @@
           <div class="card-head">
             <h2>Battle Monitor</h2>
           </div>
-          <p class="hint" style="margin-top:0.6rem;margin-bottom:0.85rem">
+          <p class="hint">
             Open the live Battle Monitor for real-time match tracking.
           </p>
           <button class="btn btn-primary btn-block" id="btn-open-monitor" type="button">
@@ -441,18 +453,18 @@
           <div class="card-head">
             <h2>Set up replays folder</h2>
           </div>
-          <p class="hint" style="margin-top:0.6rem">
+          <p class="hint">
             TFD Bridge needs access to your World of Warships replays folder.
           </p>
 
           <!-- Auto-detected candidates -->
-          <div id="detected-section" style="display:none">
-            <div class="path-source" style="margin-bottom:0.5rem">Found automatically</div>
+          <div id="detected-section">
+            <div class="path-source">Found automatically</div>
             <div id="candidates-list"></div>
           </div>
 
           <!-- No candidates found -->
-          <div id="no-detect-msg" style="display:none">
+          <div id="no-detect-msg">
             <p class="hint">No WoWS installation was detected automatically.</p>
           </div>
 
@@ -473,7 +485,7 @@
               Browse…
             </button>
           </div>
-          <div id="error-msg" class="error" style="display:none"></div>
+          <div id="error-msg" class="error"></div>
         </div>
       </div>
     </div>
