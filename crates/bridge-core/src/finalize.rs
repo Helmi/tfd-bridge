@@ -49,8 +49,9 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 /// The live-battle roster file WoWS writes at battle start and deletes at end.
 pub const TEMP_ARENA_INFO: &str = "tempArenaInfo.json";
 
-/// `.wowsreplay` magic — `0x12323411` read as little-endian u32 at offset 0.
-pub const REPLAY_MAGIC: u32 = 0x1232_3411;
+/// `.wowsreplay` magic. On disk the first four bytes are `12 32 34 11`;
+/// read as a little-endian u32 at offset 0 that is `0x1134_3212`.
+pub const REPLAY_MAGIC: u32 = 0x1134_3212;
 
 /// Fixed header: magic (4) + block count (4) + first block length (4).
 const REPLAY_HEADER_LEN: u64 = 12;
@@ -485,6 +486,25 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("good.wowsreplay");
         fs::write(&path, valid_replay()).unwrap();
+        assert!(is_structurally_complete(&path));
+    }
+
+    /// Regression guard: pin the literal on-disk magic bytes a real WoWS
+    /// `.wowsreplay` starts with (`12 32 34 11`). The other fixtures derive
+    /// their magic from REPLAY_MAGIC, so they'd silently follow a wrong
+    /// constant — this one would not. (A reversed constant shipped in v0.3.0
+    /// and rejected every real replay.)
+    #[test]
+    fn structural_check_accepts_real_on_disk_magic_bytes() {
+        let tmp = TempDir::new().unwrap();
+        let json = br#"{"clientVersionFromExe":"15,4,0,0"}"#;
+        let mut bytes = vec![0x12u8, 0x32, 0x34, 0x11]; // real first 4 bytes on disk
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(json);
+        bytes.extend_from_slice(b"packet-payload");
+        let path = tmp.path().join("real_magic.wowsreplay");
+        fs::write(&path, bytes).unwrap();
         assert!(is_structurally_complete(&path));
     }
 

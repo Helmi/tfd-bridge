@@ -11,6 +11,13 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.3.1] — 2026-06-12
+
+### Fixed
+- **Replay donation now actually uploads.** In 0.3.0 the opt-in donation feature silently rejected every replay: a byte-order bug in the `.wowsreplay` validity check treated genuine replay files as malformed, so nothing was ever sent — not newly finished battles, and not the existing-replay backfill. The check now recognises real replay files, so donations (opt-in, anonymous) upload as intended once you've opted in.
+
+---
+
 ## [0.3.0] — 2026-06-11
 
 ### Added
@@ -124,7 +131,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Helmi/tfd-bridge/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Helmi/tfd-bridge/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/Helmi/tfd-bridge/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/Helmi/tfd-bridge/compare/v0.2.2...v0.2.3
