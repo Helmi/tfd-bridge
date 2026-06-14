@@ -76,6 +76,11 @@ pub struct BattlePlayer {
     pub ribbons_torpedo_hits: Option<i64>,
     pub ribbons_plane_kills: Option<i64>,
     pub ribbons_hits: Option<i64>,
+    pub spotting_damage: Option<i64>,
+    pub damage_received: Option<i64>,
+    /// Credits earned. OWNER ONLY (from privateDataList economics); `None` for
+    /// every other player — a replay does not contain others' economics.
+    pub credits: Option<i64>,
     pub afk: Option<bool>,
     pub survived: Option<bool>,
     pub is_self: bool,
@@ -122,6 +127,8 @@ pub struct Tables {
     pub common_results: Vec<String>,
     pub interaction_details: Vec<String>,
     pub private_results: Vec<String>,
+    /// INIT_ECONOMICS_INDICES (name → index) for the owner-only economics array.
+    pub init_economics_indices: HashMap<String, usize>,
     pub ships: HashMap<String, ShipInfo>,
 }
 
@@ -184,6 +191,19 @@ impl Tables {
             .map(|v| v.as_str().unwrap_or("").to_string())
             .collect();
 
+        // INIT_ECONOMICS_INDICES: object {name → index} (owner-only economics)
+        let mut init_economics_indices = HashMap::new();
+        if let Some(obj) = constants
+            .get("INIT_ECONOMICS_INDICES")
+            .and_then(|v| v.as_object())
+        {
+            for (k, v) in obj {
+                if let Some(idx) = v.as_u64() {
+                    init_economics_indices.insert(k.clone(), idx as usize);
+                }
+            }
+        }
+
         // ── ship_index.json ───────────────────────────────────────────────────
         let ship_bytes = fs::read(ship_index_path)
             .map_err(|e| DecodeError::Resources(format!("cannot read ship_index.json: {e}")))?;
@@ -220,6 +240,7 @@ impl Tables {
             common_results,
             interaction_details,
             private_results,
+            init_economics_indices,
             ships,
         })
     }
@@ -370,6 +391,12 @@ pub fn decode_battle_result(
     // Waiter finished normally — join it (should return immediately).
     let _ = waiter.join();
 
+    // The sidecar streams packets to the dump as it decodes, so even on a
+    // non-zero exit it may have already written a usable BattleResults packet —
+    // or, for an incomplete / early-leave replay, packets but no results. Read
+    // the dump regardless of exit status and let the parser decide.
+    let jsonl = fs::read_to_string(&tmp_path).unwrap_or_default();
+
     if !output.status.success() {
         let stderr: String = String::from_utf8_lossy(&output.stderr)
             .chars()
@@ -379,14 +406,25 @@ pub fn decode_battle_result(
             .chars()
             .rev()
             .collect();
-        return Err(DecodeError::SidecarFailed {
-            code: output.status.code(),
-            stderr,
-        });
+        // A truly empty dump means the sidecar never produced anything — a hard
+        // failure (bad game dir, unreadable replay, immediate crash).
+        if jsonl.trim().is_empty() {
+            return Err(DecodeError::SidecarFailed {
+                code: output.status.code(),
+                stderr,
+            });
+        }
+        // Otherwise the sidecar emitted packets then failed — typical of an
+        // incomplete / early-leave / unsupported-version replay. Log it, then let
+        // the parser extract a BattleResults if one was written; if none exists it
+        // returns NoBattleResults (a clean "no result", not a 500).
+        log::warn!(
+            "replayshark exited {:?} on {} but produced output; attempting partial decode (likely incomplete/early-leave): {stderr}",
+            output.status.code(),
+            replay_path.display()
+        );
     }
 
-    // Parse the JSONL output file.
-    let jsonl = fs::read_to_string(&tmp_path)?;
     parse_jsonl_and_build(jsonl, source_file_hash, replay_path, tables)
 }
 
@@ -722,6 +760,22 @@ pub(crate) fn resolve_player(
     let ribbons_plane_kills = get_i64("RIBBON_PLANE");
     let ribbons_hits = get_i64("RIBBON_MAIN_CALIBER");
 
+    // Spotting (scouting) damage — public, all players.
+    let spotting_damage = get_i64("scouting_damage");
+
+    // Total damage received = sum of every `received_damage_*` public field.
+    let damage_received = {
+        let mut sum = 0i64;
+        for (name, &idx) in pub_idx.iter() {
+            if name.starts_with("received_damage_") {
+                if let Some(v) = arr.get(idx) {
+                    sum += to_i64_tolerant(v).unwrap_or(0);
+                }
+            }
+        }
+        Some(sum)
+    };
+
     // is_alive → survived: accept bool or 0/1 int.
     let survived: Option<bool> = get_val("is_alive").and_then(to_bool_tolerant);
 
@@ -741,6 +795,28 @@ pub(crate) fn resolve_player(
         private_for_owner
             .and_then(|pd| pd.get(afk_idx))
             .and_then(to_bool_tolerant)
+    } else {
+        None
+    };
+
+    // credits: owner only, from privateDataList init_economics[credits].
+    // PLAYER_PRIVATE_RESULTS has an "init_economics" sub-array; its first slot
+    // (INIT_ECONOMICS_INDICES["credits"]) is the credits earned. Other players'
+    // economics are not present in the replay.
+    let credits: Option<i64> = if is_self {
+        let econ_idx = tables
+            .private_results
+            .iter()
+            .position(|name| name == "init_economics");
+        let credits_idx = tables.init_economics_indices.get("credits").copied();
+        match (econ_idx, credits_idx) {
+            (Some(ei), Some(ci)) => private_for_owner
+                .and_then(|pd| pd.get(ei))
+                .and_then(|e| e.as_array())
+                .and_then(|e| e.get(ci))
+                .and_then(to_i64_tolerant),
+            _ => None,
+        }
     } else {
         None
     };
@@ -768,6 +844,9 @@ pub(crate) fn resolve_player(
         ribbons_torpedo_hits,
         ribbons_plane_kills,
         ribbons_hits,
+        spotting_damage,
+        damage_received,
+        credits,
         afk,
         survived,
         is_self,
@@ -1325,6 +1404,31 @@ mod tests {
                 assert_eq!(player.won, Some(true));
                 // afk: from privateDataList[37]
                 assert_eq!(player.afk, Some(false)); // real value from fixture
+                                                     // New fields: spotting/received are public; credits is owner-only.
+                assert!(
+                    player.spotting_damage.is_some(),
+                    "owner spotting_damage present"
+                );
+                assert!(
+                    player.damage_received.unwrap_or(0) > 0,
+                    "owner took damage in this battle"
+                );
+                assert!(
+                    player.credits.unwrap_or(0) > 0,
+                    "owner credits resolved from privateDataList economics"
+                );
+            } else {
+                // Economics are owner-only: never present for other players.
+                assert_eq!(player.credits, None, "credits must be owner-only");
+                // Spotting/received damage are public for every player.
+                assert!(
+                    player.spotting_damage.is_some(),
+                    "spotting_damage is public for all players"
+                );
+                assert!(
+                    player.damage_received.is_some(),
+                    "damage_received is public for all players"
+                );
             }
         }
 
@@ -1857,6 +1961,75 @@ mod tests {
                             failures.push(format!(
                                 "{}: player {db_id_str} ribbons_plane_kills (RIBBON_PLANE): got {:?} expected {:?}",
                                 fname, got.ribbons_plane_kills, expected
+                            ));
+                        }
+                    }
+                }
+
+                // spotting_damage = scouting_damage
+                {
+                    total_field_checks += 1;
+                    let ref_val = ref_player["scouting_damage"]
+                        .as_i64()
+                        .or_else(|| ref_player["scouting_damage"].as_f64().map(|f| f as i64));
+                    if got.spotting_damage != ref_val {
+                        failures.push(format!(
+                            "{}: player {db_id_str} spotting_damage: got {:?} expected {:?}",
+                            fname, got.spotting_damage, ref_val
+                        ));
+                    }
+                }
+
+                // damage_received = sum of all received_damage_* fields
+                {
+                    total_field_checks += 1;
+                    let mut ref_val = 0i64;
+                    if let Some(obj) = ref_player.as_object() {
+                        for (k, v) in obj {
+                            if k.starts_with("received_damage_") {
+                                ref_val += v.as_f64().unwrap_or(0.0) as i64;
+                            }
+                        }
+                    }
+                    if got.damage_received != Some(ref_val) {
+                        failures.push(format!(
+                            "{}: player {db_id_str} damage_received: got {:?} expected {:?}",
+                            fname,
+                            got.damage_received,
+                            Some(ref_val)
+                        ));
+                    }
+                }
+            }
+
+            // Owner-only economics: credits from privateDataList init_economics[credits].
+            {
+                let owner_db_id = ref_json["accountDBID"].as_i64().unwrap_or(0);
+                let econ_idx = tables
+                    .private_results
+                    .iter()
+                    .position(|n| n == "init_economics");
+                let credits_idx = tables.init_economics_indices.get("credits").copied();
+                if let (Some(ei), Some(ci)) = (econ_idx, credits_idx) {
+                    let ref_credits = ref_json["privateDataList"]
+                        .as_array()
+                        .and_then(|pd| pd.get(ei))
+                        .and_then(|e| e.as_array())
+                        .and_then(|e| e.get(ci))
+                        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)));
+                    if let Some(rc) = ref_credits {
+                        total_field_checks += 1;
+                        let got_credits = battle_data
+                            .players
+                            .iter()
+                            .find(|p| p.account_db_id == owner_db_id)
+                            .and_then(|p| p.credits);
+                        if got_credits != Some(rc) {
+                            failures.push(format!(
+                                "{}: owner credits: got {:?} expected {:?}",
+                                fname,
+                                got_credits,
+                                Some(rc)
                             ));
                         }
                     }
