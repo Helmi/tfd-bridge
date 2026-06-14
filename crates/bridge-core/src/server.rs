@@ -609,83 +609,60 @@ fn handle_latest_result(
         }
     };
 
-    // Find the newest .wowsreplay (same logic as handle_latest).
     let entries = match list_replays(replays_dir) {
         Ok(e) => e,
         Err(e) => {
             return make_json_response(StatusCode(500), &format!(r#"{{"error":"{}"}}"#, e), None);
         }
     };
+    // Finalized archives only: exclude the live in-progress `temp.wowsreplay`
+    // (it is the newest by mtime while a battle is running, but it has no
+    // results and the decoder cannot parse an incomplete packet stream).
     let mut archives: Vec<ReplayEntry> = entries
         .into_iter()
-        .filter(|e| e.name.to_ascii_lowercase().ends_with(".wowsreplay"))
+        .filter(|e| {
+            let base = e.name.rsplit('/').next().unwrap_or(e.name.as_str());
+            base.to_ascii_lowercase().ends_with(".wowsreplay")
+                && !base.eq_ignore_ascii_case("temp.wowsreplay")
+        })
         .collect();
     if archives.is_empty() {
         return make_json_response(StatusCode(404), r#"{"error":"no replays found"}"#, None);
     }
     archives.sort_by_key(|b| std::cmp::Reverse(b.modified_ms));
-    let latest = &archives[0];
 
-    // Resolve safe path for the latest replay.
-    let path = match resolve_safe_path(replays_dir, &latest.name) {
-        Ok(p) => p,
-        Err(e) => {
-            return make_json_response(StatusCode(400), &format!(r#"{{"error":"{}"}}"#, e), None);
+    // Return the newest replay that actually decodes to a battle result, skipping
+    // early-quits (no results) and any that fail to decode (e.g. unsupported
+    // older versions). Bounded so a streak of resultless replays cannot stall the
+    // serial request loop; decoded results are cached for instant repeats.
+    const MAX_TRIES: usize = 12;
+    for entry in archives.iter().take(MAX_TRIES) {
+        let path = match resolve_safe_path(replays_dir, &entry.name) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        match decode_cached(&path, ctx) {
+            Ok(body) => return make_json_response(StatusCode(200), &body, None),
+            Err(DecodeError::NoBattleResults) => continue,
+            Err(e) => {
+                log::warn!("latest/result: skipping {} ({e})", entry.name);
+                continue;
+            }
         }
-    };
-
-    decode_and_respond(&path, ctx)
+    }
+    make_json_response(
+        StatusCode(404),
+        r#"{"error":"no decodable battle result in recent replays"}"#,
+        None,
+    )
 }
 
 /// Core decode logic used by both result endpoints.
 /// Implements caching (check → release lock → decode → insert) and maps
 /// `DecodeError` variants to the spec status codes.
 fn decode_and_respond(path: &Path, ctx: &Arc<DecodeContext>) -> Response<std::io::Cursor<Vec<u8>>> {
-    // Build secondary file key from metadata (mtime + size) so we can skip
-    // re-reading files that have not changed since the last decode.
-    let file_key = std::fs::metadata(path).ok().map(|m| FileKey {
-        path: path.to_path_buf(),
-        mtime_ms: m
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
-        size: m.len(),
-    });
-
-    // Cache lookup under the lock.
-    if let Some(ref fk) = file_key {
-        let guard = ctx.cache.lock().unwrap();
-        if let Some(cached_body) = guard.get_by_file(fk) {
-            return make_json_response(StatusCode(200), cached_body, None);
-        }
-    }
-    // Lock released here before the (potentially slow) decode.
-
-    // Decode outside the lock.
-    let result = (ctx.decode_fn)(path, &ctx.config, &ctx.tables);
-
-    match result {
-        Ok(data) => {
-            let body = match serde_json::to_string(&data) {
-                Ok(s) => s,
-                Err(e) => {
-                    log::error!("Battle-result serialise failed: {e}");
-                    return make_json_response(
-                        StatusCode(500),
-                        r#"{"error":"decode failed"}"#,
-                        None,
-                    );
-                }
-            };
-            // Insert into cache under the lock.
-            if let Some(fk) = file_key {
-                let mut guard = ctx.cache.lock().unwrap();
-                guard.insert(fk, data.meta.source_file_hash.clone(), body.clone());
-            }
-            make_json_response(StatusCode(200), &body, None)
-        }
+    match decode_cached(path, ctx) {
+        Ok(body) => make_json_response(StatusCode(200), &body, None),
         Err(DecodeError::NoBattleResults) => {
             make_json_response(StatusCode(404), r#"{"error":"no battle result"}"#, None)
         }
@@ -709,6 +686,44 @@ fn decode_and_respond(path: &Path, ctx: &Arc<DecodeContext>) -> Response<std::io
             make_json_response(StatusCode(500), r#"{"error":"decode failed"}"#, None)
         }
     }
+}
+
+/// Decode `path` with caching (check under lock → release → decode → insert).
+/// Returns the serialized `BattleData` JSON body on success. Shared by both
+/// `decode_and_respond` (named replay) and `handle_latest_result` (which
+/// iterates candidates and needs to distinguish a result from a skip).
+fn decode_cached(path: &Path, ctx: &Arc<DecodeContext>) -> Result<String, DecodeError> {
+    // Secondary file key (mtime + size) so unchanged files skip re-reading.
+    let file_key = std::fs::metadata(path).ok().map(|m| FileKey {
+        path: path.to_path_buf(),
+        mtime_ms: m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        size: m.len(),
+    });
+
+    // Cache lookup under the lock; clone the body out before releasing it.
+    if let Some(ref fk) = file_key {
+        let guard = ctx.cache.lock().unwrap();
+        if let Some(cached_body) = guard.get_by_file(fk) {
+            return Ok(cached_body.to_string());
+        }
+    }
+    // Lock released before the (potentially slow) decode.
+
+    let data = (ctx.decode_fn)(path, &ctx.config, &ctx.tables)?;
+    let body = serde_json::to_string(&data).map_err(|e| {
+        log::error!("Battle-result serialise failed: {e}");
+        DecodeError::Malformed(format!("serialise: {e}"))
+    })?;
+    if let Some(fk) = file_key {
+        let mut guard = ctx.cache.lock().unwrap();
+        guard.insert(fk, data.meta.source_file_hash.clone(), body.clone());
+    }
+    Ok(body)
 }
 
 fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<u8>>> {
