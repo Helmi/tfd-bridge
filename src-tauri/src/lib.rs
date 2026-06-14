@@ -195,64 +195,6 @@ pub fn decide_bridge_action(current: Option<&Path>, requested: &Path) -> BridgeA
 
 // ── Decode context wiring (td-865788) ────────────────────────────────────────
 
-/// Resolve the replayshark sidecar path: look next to the current executable
-/// (the Tauri `externalBin` location at runtime), and fall back to the dev
-/// build path in `src-tauri/bin/` when running `cargo tauri dev`.
-fn resolve_sidecar_path() -> Option<PathBuf> {
-    // Runtime: the bundled sidecar is stripped to just "replayshark.exe" by
-    // Tauri and placed next to the app executable.
-    if let Ok(exe) = std::env::current_exe() {
-        let candidate = exe
-            .parent()
-            .map(|p| p.join("replayshark.exe"))
-            .unwrap_or_default();
-        if candidate.exists() {
-            log::info!("Sidecar found at {}", candidate.display());
-            return Some(candidate);
-        }
-    }
-
-    // Development fallback: staged sidecar with the full triple suffix.
-    #[cfg(debug_assertions)]
-    {
-        // Look relative to src-tauri/ (two levels up from the binary in target/).
-        let dev_paths: &[&str] = &["bin/replayshark-x86_64-pc-windows-msvc.exe"];
-        for rel in dev_paths {
-            // Try from CARGO_MANIFEST_DIR equivalent — use __file__ via a
-            // well-known env var that cargo sets during build, or resolve from exe.
-            if let Ok(exe) = std::env::current_exe() {
-                // In cargo build/test the exe lands in target/<profile>/
-                // So we walk up to find src-tauri/
-                let mut dir = exe
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."))
-                    .to_path_buf();
-                for _ in 0..6 {
-                    let candidate = dir.join("src-tauri").join(rel);
-                    if candidate.exists() {
-                        log::info!("Dev sidecar found at {}", candidate.display());
-                        return Some(candidate);
-                    }
-                    if !dir.pop() {
-                        break;
-                    }
-                }
-            }
-        }
-        // Optional explicit override (e.g. point at a fresh wows-toolkit build).
-        if let Ok(p) = std::env::var("TFD_REPLAYSHARK") {
-            let dev_abs = PathBuf::from(p);
-            if dev_abs.exists() {
-                log::info!("Dev sidecar (TFD_REPLAYSHARK) at {}", dev_abs.display());
-                return Some(dev_abs);
-            }
-        }
-    }
-
-    log::warn!("Replayshark sidecar not found; battle-result feature disabled");
-    None
-}
-
 /// Resolve the resources directory (constants.json + ship_index.json).
 ///
 /// Resources are declared in tauri.conf.json as `"resources/constants.json"` etc.,
@@ -262,8 +204,7 @@ fn resolve_sidecar_path() -> Option<PathBuf> {
 /// must look inside the `resources/` subdirectory.
 ///
 /// During `cargo tauri dev` / raw `cargo run` we fall back to the repo's
-/// `src-tauri/resources/` directory (gated to debug builds for parity with
-/// `resolve_sidecar_path`).
+/// `src-tauri/resources/` directory (gated to debug builds).
 fn resolve_resources_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     // Prefer the Tauri path resolver: resources land in <resource_dir>/resources/.
     use tauri::Manager;
@@ -304,11 +245,10 @@ fn resolve_resources_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 /// Build the `DecodeContext` from the resolved replays path.  Returns `None`
-/// when the sidecar or resources are missing, or when `Tables::load` fails.
-/// In all error cases the bridge still starts and serves replays/donation —
-/// only the `/result` endpoints are unavailable.
+/// when the resources or game directory cannot be resolved, or when
+/// `Tables::load` fails. In all error cases the bridge still starts and serves
+/// replays/donation — only the `/result` endpoints are unavailable.
 fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<Arc<DecodeContext>> {
-    let sidecar_path = resolve_sidecar_path()?;
     let resources_dir = resolve_resources_dir(app)?;
 
     let constants_path = resources_dir.join("constants.json");
@@ -345,11 +285,9 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
     };
 
     let cfg = DecodeConfig {
-        sidecar_path,
         game_dir,
         constants_path: constants_path.clone(),
         ship_index_path: ship_index_path.clone(),
-        timeout: std::time::Duration::from_secs(120),
     };
 
     match Tables::load(&constants_path, &ship_index_path) {

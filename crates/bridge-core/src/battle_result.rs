@@ -1,30 +1,31 @@
 //! Replay battle-result decoder (td-28d9e7).
 //!
-//! Decodes a `.wowsreplay` file by shelling out to the `replayshark` sidecar,
-//! parsing its JSONL dump output, and resolving the positional player arrays
-//! using `constants.json` + `ship_index.json` into a structured [`BattleData`].
+//! Decodes a `.wowsreplay` file **in-process** with the `wows_replays` library
+//! (no external process): parse the replay, load version-specific entity specs
+//! from the game directory (cached per build), walk the packet stream to the
+//! final `BattleResults` packet, and resolve the positional player arrays using
+//! `constants.json` + `ship_index.json` into a structured [`BattleData`].
 //!
 //! # Design notes
 //! - Pure Tauri-free module; all path resolution happens in the caller.
 //! - `decode_battle_result` is the main entry point; `resolve_player` is
 //!   `pub(crate)` so unit tests can call it directly with synthetic data.
 //! - Tolerant: null / missing index / wrong type → `None`, never panics on
-//!   a single bad field.
-//! - Timeout watchdog via a background thread that kills the child process.
+//!   a single bad field. The upstream packet parser can panic on
+//!   malformed/incomplete replays, so the parse runs under `catch_unwind`.
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::mpsc;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use wowsunpack::data::Version;
+use wowsunpack::rpc::entitydefs::EntitySpec;
 
 // ── Known-good version set ─────────────────────────────────────────────────────
 
-/// Pairs (major, minor) for which constants.json + sidecar are confirmed good.
+/// Pairs (major, minor) for which the bundled constants + parser are confirmed good.
 const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 4)];
 
 // ── Output structs ─────────────────────────────────────────────────────────────
@@ -115,11 +116,11 @@ impl ShipClass {
 
 #[derive(Clone)]
 pub struct DecodeConfig {
-    pub sidecar_path: PathBuf,
+    /// The WoWS game install dir. Version-specific entity specs (needed to parse
+    /// the packet stream) are loaded from here and cached per game build.
     pub game_dir: PathBuf,
     pub constants_path: PathBuf,
     pub ship_index_path: PathBuf,
-    pub timeout: Duration,
 }
 
 pub struct Tables {
@@ -250,19 +251,11 @@ impl Tables {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
-    #[error("sidecar not found at {0}")]
-    SidecarMissing(PathBuf),
     #[error("resource error: {0}")]
     Resources(String),
-    #[error("sidecar spawn failed: {0}")]
-    SidecarSpawn(#[source] std::io::Error),
-    #[error("sidecar exited with status {code:?}: {stderr}")]
-    SidecarFailed { code: Option<i32>, stderr: String },
-    #[error("sidecar timed out after {0:?}")]
-    Timeout(Duration),
-    #[error("no BattleResults packet (early quit / live / non-pvp)")]
+    #[error("no BattleResults packet (battle not finished / left early / non-pvp)")]
     NoBattleResults,
-    #[error("malformed dump output: {0}")]
+    #[error("malformed replay or results: {0}")]
     Malformed(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -275,160 +268,103 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-// ── Temp file drop guard ───────────────────────────────────────────────────────
-
-struct TempFile(PathBuf);
-
-impl Drop for TempFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 // ── Main decode function ───────────────────────────────────────────────────────
 
-/// Decode a `.wowsreplay` file into structured [`BattleData`].
+/// Decode a `.wowsreplay` file into structured [`BattleData`], in-process.
 ///
-/// Pre-checks the sidecar exists, reads replay bytes for the source hash,
-/// runs the sidecar with a timeout watchdog, parses the JSONL output, and
-/// resolves players via `tables`.
+/// Reads the replay bytes (for the source hash), parses the replay with the
+/// `wows_replays` library, walks the packet stream to the final `BattleResults`
+/// packet, and resolves players via `tables`. The parse runs under
+/// `catch_unwind` because the upstream parser can panic on malformed or
+/// incomplete (early-leave / in-progress) replays.
 pub fn decode_battle_result(
     replay_path: &Path,
     cfg: &DecodeConfig,
     tables: &Tables,
 ) -> Result<BattleData, DecodeError> {
-    // Pre-check: sidecar exists.
-    if !cfg.sidecar_path.exists() {
-        return Err(DecodeError::SidecarMissing(cfg.sidecar_path.clone()));
-    }
-
-    // Read replay bytes for the SHA-256 hash.
     let replay_bytes = fs::read(replay_path)?;
     let source_file_hash = sha256_hex(&replay_bytes);
-    drop(replay_bytes); // release memory; we only needed the hash
 
-    // Unique temp file for the JSONL dump. A process-static monotonic counter
-    // (combined with the PID) guarantees a distinct path per call even under
-    // concurrent decodes — independent of wall-clock resolution.
-    static DUMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seq = DUMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp_path = std::env::temp_dir().join(format!(
-        "tfd-bridge-dump-{}-{}.jsonl",
-        std::process::id(),
-        seq
-    ));
-    let _tmp_guard = TempFile(tmp_path.clone());
-
-    // Spawn sidecar.
-    let child = Command::new(&cfg.sidecar_path)
-        .arg("-g")
-        .arg(&cfg.game_dir)
-        .arg("dump")
-        .arg("-o")
-        .arg(&tmp_path)
-        .arg(replay_path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(DecodeError::SidecarSpawn)?;
-
-    // Timeout watchdog: run wait_with_output on a dedicated thread and enforce
-    // cfg.timeout from the main thread via a channel with recv_timeout.
-    //
-    // Design: the child and its I/O are owned exclusively by the waiter thread.
-    // The waiter sends the Output back through a channel.  The main thread
-    // blocks on that channel with a deadline; on timeout it signals the waiter
-    // to kill the child (via a shared kill-request flag checked by a short
-    // polling loop inside the waiter), then waits for the waiter to finish so
-    // no thread is ever leaked.
-    //
-    // kill_requested: set by the main thread when the deadline is exceeded.
-    // The waiter polls it via try_wait every 50 ms and kills the child when set.
-    // Polling instead of a blocking wait_with_output avoids the problem of the
-    // waiter being stuck in a non-cancellable kernel wait.
-    let timeout = cfg.timeout;
-    let kill_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let kill_requested_clone = Arc::clone(&kill_requested);
-    let (result_tx, result_rx) = mpsc::channel::<Result<std::process::Output, std::io::Error>>();
-
-    let waiter = std::thread::spawn(move || {
-        // `child` is moved into this closure; re-bind as mut so we can call
-        // try_wait / kill / wait_with_output.
-        let mut child = child;
-        // Poll until the child exits or a kill is requested.
-        let poll_interval = Duration::from_millis(50);
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break, // Child exited — fall through to wait_with_output.
-                Ok(None) => {
-                    // Still running.
-                    if kill_requested_clone.load(std::sync::atomic::Ordering::Acquire) {
-                        // Main thread timed out: confirm still running before killing
-                        // (closes the PID-reuse race) then kill.
-                        let _ = child.kill();
-                        break;
-                    }
-                    std::thread::sleep(poll_interval);
-                }
-                Err(_) => break, // OS error — fall through to wait_with_output.
-            }
-        }
-        // Collect stdout/stderr regardless of kill path.
-        let _ = result_tx.send(child.wait_with_output());
+    let game_dir = cfg.game_dir.clone();
+    // The upstream packet parser indexes into entity-spec tables and can panic
+    // on malformed/incomplete input, so isolate it behind catch_unwind and turn
+    // any panic into a clean error instead of unwinding the bridge thread.
+    let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        extract_battle_results(&replay_bytes, &game_dir)
+    }))
+    .unwrap_or_else(|_| {
+        Err(DecodeError::Malformed(
+            "replay parser panicked (incomplete or unsupported replay)".into(),
+        ))
     });
 
-    let output = match result_rx.recv_timeout(timeout + Duration::from_millis(500)) {
-        Ok(res) => res.map_err(DecodeError::SidecarSpawn)?,
-        Err(_) => {
-            // recv_timeout expired: signal the waiter to kill the child.
-            kill_requested.store(true, std::sync::atomic::Ordering::Release);
-            // Wait for the waiter to finish (it will kill then return quickly).
-            let _ = waiter.join();
-            return Err(DecodeError::Timeout(timeout));
-        }
-    };
-    // Waiter finished normally — join it (should return immediately).
-    let _ = waiter.join();
-
-    // The sidecar streams packets to the dump as it decodes, so even on a
-    // non-zero exit it may have already written a usable BattleResults packet —
-    // or, for an incomplete / early-leave replay, packets but no results. Read
-    // the dump regardless of exit status and let the parser decide.
-    let jsonl = fs::read_to_string(&tmp_path).unwrap_or_default();
-
-    if !output.status.success() {
-        let stderr: String = String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .rev()
-            .take(400)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        // A truly empty dump means the sidecar never produced anything — a hard
-        // failure (bad game dir, unreadable replay, immediate crash).
-        if jsonl.trim().is_empty() {
-            return Err(DecodeError::SidecarFailed {
-                code: output.status.code(),
-                stderr,
-            });
-        }
-        // Otherwise the sidecar emitted packets then failed — typical of an
-        // incomplete / early-leave / unsupported-version replay. Log it, then let
-        // the parser extract a BattleResults if one was written; if none exists it
-        // returns NoBattleResults (a clean "no result", not a 500).
-        log::warn!(
-            "replayshark exited {:?} on {} but produced output; attempting partial decode (likely incomplete/early-leave): {stderr}",
-            output.status.code(),
-            replay_path.display()
-        );
-    }
-
-    parse_jsonl_and_build(jsonl, source_file_hash, replay_path, tables)
+    let (meta_value, br) = extracted?;
+    build_battle_data(Some(meta_value), br, source_file_hash, replay_path, tables)
 }
 
-/// Parse the JSONL dump and assemble BattleData.
+/// Parse a replay's bytes in-process and return `(meta JSON, BattleResults JSON)`.
+/// Loads entity specs for the replay's version from `game_dir` (cached per build).
+fn extract_battle_results(
+    replay_bytes: &[u8],
+    game_dir: &Path,
+) -> Result<(serde_json::Value, serde_json::Value), DecodeError> {
+    use wows_replays::packet2::{PacketType, Parser};
+    use wows_replays::ReplayFile;
+
+    let replay = ReplayFile::from_bytes(replay_bytes)
+        .map_err(|e| DecodeError::Malformed(format!("replay parse failed: {e:?}")))?;
+    let meta_value = serde_json::to_value(&replay.meta)
+        .map_err(|e| DecodeError::Malformed(format!("meta serialise failed: {e}")))?;
+
+    let version = Version::from_client_exe(replay.meta.clientVersionFromExe.as_str());
+    let specs = load_specs(game_dir, &version)?;
+
+    let mut parser = Parser::with_version(specs.as_slice(), version);
+    let mut remaining = replay.packet_data.as_slice();
+    let mut br_str: Option<String> = None;
+    while !remaining.is_empty() {
+        match parser.parse_packet(&mut remaining) {
+            Ok(packet) => {
+                if let PacketType::BattleResults(s) = &packet.payload {
+                    br_str = Some(s.to_string()); // keep the LAST (most complete)
+                }
+            }
+            // Truncated/incomplete stream (early-leave / in-progress): stop
+            // walking and use whatever BattleResults we already saw, if any.
+            Err(_) => break,
+        }
+    }
+
+    let br_str = br_str.ok_or(DecodeError::NoBattleResults)?;
+    let br = serde_json::from_str(&br_str)
+        .map_err(|e| DecodeError::Malformed(format!("BattleResults inner JSON: {e}")))?;
+    Ok((meta_value, br))
+}
+
+/// Load (and cache, per game build) the entity specs needed to parse a replay's
+/// packet stream. Specs come from the user's game install — the packet parser
+/// cannot walk the stream without them.
+fn load_specs(game_dir: &Path, version: &Version) -> Result<Arc<Vec<EntitySpec>>, DecodeError> {
+    static CACHE: OnceLock<Mutex<HashMap<u32, Arc<Vec<EntitySpec>>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = version.build;
+
+    if let Some(specs) = cache.lock().unwrap().get(&key) {
+        return Ok(Arc::clone(specs));
+    }
+    // Load outside the lock (this is the slow part and may panic upstream).
+    let resources = wowsunpack::game_data::load_game_resources(game_dir, version)
+        .map_err(|e| DecodeError::Resources(format!("load game specs (build {key}): {e:?}")))?;
+    let specs = Arc::new(resources.specs);
+    cache.lock().unwrap().insert(key, Arc::clone(&specs));
+    Ok(specs)
+}
+
+/// Test-only helper: parse a JSONL dump (sidecar-style) into the `(meta, br)`
+/// pair, then delegate to [`build_battle_data`]. Production decoding uses the
+/// in-process [`extract_battle_results`]; this preserves the JSONL-based unit
+/// tests against [`build_battle_data`].
+#[cfg(test)]
 fn parse_jsonl_and_build(
     jsonl: String,
     source_file_hash: String,
@@ -477,7 +413,19 @@ fn parse_jsonl_and_build(
     }
 
     let br = battle_results.ok_or(DecodeError::NoBattleResults)?;
+    build_battle_data(meta_obj, br, source_file_hash, replay_path, tables)
+}
 
+/// Build [`BattleData`] from a resolved `BattleResults` JSON value plus the
+/// replay meta object. Shared by the in-process decoder ([`extract_battle_results`])
+/// and the test-only JSONL helper ([`parse_jsonl_and_build`]).
+fn build_battle_data(
+    meta_obj: Option<serde_json::Value>,
+    br: serde_json::Value,
+    source_file_hash: String,
+    replay_path: &Path,
+    tables: &Tables,
+) -> Result<BattleData, DecodeError> {
     // ── Extract common fields ─────────────────────────────────────────────────
 
     let common_list = br
@@ -551,7 +499,7 @@ fn parse_jsonl_and_build(
                 let min = parts[1];
                 if !KNOWN_GOOD.contains(&(maj, min)) {
                     warnings.push(format!(
-                        "game version {short} is not in the known-good set {:?}; constants/sidecar may be stale",
+                        "game version {short} is not in the known-good set {:?}; bundled constants/parser may be stale",
                         KNOWN_GOOD
                     ));
                 }
@@ -1465,19 +1413,17 @@ mod tests {
 
     // ── Error mapping tests ───────────────────────────────────────────────────
 
-    /// Missing sidecar path → SidecarMissing error.
+    /// Missing replay file → Io error (read fails before any parsing).
     #[test]
-    fn decode_error_sidecar_missing() {
+    fn decode_error_missing_replay_file() {
         let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
         let cfg = DecodeConfig {
-            sidecar_path: PathBuf::from("/nonexistent/replayshark.exe"),
             game_dir: PathBuf::from("/nonexistent/game"),
             constants_path: constants_path(),
             ship_index_path: ship_index_min_path(),
-            timeout: Duration::from_secs(30),
         };
         let result = decode_battle_result(Path::new("/nonexistent.wowsreplay"), &cfg, &tables);
-        assert!(matches!(result, Err(DecodeError::SidecarMissing(_))));
+        assert!(matches!(result, Err(DecodeError::Io(_))));
     }
 
     /// Missing constants.json → Resources error.
@@ -1619,8 +1565,6 @@ mod tests {
             return;
         }
 
-        let sidecar =
-            PathBuf::from(r"C:\Users\fhelm\code\wows-toolkit\target\release\replayshark.exe");
         let game_dir = PathBuf::from(r"C:\Games\World_of_Warships");
         let extracted_dir = PathBuf::from(
             r"C:\Users\fhelm\Documents\tfd-bridge\private-sync\notes\xp-analysis\extracted",
@@ -1629,7 +1573,6 @@ mod tests {
         let wows_replays = PathBuf::from(r"C:\Games\World_of_Warships\replays");
 
         // Pre-flight checks.
-        assert!(sidecar.exists(), "sidecar not found: {}", sidecar.display());
         assert!(
             game_dir.exists(),
             "game dir not found: {}",
@@ -1650,11 +1593,9 @@ mod tests {
         let tables = Tables::load(&constants_path(), &si_path).expect("tables must load for e2e");
 
         let cfg = DecodeConfig {
-            sidecar_path: sidecar,
             game_dir,
             constants_path: constants_path(),
             ship_index_path: si_path,
-            timeout: Duration::from_secs(120),
         };
 
         // Helper: locate source replay for a reference JSON entry.
