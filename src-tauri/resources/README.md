@@ -1,17 +1,19 @@
 # Bundled decode resources
 
-These are read at runtime by the battle-result decoder
-(`crates/bridge-core/src/battle_result.rs`) to resolve the positional arrays in a
-replay's `BattleResults` packet into named fields, and to map ship ids to
-tier/class.
+These JSON data files are bundled with the app (`tauri.conf.json` →
+`bundle.resources`) and read at runtime by the in-process battle-result decoder
+(`crates/bridge-core/src/battle_result.rs`). The replay **parser** itself is the
+`wows_replays` library crate (a pinned git dependency on a fork of
+landaire/wows-toolkit — see `crates/bridge-core/Cargo.toml`); there is no bundled
+executable. These files only drive the *resolution* of the decoded
+`BattleResults` blob into named fields.
 
 ## constants.json
 
 The [landaire/wows-toolkit](https://github.com/landaire/wows-toolkit)
 `embedded_resources/constants.json` (MIT). Provides `CLIENT_PUBLIC_RESULTS_INDICES`,
-`CLIENT_VEH_INTERACTION_DETAILS`, `COMMON_RESULTS`, and `PLAYER_PRIVATE_RESULTS`.
-
-- **Pinned upstream commit:** `50301ee54630f38d7e8014d98e50e833e15fbea6`
+`CLIENT_VEH_INTERACTION_DETAILS`, `COMMON_RESULTS`, `PLAYER_PRIVATE_RESULTS`, and
+`INIT_ECONOMICS_INDICES` — the positional-array → named-field maps.
 
 ## ship_index.json
 
@@ -23,10 +25,14 @@ class enrichment. Unknown ids (ships added in a newer patch) degrade gracefully 
 
 ## Refreshing for a new game patch
 
+Re-copy `constants.json` from the upstream toolkit and regenerate
+`ship_index.json` from the current game build:
+
 ```sh
-cp ~/code/wows-toolkit/embedded_resources/constants.json ./constants.json
+cp <wows-toolkit>/embedded_resources/constants.json ./constants.json
 # regenerate ship_index.json from the current game build, then:
 cp <new ship_index.json> ./ship_index.json
 ```
 
-Keep the pinned commit in sync with `../bin/README.md`.
+When bumping the `wows_replays` parser dependency for a new game version, update
+the pinned `rev` in `crates/bridge-core/Cargo.toml` to match.

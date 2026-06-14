@@ -45,7 +45,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["bin/replayshark"],
     "resources": ["resources/constants.json", "resources/ship_index.json"],
     "android": {
       "debugApplicationIdSuffix": ".debug"

@@ -668,20 +668,6 @@ fn decode_and_respond(path: &Path, ctx: &Arc<DecodeContext>) -> Response<std::io
             r#"{"error":"no battle result (battle not finished or left early)"}"#,
             None,
         ),
-        Err(DecodeError::Timeout(_)) => {
-            log::warn!("Battle-result decode timed out for {}", path.display());
-            make_json_response(StatusCode(504), r#"{"error":"decode timed out"}"#, None)
-        }
-        Err(DecodeError::SidecarMissing(_)) => {
-            log::warn!(
-                "Replayshark sidecar missing; battle-result feature disabled for this request"
-            );
-            make_json_response(
-                StatusCode(501),
-                r#"{"error":"battle-result feature not available"}"#,
-                None,
-            )
-        }
         Err(e) => {
             // Log detail but don't leak stderr to the client.
             log::error!("Battle-result decode failed for {}: {e}", path.display());
@@ -1943,11 +1929,9 @@ mod tests {
     /// the stub decode_fn never reads them.
     fn stub_config() -> DecodeConfig {
         DecodeConfig {
-            sidecar_path: PathBuf::from("/stub/replayshark.exe"),
             game_dir: PathBuf::from("/stub/game"),
             constants_path: PathBuf::from("/stub/constants.json"),
             ship_index_path: PathBuf::from("/stub/ship_index.json"),
-            timeout: std::time::Duration::from_secs(5),
         }
     }
 
@@ -2028,13 +2012,6 @@ mod tests {
         fn clone(&self) -> Self {
             match self {
                 DecodeError::NoBattleResults => DecodeError::NoBattleResults,
-                DecodeError::Timeout(d) => DecodeError::Timeout(*d),
-                DecodeError::SidecarMissing(p) => DecodeError::SidecarMissing(p.clone()),
-                DecodeError::SidecarFailed { code, stderr } => DecodeError::SidecarFailed {
-                    code: *code,
-                    stderr: stderr.clone(),
-                },
-                DecodeError::SidecarSpawn(e) => DecodeError::Resources(format!("spawn error: {e}")),
                 DecodeError::Resources(s) => DecodeError::Resources(s.clone()),
                 DecodeError::Malformed(s) => DecodeError::Malformed(s.clone()),
                 DecodeError::Io(e) => DecodeError::Resources(format!("io: {e}")),
@@ -2175,38 +2152,16 @@ mod tests {
 
     // ── 504 for Timeout ──────────────────────────────────────────────────────
 
+    // ── 500 for decode failure (Malformed) ───────────────────────────────────
+
     #[test]
-    fn result_504_timeout() {
+    fn result_500_decode_failed() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
         let counter = Arc::new(AtomicU32::new(0));
         let bridge = start_bridge_with_stub_decode(
             &tmp,
-            Err(DecodeError::Timeout(std::time::Duration::from_secs(1))),
-            counter,
-        );
-        let url = format!(
-            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/result",
-            bridge.port()
-        );
-        let (status, _, _) = get(&url);
-        assert_eq!(status, 504, "Timeout must map to 504");
-        bridge.stop();
-    }
-
-    // ── 500 for SidecarFailed ────────────────────────────────────────────────
-
-    #[test]
-    fn result_500_sidecar_failed() {
-        let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
-        let counter = Arc::new(AtomicU32::new(0));
-        let bridge = start_bridge_with_stub_decode(
-            &tmp,
-            Err(DecodeError::SidecarFailed {
-                code: Some(1),
-                stderr: "error output".into(),
-            }),
+            Err(DecodeError::Malformed("internal detail".into())),
             counter,
         );
         let url = format!(
@@ -2214,11 +2169,11 @@ mod tests {
             bridge.port()
         );
         let (status, body, _) = get(&url);
-        assert_eq!(status, 500, "SidecarFailed must map to 500");
-        // Must NOT leak the stderr string to the client.
+        assert_eq!(status, 500, "decode failure must map to 500");
+        // Must NOT leak internal error detail to the client.
         assert!(
-            !body.contains("error output"),
-            "client response must not contain sidecar stderr: {body}"
+            !body.contains("internal detail"),
+            "client response must not contain internal error detail: {body}"
         );
         bridge.stop();
     }

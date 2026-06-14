@@ -16,7 +16,7 @@ Versioning follows [SemVer](https://semver.org/).
 ### Added
 - **Local battle-result decoding.** When a battle finishes, the bridge can now read detailed post-battle statistics straight out of the `.wowsreplay` file — data the public API does not expose — and serve it to the Battle Monitor, so a post-battle result screen can render with no server round-trip. New loopback endpoints `GET /v1/replays/{name}/result` and `GET /v1/replays/latest/result` return a versioned JSON result, and `/v1/health` advertises a new `battle-result-v1` capability when decoding is available.
   - Per player: ship (by id) with tier/class, team and division, base and earned XP, damage dealt / potential / received, spotting damage, main-battery shots and hits, kills, torpedo / plane / hit ribbons, and survived / won / afk flags. Your own row additionally includes credits earned — a replay contains economics only for the local player, never for other players.
-  - Decoding uses a bundled copy of the `replayshark` decoder from [landaire/wows-toolkit](https://github.com/landaire/wows-toolkit) (MIT) plus bundled ship and field-mapping reference data.
+  - Decoding runs entirely in-process via the `wows_replays` library (a pinned fork of [landaire/wows-toolkit](https://github.com/landaire/wows-toolkit), MIT) — no bundled executable — plus bundled ship and field-mapping reference data (JSON).
 
 ### Changed
 - `GET /v1/replays/latest/result` returns the newest *finished* battle that has results — the live in-progress file and battles you left early are skipped.
@@ -24,7 +24,7 @@ Versioning follows [SemVer](https://semver.org/).
 
 ### Security
 - **Decoding runs entirely on your machine.** The decoded result is served only to the local Battle Monitor over loopback (`127.0.0.1`); this feature sends no new data anywhere. (The separate, opt-in replay donation is unchanged.)
-- The new endpoints reuse the existing loopback-only binding, `Host`-header (DNS-rebinding) check, strict CORS to `engine.tfd.rocks`, and path-traversal validation. The bundled decoder runs as a short-lived subprocess with a timeout and an isolated temp file; as with donation, it parses replay bytes, which is a known, accepted trust boundary.
+- The new endpoints reuse the existing loopback-only binding, `Host`-header (DNS-rebinding) check, strict CORS to `engine.tfd.rocks`, and path-traversal validation. Decoding runs in-process (no external executable); parsing of untrusted replay bytes is isolated behind a panic boundary — a known, accepted trust boundary, as with replay donation.
 
 ---
 
