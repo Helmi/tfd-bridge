@@ -1,3 +1,4 @@
+pub mod battle_result;
 pub mod config;
 pub mod detection;
 pub mod finalize;
