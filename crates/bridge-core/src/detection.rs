@@ -126,9 +126,7 @@ fn detect_steam(roots: &SearchRoots) -> Vec<DetectedPath> {
     let mut results = Vec::new();
 
     for steam_root in &roots.steam_roots {
-        let vdf_path = steam_root
-            .join("steamapps")
-            .join("libraryfolders.vdf");
+        let vdf_path = steam_root.join("steamapps").join("libraryfolders.vdf");
         let content = match std::fs::read_to_string(&vdf_path) {
             Ok(c) => c,
             Err(_) => continue,
@@ -232,11 +230,7 @@ fn parse_preferences_xml(path: &Path, source: DetectSource) -> Vec<DetectedPath>
         }
 
         // Only include if it actually exists or its name suggests replays
-        if candidate.is_dir()
-            || canonical
-                .to_lowercase()
-                .contains("replays")
-        {
+        if candidate.is_dir() || canonical.to_lowercase().contains("replays") {
             seen.insert(canonical);
             results.push(DetectedPath {
                 path: candidate,
@@ -280,6 +274,41 @@ fn extract_xml_values(xml: &str, attr_name: &str) -> Vec<String> {
     values
 }
 
+/// Derive the WoWS game directory from a replays path.
+///
+/// Strategy: walk up from `replays_path` looking for an ancestor component
+/// whose name is "replays" (case-insensitive).  The game directory is that
+/// ancestor's parent.  If `replays_path` itself is named "replays", the
+/// game dir is its parent.  Fallback: return `replays_path.parent()` and
+/// log a warning.
+///
+/// Examples:
+/// - `C:\Games\World_of_Warships\replays` → `C:\Games\World_of_Warships`
+/// - `C:\Games\World_of_Warships\replays\15.4.0.0` → `C:\Games\World_of_Warships`
+pub fn derive_game_dir(replays_path: &Path) -> Option<PathBuf> {
+    // Walk path components from root to find the "replays" ancestor.
+    // We look at each prefix: if the last component is "replays", its parent
+    // is the game directory.
+    let components: Vec<_> = replays_path.components().collect();
+    for i in (0..components.len()).rev() {
+        let name = components[i].as_os_str().to_string_lossy();
+        if name.to_lowercase() == "replays" {
+            // Reconstruct path up to (but not including) the replays component.
+            let game_dir: PathBuf = components[..i].iter().collect();
+            if game_dir.as_os_str().is_empty() {
+                break;
+            }
+            return Some(game_dir);
+        }
+    }
+    // Fallback: parent of the provided path.
+    log::warn!(
+        "derive_game_dir: could not find 'replays' component in '{}', falling back to parent",
+        replays_path.display()
+    );
+    replays_path.parent().map(PathBuf::from)
+}
+
 fn has_replay_file(dir: &Path) -> bool {
     std::fs::read_dir(dir)
         .ok()
@@ -315,10 +344,7 @@ mod tests {
     ///           replays/
     ///           preferences.xml (optional)
     /// ```
-    fn make_steam_fixture(
-        tmp: &TempDir,
-        prefs_xml: Option<&str>,
-    ) -> (PathBuf, PathBuf) {
+    fn make_steam_fixture(tmp: &TempDir, prefs_xml: Option<&str>) -> (PathBuf, PathBuf) {
         let steam_root = tmp.path().join("steam");
         let library_root = tmp.path().join("library");
         let wows_root = library_root
@@ -413,8 +439,7 @@ mod tests {
         let abs_replays = tmp.path().join("custom_replays");
         fs::create_dir_all(&abs_replays).unwrap();
 
-        let xml = PREFS_XML_ABS_TEMPLATE
-            .replace("REPLAYS_PATH", &abs_replays.to_string_lossy());
+        let xml = PREFS_XML_ABS_TEMPLATE.replace("REPLAYS_PATH", &abs_replays.to_string_lossy());
         let (steam_root, _) = make_steam_fixture(&tmp, Some(&xml));
 
         let roots = SearchRoots {
@@ -444,8 +469,7 @@ mod tests {
         fs::create_dir_all(&wgc_root).unwrap();
         fs::create_dir_all(&replays_dir).unwrap();
 
-        let xml = PREFS_XML_ABS_TEMPLATE
-            .replace("REPLAYS_PATH", &replays_dir.to_string_lossy());
+        let xml = PREFS_XML_ABS_TEMPLATE.replace("REPLAYS_PATH", &replays_dir.to_string_lossy());
         fs::write(wgc_root.join("preferences.xml"), xml).unwrap();
 
         let roots = SearchRoots {
@@ -487,6 +511,42 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         // no replay files, name doesn't contain "replays"
         assert!(!validate_replays_folder(&dir));
+    }
+
+    // ── derive_game_dir tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn derive_game_dir_from_replays_subfolder() {
+        // replays_path is a version subfolder under replays/
+        let path = Path::new(r"C:\Games\World_of_Warships\replays\15.4.0.0");
+        let result = derive_game_dir(path).expect("should derive game dir");
+        assert_eq!(result, Path::new(r"C:\Games\World_of_Warships"));
+    }
+
+    #[test]
+    fn derive_game_dir_from_replays_itself() {
+        // replays_path IS the replays directory
+        let path = Path::new(r"C:\Games\World_of_Warships\replays");
+        let result = derive_game_dir(path).expect("should derive game dir");
+        assert_eq!(result, Path::new(r"C:\Games\World_of_Warships"));
+    }
+
+    #[test]
+    fn derive_game_dir_case_insensitive() {
+        // "Replays" with capital R
+        let path = Path::new(r"C:\Games\World_of_Warships\Replays");
+        let result = derive_game_dir(path).expect("should derive game dir");
+        assert_eq!(result, Path::new(r"C:\Games\World_of_Warships"));
+    }
+
+    #[test]
+    fn derive_game_dir_fallback_when_no_replays_component() {
+        // Path has no "replays" component — fallback to parent
+        let path = Path::new(r"C:\SomePath\battles\15.4.0.0");
+        let result = derive_game_dir(path);
+        // Should return the parent as fallback
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), Path::new(r"C:\SomePath\battles"));
     }
 
     #[test]

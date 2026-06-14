@@ -5,10 +5,12 @@
 /// configured replays directory.
 ///
 /// Endpoints
-///   GET /v1/health             → JSON {name, version, capabilities}
-///   GET /v1/replays            → JSON [{name, size, modified_ms}]  (*.wowsreplay + tempArenaInfo.json)
-///   GET /v1/replays/latest     → JSON {name, size, modified_ms} or 404  (newest *.wowsreplay; excludes the live file)
-///   GET /v1/replays/{name}     → file bytes
+///   GET /v1/health                          → JSON {name, version, capabilities}
+///   GET /v1/replays                         → JSON [{name, size, modified_ms}]  (*.wowsreplay + tempArenaInfo.json)
+///   GET /v1/replays/latest                  → JSON {name, size, modified_ms} or 404  (newest *.wowsreplay; excludes the live file)
+///   GET /v1/replays/{name}                  → file bytes
+///   GET /v1/replays/latest/result           → JSON BattleData or 404/501/504/500
+///   GET /v1/replays/{name}/result           → JSON BattleData or 404/501/504/500
 ///
 /// The `tempArenaInfo.json` file is the live battle roster written by WoWS at
 /// battle start and deleted at battle end.  It is included in the replays list
@@ -28,15 +30,17 @@
 /// transitions are battle start/end signals, and a battle end triggers the
 /// stability + structural checks that announce the newest `.wowsreplay` as
 /// finalized.  There is exactly ONE watcher per bridge.
+use crate::battle_result::{BattleData, DecodeConfig, DecodeError, Tables};
 use crate::finalize::{FinalizeDetector, FinalizeOptions, TEMP_ARENA_INFO};
 use notify::{RecursiveMode, Watcher};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::thread;
 use std::time::UNIX_EPOCH;
@@ -59,6 +63,106 @@ pub enum BridgeError {
     Io(#[from] std::io::Error),
     #[error("Watcher error: {0}")]
     Watch(String),
+}
+
+// ── Decode context + cache ─────────────────────────────────────────────────────
+
+/// Signature of the decode function: same as `battle_result::decode_battle_result`,
+/// injectable via a closure for tests.
+pub type DecodeFn =
+    Arc<dyn Fn(&Path, &DecodeConfig, &Tables) -> Result<BattleData, DecodeError> + Send + Sync>;
+
+/// Secondary index key: used to look up the hash without re-reading the file.
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct FileKey {
+    path: PathBuf,
+    mtime_ms: u64,
+    size: u64,
+}
+
+/// Bounded (≤32 entries) FIFO result cache.  Keyed by source_file_hash
+/// (content-addressed), with a secondary `(path, mtime, size) → hash` index
+/// to skip re-reading unmodified files.  Hand-rolled — no new dependency.
+pub struct ResultCache {
+    /// FIFO order for bounded eviction.
+    order: VecDeque<String>,
+    /// hash → serialised JSON body.
+    by_hash: std::collections::HashMap<String, String>,
+    /// (path, mtime, size) → hash  (secondary index).
+    by_file: std::collections::HashMap<FileKey, String>,
+    /// Maximum number of entries.
+    cap: usize,
+}
+
+impl ResultCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            order: VecDeque::new(),
+            by_hash: std::collections::HashMap::new(),
+            by_file: std::collections::HashMap::new(),
+            cap,
+        }
+    }
+
+    /// Look up a cached result by file key; returns the serialised JSON body.
+    fn get_by_file(&self, key: &FileKey) -> Option<&str> {
+        let hash = self.by_file.get(key)?;
+        self.by_hash.get(hash.as_str()).map(|s| s.as_str())
+    }
+
+    /// Insert a decoded result; evicts the oldest entry if at capacity.
+    fn insert(&mut self, file_key: FileKey, hash: String, body: String) {
+        if self.by_hash.contains_key(&hash) {
+            // Same content already cached; just update the secondary index.
+            self.by_file.insert(file_key, hash);
+            return;
+        }
+        // Evict oldest entry if full.
+        if self.order.len() >= self.cap {
+            if let Some(old_hash) = self.order.pop_front() {
+                self.by_hash.remove(&old_hash);
+                // Remove all secondary-index entries pointing at the evicted hash.
+                self.by_file.retain(|_, v| v != &old_hash);
+            }
+        }
+        self.order.push_back(hash.clone());
+        self.by_hash.insert(hash.clone(), body);
+        self.by_file.insert(file_key, hash);
+    }
+}
+
+/// All state needed to decode replay files and cache their results.
+/// Passed to the bridge as `Option<Arc<DecodeContext>>`.  When `None` the
+/// `/result` endpoints return 501 and the capability is omitted from health.
+pub struct DecodeContext {
+    pub config: DecodeConfig,
+    pub tables: Tables,
+    pub cache: Mutex<ResultCache>,
+    /// The decode function — defaults to `battle_result::decode_battle_result`;
+    /// injectable via a closure in tests.
+    pub decode_fn: DecodeFn,
+}
+
+impl DecodeContext {
+    /// Construct with the production decode function.
+    pub fn new(config: DecodeConfig, tables: Tables) -> Self {
+        Self {
+            config,
+            tables,
+            cache: Mutex::new(ResultCache::new(32)),
+            decode_fn: Arc::new(crate::battle_result::decode_battle_result),
+        }
+    }
+
+    /// Construct with an injected decode function (for tests).
+    pub fn with_decode_fn(config: DecodeConfig, tables: Tables, decode_fn: DecodeFn) -> Self {
+        Self {
+            config,
+            tables,
+            cache: Mutex::new(ResultCache::new(32)),
+            decode_fn,
+        }
+    }
 }
 
 // ── Public types ───────────────────────────────────────────────────────────────
@@ -131,19 +235,47 @@ pub fn start_with_finalize(
     dev_origin: Option<String>,
     finalize: Option<FinalizeOptions>,
 ) -> Result<Bridge, BridgeError> {
+    start_full(replays_dir, dev_origin, finalize, None)
+}
+
+/// Start the bridge server with all optional components.
+///
+/// - `replays_dir` — the validated replays directory to serve.
+/// - `dev_origin`  — optional additional CORS origin for development.
+/// - `finalize`    — optional replay-finalized detection.
+/// - `decode`      — optional battle-result decode context; when `Some` the
+///   `/result` endpoints are active and health advertises `"battle-result-v1"`.
+pub fn start_full(
+    replays_dir: PathBuf,
+    dev_origin: Option<String>,
+    finalize: Option<FinalizeOptions>,
+    decode: Option<Arc<DecodeContext>>,
+) -> Result<Bridge, BridgeError> {
     let candidates: Vec<u16> = std::iter::once(CANONICAL_PORT)
         .chain(FALLBACK_PORTS)
         .collect();
-    start_on_ports(replays_dir, dev_origin, &candidates, finalize)
+    start_on_ports_full(replays_dir, dev_origin, &candidates, finalize, decode)
 }
 
 /// Internal start that accepts an explicit list of ports to try in order.
 /// Port 0 means "let the OS pick" (used in tests to avoid collisions).
+#[allow(dead_code)]
 pub(crate) fn start_on_ports(
     replays_dir: PathBuf,
     dev_origin: Option<String>,
     ports: &[u16],
     finalize: Option<FinalizeOptions>,
+) -> Result<Bridge, BridgeError> {
+    start_on_ports_full(replays_dir, dev_origin, ports, finalize, None)
+}
+
+/// Internal start with all options including decode context.
+pub(crate) fn start_on_ports_full(
+    replays_dir: PathBuf,
+    dev_origin: Option<String>,
+    ports: &[u16],
+    finalize: Option<FinalizeOptions>,
+    decode: Option<Arc<DecodeContext>>,
 ) -> Result<Bridge, BridgeError> {
     let (server, port) = bind_server(ports)?;
 
@@ -206,7 +338,14 @@ pub(crate) fn start_on_ports(
     };
 
     thread::spawn(move || {
-        handle_requests(&server_clone, &replays_dir, &allowed_origins, &gen_clone2, port);
+        handle_requests(
+            &server_clone,
+            &replays_dir,
+            &allowed_origins,
+            &gen_clone2,
+            port,
+            decode.as_ref(),
+        );
     });
 
     Ok(Bridge {
@@ -228,10 +367,7 @@ fn bind_server(ports: &[u16]) -> Result<(Arc<Server>, u16), BridgeError> {
             Ok(srv) => {
                 // When port=0 the OS assigned a port; read it back from the socket.
                 let actual_port = if port == 0 {
-                    srv.server_addr()
-                        .to_ip()
-                        .map(|a| a.port())
-                        .unwrap_or(0)
+                    srv.server_addr().to_ip().map(|a| a.port()).unwrap_or(0)
                 } else {
                     port
                 };
@@ -251,6 +387,7 @@ fn handle_requests(
     allowed_origins: &[String],
     generation: &AtomicU64,
     port: u16,
+    decode_ctx: Option<&Arc<DecodeContext>>,
 ) {
     loop {
         let request = match server.recv() {
@@ -273,8 +410,7 @@ fn handle_requests(
             .map(|h| is_allowed_host(h, port))
             .unwrap_or(false);
         if !host_ok {
-            let response =
-                make_json_response(StatusCode(403), r#"{"error":"forbidden"}"#, None);
+            let response = make_json_response(StatusCode(403), r#"{"error":"forbidden"}"#, None);
             if let Err(e) = request.respond(response) {
                 log::warn!("Bridge: failed to send response: {e}");
             }
@@ -287,15 +423,13 @@ fn handle_requests(
             .find(|h| h.field.equiv("Origin"))
             .map(|h| h.value.as_str().to_string());
 
-        let cors_origin = origin
-            .as_deref()
-            .and_then(|o| {
-                if allowed_origins.iter().any(|allowed| allowed == o) {
-                    Some(o.to_string())
-                } else {
-                    None
-                }
-            });
+        let cors_origin = origin.as_deref().and_then(|o| {
+            if allowed_origins.iter().any(|allowed| allowed == o) {
+                Some(o.to_string())
+            } else {
+                None
+            }
+        });
 
         let path = request.url().to_string();
         // Strip query string for routing
@@ -303,8 +437,22 @@ fn handle_requests(
 
         let response = match request.method() {
             tiny_http::Method::Get => match path_no_qs {
-                "/v1/health" => handle_health(),
+                "/v1/health" => handle_health(decode_ctx),
                 "/v1/replays" => handle_list(replays_dir, generation),
+                // /result routes MUST be matched BEFORE the generic /latest and /{name} fetch routes.
+                "/v1/replays/latest/result" => handle_latest_result(replays_dir, decode_ctx),
+                p if p.starts_with("/v1/replays/") && p.ends_with("/result") => {
+                    // Extract the name segment between "/v1/replays/" and "/result".
+                    // Use strip_prefix/strip_suffix to avoid a slice-bounds panic when
+                    // the path is exactly "/v1/replays/result" (prefix and suffix overlap).
+                    match p
+                        .strip_prefix("/v1/replays/")
+                        .and_then(|r| r.strip_suffix("/result"))
+                    {
+                        Some(mid) if !mid.is_empty() => handle_result(replays_dir, mid, decode_ctx),
+                        _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+                    }
+                }
                 "/v1/replays/latest" => handle_latest(replays_dir),
                 p if p.starts_with("/v1/replays/") => {
                     let name = &p["/v1/replays/".len()..];
@@ -312,14 +460,8 @@ fn handle_requests(
                 }
                 _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
             },
-            tiny_http::Method::Options => {
-                make_json_response(StatusCode(204), "", None)
-            }
-            _ => make_json_response(
-                StatusCode(405),
-                r#"{"error":"method not allowed"}"#,
-                None,
-            ),
+            tiny_http::Method::Options => make_json_response(StatusCode(204), "", None),
+            _ => make_json_response(StatusCode(405), r#"{"error":"method not allowed"}"#, None),
         };
 
         let response = attach_cors(response, cors_origin.as_deref());
@@ -332,30 +474,37 @@ fn handle_requests(
 
 // ── Endpoint handlers ─────────────────────────────────────────────────────────
 
-fn handle_health() -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_health(decode_ctx: Option<&Arc<DecodeContext>>) -> Response<std::io::Cursor<Vec<u8>>> {
     #[derive(Serialize)]
-    struct Health {
+    struct Health<'a> {
         name: &'static str,
         version: &'static str,
-        capabilities: &'static [&'static str],
+        capabilities: &'a [String],
+    }
+    // Build capabilities dynamically: always include the base set, and append
+    // "battle-result-v1" only when the decode feature is wired.
+    let mut caps: Vec<String> = vec![
+        "replays-v1".to_string(),
+        "live-v1".to_string(),
+        // "replay_donation" advertises the donation upload pipeline
+        // (td-c8973d) for the browser-side probe; the bridge uploads
+        // directly to the engine — the loopback API itself is unchanged.
+        "replay_donation".to_string(),
+    ];
+    if decode_ctx.is_some() {
+        caps.push("battle-result-v1".to_string());
     }
     let body = serde_json::to_string(&Health {
         name: "tfd-bridge",
         version: crate::version(),
-        // "replay_donation" advertises the donation upload pipeline
-        // (td-c8973d) for the browser-side probe; the bridge uploads
-        // directly to the engine — the loopback API itself is unchanged.
-        capabilities: &["replays-v1", "live-v1", "replay_donation"],
+        capabilities: &caps,
     })
     .unwrap_or_default();
 
     make_json_response(StatusCode(200), &body, None)
 }
 
-fn handle_list(
-    replays_dir: &Path,
-    generation: &AtomicU64,
-) -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_list(replays_dir: &Path, generation: &AtomicU64) -> Response<std::io::Cursor<Vec<u8>>> {
     match list_replays(replays_dir) {
         Ok(entries) => {
             let gen = generation.load(Ordering::SeqCst);
@@ -366,11 +515,7 @@ fn handle_list(
             .to_string();
             make_json_response(StatusCode(200), &body, None)
         }
-        Err(e) => make_json_response(
-            StatusCode(500),
-            &format!(r#"{{"error":"{}"}}"#, e),
-            None,
-        ),
+        Err(e) => make_json_response(StatusCode(500), &format!(r#"{{"error":"{}"}}"#, e), None),
     }
 }
 
@@ -384,18 +529,189 @@ fn handle_latest(replays_dir: &Path) -> Response<std::io::Cursor<Vec<u8>>> {
                 .filter(|e| e.name.to_ascii_lowercase().ends_with(".wowsreplay"))
                 .collect();
             if archives.is_empty() {
-                return make_json_response(StatusCode(404), r#"{"error":"no replays found"}"#, None);
+                return make_json_response(
+                    StatusCode(404),
+                    r#"{"error":"no replays found"}"#,
+                    None,
+                );
             }
-            archives.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+            archives.sort_by_key(|b| std::cmp::Reverse(b.modified_ms));
             let body = serde_json::to_string(&archives[0]).unwrap_or_default();
             make_json_response(StatusCode(200), &body, None)
         }
-        Err(e) => make_json_response(
-            StatusCode(500),
-            &format!(r#"{{"error":"{}"}}"#, e),
+        Err(e) => make_json_response(StatusCode(500), &format!(r#"{{"error":"{}"}}"#, e), None),
+    }
+}
+
+/// GET /v1/replays/{name}/result — decode and return the battle result for a named replay.
+fn handle_result(
+    replays_dir: &Path,
+    name: &str,
+    decode_ctx: Option<&Arc<DecodeContext>>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let ctx = match decode_ctx {
+        Some(c) => c,
+        None => {
+            return make_json_response(
+                StatusCode(501),
+                r#"{"error":"battle-result feature not available"}"#,
+                None,
+            );
+        }
+    };
+
+    // Percent-decode + safe-path validation (reuses same logic as handle_fetch).
+    let decoded = match percent_decode_str(name).decode_utf8() {
+        Ok(s) => s.into_owned(),
+        Err(_) => {
+            return make_json_response(
+                StatusCode(400),
+                r#"{"error":"invalid UTF-8 in path"}"#,
+                None,
+            );
+        }
+    };
+    let path = match resolve_safe_path(replays_dir, &decoded) {
+        Ok(p) => p,
+        Err(e) => {
+            return make_json_response(StatusCode(400), &format!(r#"{{"error":"{}"}}"#, e), None);
+        }
+    };
+
+    // Must exist and be a .wowsreplay file.
+    if !path.exists() {
+        return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None);
+    }
+    if !path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("wowsreplay"))
+        .unwrap_or(false)
+    {
+        return make_json_response(StatusCode(404), r#"{"error":"not a replay file"}"#, None);
+    }
+
+    decode_and_respond(&path, ctx)
+}
+
+/// GET /v1/replays/latest/result — decode the newest replay and return its battle result.
+fn handle_latest_result(
+    replays_dir: &Path,
+    decode_ctx: Option<&Arc<DecodeContext>>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let ctx = match decode_ctx {
+        Some(c) => c,
+        None => {
+            return make_json_response(
+                StatusCode(501),
+                r#"{"error":"battle-result feature not available"}"#,
+                None,
+            );
+        }
+    };
+
+    let entries = match list_replays(replays_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            return make_json_response(StatusCode(500), &format!(r#"{{"error":"{}"}}"#, e), None);
+        }
+    };
+    // Finalized archives only: exclude the live in-progress `temp.wowsreplay`
+    // (it is the newest by mtime while a battle is running, but it has no
+    // results and the decoder cannot parse an incomplete packet stream).
+    let mut archives: Vec<ReplayEntry> = entries
+        .into_iter()
+        .filter(|e| {
+            let base = e.name.rsplit('/').next().unwrap_or(e.name.as_str());
+            base.to_ascii_lowercase().ends_with(".wowsreplay")
+                && !base.eq_ignore_ascii_case("temp.wowsreplay")
+        })
+        .collect();
+    if archives.is_empty() {
+        return make_json_response(StatusCode(404), r#"{"error":"no replays found"}"#, None);
+    }
+    archives.sort_by_key(|b| std::cmp::Reverse(b.modified_ms));
+
+    // Return the newest replay that actually decodes to a battle result, skipping
+    // early-quits (no results) and any that fail to decode (e.g. unsupported
+    // older versions). Bounded so a streak of resultless replays cannot stall the
+    // serial request loop; decoded results are cached for instant repeats.
+    const MAX_TRIES: usize = 12;
+    for entry in archives.iter().take(MAX_TRIES) {
+        let path = match resolve_safe_path(replays_dir, &entry.name) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        match decode_cached(&path, ctx) {
+            Ok(body) => return make_json_response(StatusCode(200), &body, None),
+            Err(DecodeError::NoBattleResults) => continue,
+            Err(e) => {
+                log::warn!("latest/result: skipping {} ({e})", entry.name);
+                continue;
+            }
+        }
+    }
+    make_json_response(
+        StatusCode(404),
+        r#"{"error":"no decodable battle result in recent replays"}"#,
+        None,
+    )
+}
+
+/// Core decode logic used by both result endpoints.
+/// Implements caching (check → release lock → decode → insert) and maps
+/// `DecodeError` variants to the spec status codes.
+fn decode_and_respond(path: &Path, ctx: &Arc<DecodeContext>) -> Response<std::io::Cursor<Vec<u8>>> {
+    match decode_cached(path, ctx) {
+        Ok(body) => make_json_response(StatusCode(200), &body, None),
+        Err(DecodeError::NoBattleResults) => make_json_response(
+            StatusCode(404),
+            r#"{"error":"no battle result (battle not finished or left early)"}"#,
             None,
         ),
+        Err(e) => {
+            // Log detail but don't leak stderr to the client.
+            log::error!("Battle-result decode failed for {}: {e}", path.display());
+            make_json_response(StatusCode(500), r#"{"error":"decode failed"}"#, None)
+        }
     }
+}
+
+/// Decode `path` with caching (check under lock → release → decode → insert).
+/// Returns the serialized `BattleData` JSON body on success. Shared by both
+/// `decode_and_respond` (named replay) and `handle_latest_result` (which
+/// iterates candidates and needs to distinguish a result from a skip).
+fn decode_cached(path: &Path, ctx: &Arc<DecodeContext>) -> Result<String, DecodeError> {
+    // Secondary file key (mtime + size) so unchanged files skip re-reading.
+    let file_key = std::fs::metadata(path).ok().map(|m| FileKey {
+        path: path.to_path_buf(),
+        mtime_ms: m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        size: m.len(),
+    });
+
+    // Cache lookup under the lock; clone the body out before releasing it.
+    if let Some(ref fk) = file_key {
+        let guard = ctx.cache.lock().unwrap();
+        if let Some(cached_body) = guard.get_by_file(fk) {
+            return Ok(cached_body.to_string());
+        }
+    }
+    // Lock released before the (potentially slow) decode.
+
+    let data = (ctx.decode_fn)(path, &ctx.config, &ctx.tables)?;
+    let body = serde_json::to_string(&data).map_err(|e| {
+        log::error!("Battle-result serialise failed: {e}");
+        DecodeError::Malformed(format!("serialise: {e}"))
+    })?;
+    if let Some(fk) = file_key {
+        let mut guard = ctx.cache.lock().unwrap();
+        guard.insert(fk, data.meta.source_file_hash.clone(), body.clone());
+    }
+    Ok(body)
 }
 
 fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<u8>>> {
@@ -405,7 +721,11 @@ fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<
     let decoded = match percent_decode_str(name).decode_utf8() {
         Ok(s) => s.into_owned(),
         Err(_) => {
-            return make_json_response(StatusCode(400), r#"{"error":"invalid UTF-8 in path"}"#, None);
+            return make_json_response(
+                StatusCode(400),
+                r#"{"error":"invalid UTF-8 in path"}"#,
+                None,
+            );
         }
     };
     match resolve_safe_path(replays_dir, &decoded) {
@@ -427,11 +747,7 @@ fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<
                 return make_json_response(StatusCode(500), r#"{"error":"read error"}"#, None);
             }
             let response = Response::from_data(buf).with_status_code(StatusCode(200));
-            let header = Header::from_bytes(
-                b"Content-Type",
-                b"application/octet-stream",
-            )
-            .unwrap();
+            let header = Header::from_bytes(b"Content-Type", b"application/octet-stream").unwrap();
             response.with_header(header)
         }
     }
@@ -498,9 +814,9 @@ pub fn list_replays(dir: &Path) -> Result<Vec<ReplayEntry>, std::io::Error> {
                 .unwrap_or(0);
             // Build a forward-slash relative name from path components so it
             // is correct on both Unix and Windows.
-            let rel = path.strip_prefix(dir).map_err(|e| {
-                std::io::Error::other(e.to_string())
-            })?;
+            let rel = path
+                .strip_prefix(dir)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             let name = rel
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy())
@@ -624,10 +940,8 @@ fn attach_cors(
     allowed_origin: Option<&str>,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
     if let Some(origin) = allowed_origin {
-        let acao =
-            Header::from_bytes(b"Access-Control-Allow-Origin", origin.as_bytes()).unwrap();
-        let acam =
-            Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, OPTIONS").unwrap();
+        let acao = Header::from_bytes(b"Access-Control-Allow-Origin", origin.as_bytes()).unwrap();
+        let acam = Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, OPTIONS").unwrap();
         response.with_header(acao).with_header(acam)
     } else {
         response
@@ -758,8 +1072,7 @@ mod tests {
     /// Bind port 0 (OS-assigned) instead of a fixed port to avoid collisions
     /// between parallel tests or an already-running bridge.
     fn start_test_bridge(tmp_dir: &TempDir) -> Bridge {
-        start_on_ports(tmp_dir.path().to_path_buf(), None, &[0], None)
-            .expect("bridge start failed")
+        start_on_ports(tmp_dir.path().to_path_buf(), None, &[0], None).expect("bridge start failed")
     }
 
     fn get(url: &str) -> (u16, String, Vec<(String, String)>) {
@@ -773,7 +1086,8 @@ mod tests {
                     .headers_names()
                     .into_iter()
                     .filter_map(|name| {
-                        resp.header(&name).map(|v| (name.to_lowercase(), v.to_string()))
+                        resp.header(&name)
+                            .map(|v| (name.to_lowercase(), v.to_string()))
                     })
                     .collect();
                 let body = resp.into_string().unwrap_or_default();
@@ -796,7 +1110,8 @@ mod tests {
                     .headers_names()
                     .into_iter()
                     .filter_map(|name| {
-                        resp.header(&name).map(|v| (name.to_lowercase(), v.to_string()))
+                        resp.header(&name)
+                            .map(|v| (name.to_lowercase(), v.to_string()))
                     })
                     .collect();
                 let body = resp.into_string().unwrap_or_default();
@@ -995,7 +1310,10 @@ mod tests {
         let content = b"replay bytes";
         fs::write(tmp.path().join("game.wowsreplay"), content).unwrap();
         let bridge = start_test_bridge(&tmp);
-        let url = format!("http://127.0.0.1:{}/v1/replays/game.wowsreplay", bridge.port());
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay",
+            bridge.port()
+        );
         let (status, body, _) = get(&url);
         assert_eq!(status, 200);
         assert_eq!(body.as_bytes(), content);
@@ -1078,7 +1396,10 @@ mod tests {
         let bridge = start_test_bridge(&tmp);
         let url = format!("http://127.0.0.1:{}/v1/replays/latest", bridge.port());
         let (status, _, _) = get(&url);
-        assert_eq!(status, 404, "latest must return 404 when no .wowsreplay archives exist");
+        assert_eq!(
+            status, 404,
+            "latest must return 404 when no .wowsreplay archives exist"
+        );
         bridge.stop();
     }
 
@@ -1139,7 +1460,11 @@ mod tests {
         let bridge = start(tmp.path().to_path_buf(), None)
             .expect("start() must succeed by falling back to a higher port");
 
-        assert_ne!(bridge.port(), 43210, "must not bind the occupied canonical port");
+        assert_ne!(
+            bridge.port(),
+            43210,
+            "must not bind the occupied canonical port"
+        );
         assert_eq!(
             bridge.port(),
             43211,
@@ -1200,7 +1525,10 @@ mod tests {
         assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         let replays = v["replays"].as_array().unwrap();
-        let names: Vec<&str> = replays.iter().map(|r| r["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = replays
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
         assert!(
             names.contains(&"tempArenaInfo.json"),
             "list must contain tempArenaInfo.json, got: {names:?}"
@@ -1241,7 +1569,9 @@ mod tests {
                 break;
             }
             if std::time::Instant::now() >= deadline {
-                panic!("generation did not increment within 5 seconds after tempArenaInfo.json create");
+                panic!(
+                    "generation did not increment within 5 seconds after tempArenaInfo.json create"
+                );
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -1269,7 +1599,9 @@ mod tests {
                 break;
             }
             if std::time::Instant::now() >= deadline {
-                panic!("generation did not increment within 5 seconds after tempArenaInfo.json delete");
+                panic!(
+                    "generation did not increment within 5 seconds after tempArenaInfo.json delete"
+                );
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -1295,7 +1627,10 @@ mod tests {
         let entries = list_replays(tmp.path()).unwrap();
         assert_eq!(entries.len(), 2);
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-        assert!(names.contains(&"top.wowsreplay"), "top-level file must be listed");
+        assert!(
+            names.contains(&"top.wowsreplay"),
+            "top-level file must be listed"
+        );
         assert!(
             names.contains(&"13.1.0/nested.wowsreplay"),
             "nested file must use forward-slash: {names:?}"
@@ -1315,7 +1650,10 @@ mod tests {
         assert_eq!(status, 200);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         let replays = v["replays"].as_array().unwrap();
-        let names: Vec<&str> = replays.iter().map(|r| r["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = replays
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
         assert!(
             names.contains(&"13.1.0/nested.wowsreplay"),
             "nested file must appear in list with forward-slash path: {names:?}"
@@ -1476,12 +1814,12 @@ mod tests {
         // Create a file that is NOT in the served-file allowlist.
         fs::write(tmp.path().join("notes.txt"), b"sensitive data").unwrap();
         let bridge = start_test_bridge(&tmp);
-        let url = format!(
-            "http://127.0.0.1:{}/v1/replays/notes.txt",
-            bridge.port()
-        );
+        let url = format!("http://127.0.0.1:{}/v1/replays/notes.txt", bridge.port());
         let (status, _, _) = get(&url);
-        assert_eq!(status, 404, "non-served file type must return 404, not {status}");
+        assert_eq!(
+            status, 404,
+            "non-served file type must return 404, not {status}"
+        );
         bridge.stop();
     }
 
@@ -1560,6 +1898,459 @@ mod tests {
         assert!(
             caps.contains(&"replay_donation"),
             "health capabilities must include 'replay_donation', got: {caps:?}"
+        );
+        bridge.stop();
+    }
+
+    // ── Battle-result endpoint tests (td-865788, SPEC §10c) ───────────────────
+    //
+    // These tests inject a stub decode_fn (canned Ok/Err + call counter) so
+    // no real sidecar or replay files are needed.
+
+    use crate::battle_result::{
+        BattleData, BattleMeta, BattlePlayer, DecodeConfig, DecodeError, Tables,
+    };
+    use std::sync::atomic::AtomicU32;
+
+    /// Build a minimal stub `Tables` — we only need a non-panicking value for
+    /// the DecodeContext; no actual decode happens (stub decode_fn is used).
+    fn stub_tables() -> Tables {
+        Tables {
+            public_indices: std::collections::HashMap::new(),
+            common_results: Vec::new(),
+            interaction_details: Vec::new(),
+            private_results: Vec::new(),
+            init_economics_indices: std::collections::HashMap::new(),
+            ships: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Build a minimal stub `DecodeConfig` — paths don't need to exist because
+    /// the stub decode_fn never reads them.
+    fn stub_config() -> DecodeConfig {
+        DecodeConfig {
+            game_dir: PathBuf::from("/stub/game"),
+            constants_path: PathBuf::from("/stub/constants.json"),
+            ship_index_path: PathBuf::from("/stub/ship_index.json"),
+        }
+    }
+
+    /// Build a minimal `BattleData` whose JSON serialises cleanly.
+    fn stub_battle_data(hash: &str) -> BattleData {
+        BattleData {
+            meta: BattleMeta {
+                schema_version: "1.0".into(),
+                arena_unique_id: 1234,
+                map_name: "Shards".into(),
+                game_version: "15,4,0,1".into(),
+                game_version_short: Some("15.4".into()),
+                match_group: Some("pvp".into()),
+                duration_seconds: Some(600),
+                winner_team: Some(1),
+                battle_time: Some(1700000000),
+                source_file_hash: hash.to_string(),
+                owner_account_db_id: Some(591735977),
+                warnings: Vec::new(),
+            },
+            players: vec![BattlePlayer {
+                account_db_id: 591735977,
+                player_name: Some("FrankDrake".into()),
+                clan_id: None,
+                clan_tag: Some("-TFD-".into()),
+                ship_id: Some(42),
+                ship_name: Some("TestShip".into()),
+                ship_tier: Some(9),
+                ship_class: None,
+                team_id: Some(1),
+                prebattle_id: Some(0),
+                exp: Some(1000),
+                raw_exp: Some(700),
+                damage_dealt: Some(50000),
+                damage_to_buildings: None,
+                damage_potential: Some(200000),
+                shots_fired: Some(40),
+                hits: Some(20),
+                frags: Some(1),
+                xp_contribution: None,
+                ribbons_torpedo_hits: Some(0),
+                ribbons_plane_kills: Some(0),
+                ribbons_hits: Some(5),
+                spotting_damage: Some(12345),
+                damage_received: Some(6789),
+                credits: Some(192382),
+                afk: Some(false),
+                survived: Some(true),
+                is_self: true,
+                won: Some(true),
+            }],
+        }
+    }
+
+    /// Start a bridge with an injected stub decode_fn.  The counter is shared
+    /// so callers can assert how many times the function was called (cache test).
+    fn start_bridge_with_stub_decode(
+        tmp: &TempDir,
+        result: Result<BattleData, DecodeError>,
+        call_counter: Arc<AtomicU32>,
+    ) -> Bridge {
+        let decode_fn: DecodeFn = Arc::new(move |_path, _cfg, _tables| {
+            call_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            result.clone()
+        });
+        let ctx = Arc::new(DecodeContext::with_decode_fn(
+            stub_config(),
+            stub_tables(),
+            decode_fn,
+        ));
+        start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, Some(ctx))
+            .expect("bridge start failed")
+    }
+
+    // ── Helper: error results need Clone ─────────────────────────────────────
+
+    impl Clone for DecodeError {
+        fn clone(&self) -> Self {
+            match self {
+                DecodeError::NoBattleResults => DecodeError::NoBattleResults,
+                DecodeError::Resources(s) => DecodeError::Resources(s.clone()),
+                DecodeError::Malformed(s) => DecodeError::Malformed(s.clone()),
+                DecodeError::Io(e) => DecodeError::Resources(format!("io: {e}")),
+            }
+        }
+    }
+
+    // ── 501 when feature off ──────────────────────────────────────────────────
+
+    /// /v1/replays/game.wowsreplay/result returns 501 when decode ctx is None.
+    #[test]
+    fn result_501_when_feature_off() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        // start_test_bridge uses start_on_ports with None decode ctx.
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/result",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 501, "must return 501 when decode feature is off");
+        bridge.stop();
+    }
+
+    /// /v1/replays/latest/result returns 501 when decode ctx is None.
+    #[test]
+    fn latest_result_501_when_feature_off() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/latest/result",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(
+            status, 501,
+            "latest/result must return 501 when decode feature is off"
+        );
+        bridge.stop();
+    }
+
+    // ── Health omits / includes battle-result-v1 capability ──────────────────
+
+    /// Health must NOT include "battle-result-v1" when decode ctx is None.
+    #[test]
+    fn health_omits_battle_result_cap_when_feature_off() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/v1/health", bridge.port());
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let caps: Vec<&str> = v["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap())
+            .collect();
+        assert!(
+            !caps.contains(&"battle-result-v1"),
+            "health must NOT include 'battle-result-v1' when feature off, got: {caps:?}"
+        );
+        bridge.stop();
+    }
+
+    /// Health MUST include "battle-result-v1" when decode ctx is provided.
+    #[test]
+    fn health_includes_battle_result_cap_when_feature_on() {
+        let tmp = TempDir::new().unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("abc")), counter);
+        let url = format!("http://127.0.0.1:{}/v1/health", bridge.port());
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let caps: Vec<&str> = v["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap())
+            .collect();
+        assert!(
+            caps.contains(&"battle-result-v1"),
+            "health MUST include 'battle-result-v1' when feature on, got: {caps:?}"
+        );
+        bridge.stop();
+    }
+
+    // ── 200 OK with valid decode ──────────────────────────────────────────────
+
+    /// /result returns 200 + valid BattleData JSON with is_self true for owner.
+    #[test]
+    fn result_200_ok_with_battle_data() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let data = stub_battle_data("deadbeef");
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(data), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/result",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 200);
+        let v: serde_json::Value = serde_json::from_str(&body).expect("must be valid JSON");
+        assert_eq!(v["meta"]["schema_version"], "1.0");
+        assert!(v["players"].is_array());
+        let players = v["players"].as_array().unwrap();
+        assert_eq!(players.len(), 1);
+        assert_eq!(players[0]["is_self"], true);
+        bridge.stop();
+    }
+
+    // ── 404 for NoBattleResults ───────────────────────────────────────────────
+
+    #[test]
+    fn result_404_no_battle_results() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge =
+            start_bridge_with_stub_decode(&tmp, Err(DecodeError::NoBattleResults), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/result",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 404, "NoBattleResults must map to 404");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["error"],
+            "no battle result (battle not finished or left early)"
+        );
+        bridge.stop();
+    }
+
+    // ── 504 for Timeout ──────────────────────────────────────────────────────
+
+    // ── 500 for decode failure (Malformed) ───────────────────────────────────
+
+    #[test]
+    fn result_500_decode_failed() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(
+            &tmp,
+            Err(DecodeError::Malformed("internal detail".into())),
+            counter,
+        );
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/result",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(status, 500, "decode failure must map to 500");
+        // Must NOT leak internal error detail to the client.
+        assert!(
+            !body.contains("internal detail"),
+            "client response must not contain internal error detail: {body}"
+        );
+        bridge.stop();
+    }
+
+    // ── 404 for missing file ──────────────────────────────────────────────────
+
+    #[test]
+    fn result_404_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        // Do NOT write the file — it must be absent.
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("x")), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/nonexistent.wowsreplay/result",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "missing file must return 404");
+        bridge.stop();
+    }
+
+    // ── 400 for traversal ────────────────────────────────────────────────────
+
+    #[test]
+    fn result_traversal_not_200() {
+        let tmp = TempDir::new().unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("x")), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/..%2Fsecret.wowsreplay/result",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_ne!(status, 200, "traversal must not return 200");
+        bridge.stop();
+    }
+
+    // ── 404 for latest when no replays ──────────────────────────────────────
+
+    #[test]
+    fn latest_result_404_no_replays() {
+        let tmp = TempDir::new().unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("x")), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/latest/result",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "latest/result must return 404 when no replays");
+        bridge.stop();
+    }
+
+    // ── 200 for latest/result when replay exists ─────────────────────────────
+
+    #[test]
+    fn latest_result_200_when_replay_exists() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("cafebabe")), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/latest/result",
+            bridge.port()
+        );
+        let (status, body, _) = get(&url);
+        assert_eq!(
+            status, 200,
+            "latest/result must return 200 when replay exists"
+        );
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["meta"]["schema_version"], "1.0");
+        bridge.stop();
+    }
+
+    // ── CORS on /result ──────────────────────────────────────────────────────
+
+    /// /result must carry CORS headers for the allowed origin.
+    #[test]
+    fn result_cors_allowed_origin() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("hash1")), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/result",
+            bridge.port()
+        );
+        let (status, _, headers) = get(&url);
+        assert_eq!(status, 200);
+        let acao = find_header(&headers, "access-control-allow-origin");
+        assert_eq!(
+            acao.as_deref(),
+            Some("https://engine.tfd.rocks"),
+            "ACAO header must be set for allowed origin on /result"
+        );
+        bridge.stop();
+    }
+
+    // ── Cache: decode_fn called once for two identical requests ──────────────
+
+    /// Two identical requests to /result must invoke the decode_fn only once;
+    /// the second response comes from the cache.
+    #[test]
+    fn result_cache_decode_fn_called_once() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = Arc::clone(&counter);
+        let bridge =
+            start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("cachehash")), counter_clone);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/result",
+            bridge.port()
+        );
+        // First request — triggers the decode.
+        let (s1, body1, _) = get(&url);
+        assert_eq!(s1, 200);
+        // Second request — must be served from cache.
+        let (s2, body2, _) = get(&url);
+        assert_eq!(s2, 200);
+        // Bodies must be identical.
+        assert_eq!(body1, body2, "cached response must match original");
+        // decode_fn must have been called exactly once.
+        let calls = counter.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            calls, 1,
+            "decode_fn must be called once (second hit from cache), got {calls}"
+        );
+        bridge.stop();
+    }
+
+    // ── Regression: crafted /v1/replays/result must not panic ───────────────
+
+    /// GET /v1/replays/result (no name segment — prefix and suffix overlap) must
+    /// return a non-200 status code (404) and must NOT crash the handler thread.
+    /// A subsequent request must still succeed, proving the bridge is still alive.
+    #[test]
+    fn result_no_name_segment_returns_non_200_and_bridge_survives() {
+        let tmp = TempDir::new().unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("x")), counter);
+        let port = bridge.port();
+
+        // Crafted path that previously caused a slice-bounds panic.
+        let (status, _, _) = get(&format!("http://127.0.0.1:{port}/v1/replays/result"));
+        assert_ne!(
+            status, 200,
+            "ambiguous /v1/replays/result must not return 200"
+        );
+
+        // Bridge must still be alive and serving health.
+        let (health_status, _, _) = get(&format!("http://127.0.0.1:{port}/v1/health"));
+        assert_eq!(
+            health_status, 200,
+            "bridge must still serve /v1/health after the crafted request"
+        );
+        bridge.stop();
+    }
+
+    // ── 404 for non-.wowsreplay file via /result ─────────────────────────────
+
+    /// Requesting /result for a file that exists but is not .wowsreplay → 404.
+    #[test]
+    fn result_404_non_replay_extension() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("notes.txt"), b"text").unwrap();
+        let counter = Arc::new(AtomicU32::new(0));
+        let bridge = start_bridge_with_stub_decode(&tmp, Ok(stub_battle_data("x")), counter);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/notes.txt/result",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(
+            status, 404,
+            "non-.wowsreplay file must return 404 via /result"
         );
         bridge.stop();
     }
