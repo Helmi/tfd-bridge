@@ -3,8 +3,10 @@ pub mod donation;
 pub mod engine;
 pub mod uploader;
 
+use bridge_core::battle_result::{DecodeConfig, Tables};
+use bridge_core::detection::derive_game_dir;
 use bridge_core::finalize::{FinalizeOptions, FinalizedCallback};
-use bridge_core::server::{self, Bridge};
+use bridge_core::server::{self, Bridge, DecodeContext};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -191,6 +193,177 @@ pub fn decide_bridge_action(current: Option<&Path>, requested: &Path) -> BridgeA
     }
 }
 
+// ── Decode context wiring (td-865788) ────────────────────────────────────────
+
+/// Resolve the replayshark sidecar path: look next to the current executable
+/// (the Tauri `externalBin` location at runtime), and fall back to the dev
+/// build path in `src-tauri/bin/` when running `cargo tauri dev`.
+fn resolve_sidecar_path() -> Option<PathBuf> {
+    // Runtime: the bundled sidecar is stripped to just "replayshark.exe" by
+    // Tauri and placed next to the app executable.
+    if let Ok(exe) = std::env::current_exe() {
+        let candidate = exe
+            .parent()
+            .map(|p| p.join("replayshark.exe"))
+            .unwrap_or_default();
+        if candidate.exists() {
+            log::info!("Sidecar found at {}", candidate.display());
+            return Some(candidate);
+        }
+    }
+
+    // Development fallback: staged sidecar with the full triple suffix.
+    #[cfg(debug_assertions)]
+    {
+        // Look relative to src-tauri/ (two levels up from the binary in target/).
+        let dev_paths: &[&str] = &["bin/replayshark-x86_64-pc-windows-msvc.exe"];
+        for rel in dev_paths {
+            // Try from CARGO_MANIFEST_DIR equivalent — use __file__ via a
+            // well-known env var that cargo sets during build, or resolve from exe.
+            if let Ok(exe) = std::env::current_exe() {
+                // In cargo build/test the exe lands in target/<profile>/
+                // So we walk up to find src-tauri/
+                let mut dir = exe
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf();
+                for _ in 0..6 {
+                    let candidate = dir.join("src-tauri").join(rel);
+                    if candidate.exists() {
+                        log::info!("Dev sidecar found at {}", candidate.display());
+                        return Some(candidate);
+                    }
+                    if !dir.pop() {
+                        break;
+                    }
+                }
+            }
+        }
+        // Optional explicit override (e.g. point at a fresh wows-toolkit build).
+        if let Ok(p) = std::env::var("TFD_REPLAYSHARK") {
+            let dev_abs = PathBuf::from(p);
+            if dev_abs.exists() {
+                log::info!("Dev sidecar (TFD_REPLAYSHARK) at {}", dev_abs.display());
+                return Some(dev_abs);
+            }
+        }
+    }
+
+    log::warn!("Replayshark sidecar not found; battle-result feature disabled");
+    None
+}
+
+/// Resolve the resources directory (constants.json + ship_index.json).
+///
+/// Resources are declared in tauri.conf.json as `"resources/constants.json"` etc.,
+/// so Tauri's bundler preserves the `resources/` path component: the files land at
+/// `<resource_dir>/resources/constants.json`, NOT `<resource_dir>/constants.json`.
+/// On Windows `resource_dir()` always returns the executable's own directory, so we
+/// must look inside the `resources/` subdirectory.
+///
+/// During `cargo tauri dev` / raw `cargo run` we fall back to the repo's
+/// `src-tauri/resources/` directory (gated to debug builds for parity with
+/// `resolve_sidecar_path`).
+fn resolve_resources_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    // Prefer the Tauri path resolver: resources land in <resource_dir>/resources/.
+    use tauri::Manager;
+    if let Ok(dir) = app.path().resource_dir() {
+        let candidate = dir.join("resources");
+        if candidate.join("constants.json").exists() {
+            log::info!("Resources found at {}", candidate.display());
+            return Some(candidate);
+        }
+    }
+
+    // Debug-only fallback: repo src-tauri/resources/ (walk up from the binary).
+    // Gated to debug builds so release installs rely solely on the Tauri resolver.
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(exe) = std::env::current_exe() {
+            let mut dir = exe
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            for _ in 0..6 {
+                let candidate = dir.join("src-tauri").join("resources");
+                if candidate.join("constants.json").exists() {
+                    log::info!("Dev resources found at {}", candidate.display());
+                    return Some(candidate);
+                }
+                if !dir.pop() {
+                    break;
+                }
+            }
+        }
+    }
+
+    log::warn!(
+        "Resource dir (constants.json / ship_index.json) not found; battle-result feature disabled"
+    );
+    None
+}
+
+/// Build the `DecodeContext` from the resolved replays path.  Returns `None`
+/// when the sidecar or resources are missing, or when `Tables::load` fails.
+/// In all error cases the bridge still starts and serves replays/donation —
+/// only the `/result` endpoints are unavailable.
+fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<Arc<DecodeContext>> {
+    let sidecar_path = resolve_sidecar_path()?;
+    let resources_dir = resolve_resources_dir(app)?;
+
+    let constants_path = resources_dir.join("constants.json");
+    let ship_index_path = resources_dir.join("ship_index.json");
+
+    if !constants_path.exists() {
+        log::warn!(
+            "constants.json not found at {}; battle-result feature disabled",
+            constants_path.display()
+        );
+        return None;
+    }
+    if !ship_index_path.exists() {
+        log::warn!(
+            "ship_index.json not found at {}; battle-result feature disabled",
+            ship_index_path.display()
+        );
+        return None;
+    }
+
+    // Derive game dir from replays path (e.g. C:\Games\WoWS\replays → C:\Games\WoWS).
+    let game_dir = match derive_game_dir(replays_path) {
+        Some(d) => {
+            log::info!("Derived game_dir: {}", d.display());
+            d
+        }
+        None => {
+            log::warn!(
+                "Could not derive game_dir from replays path {}; battle-result feature disabled",
+                replays_path.display()
+            );
+            return None;
+        }
+    };
+
+    let cfg = DecodeConfig {
+        sidecar_path,
+        game_dir,
+        constants_path: constants_path.clone(),
+        ship_index_path: ship_index_path.clone(),
+        timeout: std::time::Duration::from_secs(120),
+    };
+
+    match Tables::load(&constants_path, &ship_index_path) {
+        Ok(tables) => {
+            log::info!("Tables loaded; battle-result feature active");
+            Some(Arc::new(DecodeContext::new(cfg, tables)))
+        }
+        Err(e) => {
+            log::error!("Tables::load failed ({e}); battle-result feature disabled");
+            None
+        }
+    }
+}
+
 // ── Bridge management ────────────────────────────────────────────────────────
 
 /// Apply a new replays path: start, restart, or leave the bridge unchanged.
@@ -246,7 +419,11 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
                 uploader_cb.on_replay_finalized(&event.path);
             });
             let finalize = FinalizeOptions::new(watermark_ms, on_finalized);
-            match server::start_with_finalize(path.clone(), dev_origin, Some(finalize)) {
+            // Build the battle-result decode context from the configured replays
+            // path.  `None` when the sidecar or resources are missing — the
+            // bridge still starts and the /result endpoints return 501 instead.
+            let decode_ctx = build_decode_context(app, &path);
+            match server::start_full(path.clone(), dev_origin, Some(finalize), decode_ctx) {
                 Ok(bridge) => {
                     log::info!("Bridge started on port {}", bridge.port());
                     *guard = Some(ActiveBridge { path, bridge });
@@ -391,13 +568,7 @@ pub(crate) fn set_launch_on_login_internal(app: &tauri::AppHandle, enabled: bool
     save_launch_on_login(app, enabled);
 
     // Sync the tray checkmark via the stored reference.
-    if let Some(item) = app
-        .state::<LaunchOnLoginItem>()
-        .0
-        .lock()
-        .unwrap()
-        .as_ref()
-    {
+    if let Some(item) = app.state::<LaunchOnLoginItem>().0.lock().unwrap().as_ref() {
         let _ = item.set_checked(enabled);
     }
 }
@@ -588,7 +759,9 @@ pub fn run() {
                                     match (app.get_webview_window("main"), dash) {
                                         (Some(win), Some(url)) => {
                                             if let Err(e) = win.navigate(url) {
-                                                log::error!("back-to-dashboard navigate failed: {e}");
+                                                log::error!(
+                                                    "back-to-dashboard navigate failed: {e}"
+                                                );
                                             }
                                         }
                                         _ => log::error!(
@@ -634,10 +807,9 @@ pub fn run() {
                 // Persist geometry now — the plugin's auto-save fires on RunEvent::Exit
                 // (real quit), but prevent_close() blocks the window's own close event
                 // from reaching the disk-write path, so we must flush explicitly here.
-                if let Err(e) = window
-                    .app_handle()
-                    .save_window_state(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
-                {
+                if let Err(e) = window.app_handle().save_window_state(
+                    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED,
+                ) {
                     log::warn!("Failed to save window state on close-to-tray: {e}");
                 }
                 api.prevent_close();
@@ -685,8 +857,13 @@ pub fn run() {
                 None::<&str>,
             )?;
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
-            let open_monitor =
-                MenuItem::with_id(app, "open_monitor", "Open Battle Monitor", true, None::<&str>)?;
+            let open_monitor = MenuItem::with_id(
+                app,
+                "open_monitor",
+                "Open Battle Monitor",
+                true,
+                None::<&str>,
+            )?;
             let check_updates = MenuItem::with_id(
                 app,
                 "check_updates",
@@ -844,9 +1021,7 @@ pub fn run() {
             // the remote monitor before the replays path is configured is wrong.
             // Navigate directly (not via open_monitor_window) so window
             // visibility is not touched; the autostart-hide block already handled that.
-            if onboarding_complete
-                && read_last_view(app.handle()).as_deref() == Some("monitor")
-            {
+            if onboarding_complete && read_last_view(app.handle()).as_deref() == Some("monitor") {
                 if let Some(win) = app.get_webview_window("main") {
                     match MONITOR_URL.parse::<tauri::Url>() {
                         Ok(url) => {
@@ -876,13 +1051,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                if let Some(ab) = app
-                    .state::<BridgeState>()
-                    .0
-                    .lock()
-                    .unwrap()
-                    .take()
-                {
+                if let Some(ab) = app.state::<BridgeState>().0.lock().unwrap().take() {
                     ab.bridge.stop();
                 }
                 if let Some(up) = app.state::<UploaderState>().0.lock().unwrap().take() {
@@ -969,10 +1138,7 @@ mod tests {
     #[test]
     fn bridge_action_noop_when_same_path() {
         let path = Path::new("/game/replays");
-        assert_eq!(
-            decide_bridge_action(Some(path), path),
-            BridgeAction::Noop
-        );
+        assert_eq!(decide_bridge_action(Some(path), path), BridgeAction::Noop);
     }
 
     #[test]

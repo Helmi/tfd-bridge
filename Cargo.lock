@@ -386,11 +386,13 @@ dependencies = [
 name = "bridge-core"
 version = "0.3.1"
 dependencies = [
+ "hex",
  "log",
  "notify",
  "percent-encoding",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tiny_http",
