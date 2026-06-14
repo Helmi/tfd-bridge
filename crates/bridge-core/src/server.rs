@@ -663,9 +663,11 @@ fn handle_latest_result(
 fn decode_and_respond(path: &Path, ctx: &Arc<DecodeContext>) -> Response<std::io::Cursor<Vec<u8>>> {
     match decode_cached(path, ctx) {
         Ok(body) => make_json_response(StatusCode(200), &body, None),
-        Err(DecodeError::NoBattleResults) => {
-            make_json_response(StatusCode(404), r#"{"error":"no battle result"}"#, None)
-        }
+        Err(DecodeError::NoBattleResults) => make_json_response(
+            StatusCode(404),
+            r#"{"error":"no battle result (battle not finished or left early)"}"#,
+            None,
+        ),
         Err(DecodeError::Timeout(_)) => {
             log::warn!("Battle-result decode timed out for {}", path.display());
             make_json_response(StatusCode(504), r#"{"error":"decode timed out"}"#, None)
@@ -1932,6 +1934,7 @@ mod tests {
             common_results: Vec::new(),
             interaction_details: Vec::new(),
             private_results: Vec::new(),
+            init_economics_indices: std::collections::HashMap::new(),
             ships: std::collections::HashMap::new(),
         }
     }
@@ -1988,6 +1991,9 @@ mod tests {
                 ribbons_torpedo_hits: Some(0),
                 ribbons_plane_kills: Some(0),
                 ribbons_hits: Some(5),
+                spotting_damage: Some(12345),
+                damage_received: Some(6789),
+                credits: Some(192382),
                 afk: Some(false),
                 survived: Some(true),
                 is_self: true,
@@ -2160,7 +2166,10 @@ mod tests {
         let (status, body, _) = get(&url);
         assert_eq!(status, 404, "NoBattleResults must map to 404");
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["error"], "no battle result");
+        assert_eq!(
+            v["error"],
+            "no battle result (battle not finished or left early)"
+        );
         bridge.stop();
     }
 
