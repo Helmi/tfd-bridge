@@ -11,6 +11,14 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.4.1] — 2026-06-15
+
+### Added
+- **Change replays folder from the dashboard.** A folder-icon button now sits next to the replays-path display, opening the native folder picker so you can re-point the bridge at a different replays folder without reinstalling or editing config by hand. Previously the folder could only be set during first-run onboarding.
+- **Window maximize/restore button.** The frameless title bar has a new maximize/restore control between minimize and close. On Windows 10 the title-bar double-click does not maximize a frameless window, so this button is the reliable way to maximize; its icon and tooltip reflect the current state.
+
+---
+
 ## [0.4.0] — 2026-06-14
 
 ### Added
