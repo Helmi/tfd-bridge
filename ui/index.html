@@ -171,6 +171,10 @@
 
     /* Replays-path display */
     .path-row { margin-top: 0.85rem; }
+    /* Path value + change-folder button sit on one row; the box flexes, the
+       icon button keeps a fixed square footprint to its right. */
+    .path-field { display: flex; align-items: stretch; gap: 0.4rem; }
+    .path-field .path-box { flex: 1; min-width: 0; }
     .path-box {
       background: var(--surface-2);
       border: 1px solid var(--border);
@@ -181,6 +185,33 @@
       color: var(--fg);
       word-break: break-all;
       line-height: 1.45;
+    }
+    /* Square icon-only action button matching the surface theme. */
+    .icon-btn {
+      flex-shrink: 0;
+      width: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--fg-muted);
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .icon-btn svg { display: block; width: 16px; height: 16px; }
+    .icon-btn:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--border-strong);
+    }
+    .path-error {
+      display: none;
+      color: var(--danger);
+      font-size: 0.76rem;
+      line-height: 1.4;
+      margin-top: 0.4rem;
     }
     .path-source {
       font-size: 0.68rem;
@@ -401,6 +432,17 @@
           <line x1="2" y1="6" x2="10" y2="6" />
         </svg>
       </button>
+      <button class="win-btn" id="win-maximize" type="button" title="Maximize" aria-label="Maximize">
+        <!-- Restore (overlapping squares) is shown when maximized; the single
+             square is the maximize state. Toggled at runtime. -->
+        <svg class="icon-maximize" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.25" y="2.25" width="7.5" height="7.5" rx="1" />
+        </svg>
+        <svg class="icon-restore" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+          <rect x="2" y="3.75" width="6.25" height="6.25" rx="1" />
+          <path d="M4 3.75V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-.75" />
+        </svg>
+      </button>
       <button class="win-btn close" id="win-close" type="button" title="Close to tray" aria-label="Close to tray">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
           <line x1="3" y1="3" x2="9" y2="9" />
@@ -424,7 +466,16 @@
           <div class="status"><span class="dot"></span> Bridge is running</div>
           <div class="path-row" id="current-path">
             <div class="path-source">Replays folder</div>
-            <div class="path-box" id="current-path-text"></div>
+            <div class="path-field">
+              <div class="path-box" id="current-path-text"></div>
+              <button class="icon-btn" id="btn-change-path" type="button" title="Change replays folder" aria-label="Change replays folder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                </svg>
+              </button>
+            </div>
+            <div class="path-error" id="path-error"></div>
           </div>
         </div>
 
@@ -557,6 +608,30 @@
     appWindow.close();
   });
 
+  // Maximize / restore. Win10 doesn't toggle on title-bar double-click for
+  // frameless windows, so this button is the reliable path. The icon and
+  // tooltip reflect the current state, synced after the toggle and whenever
+  // the window is resized (covers OS-snap / drag-to-edge maximize too).
+  const winMaximizeBtn = document.getElementById('win-maximize');
+  async function syncMaximizeIcon() {
+    try {
+      const maxed = await appWindow.isMaximized();
+      winMaximizeBtn.querySelector('.icon-maximize').style.display = maxed ? 'none' : 'block';
+      winMaximizeBtn.querySelector('.icon-restore').style.display = maxed ? 'block' : 'none';
+      const label = maxed ? 'Restore' : 'Maximize';
+      winMaximizeBtn.title = label;
+      winMaximizeBtn.setAttribute('aria-label', label);
+    } catch (err) {
+      console.warn('isMaximized failed:', err);
+    }
+  }
+  winMaximizeBtn.addEventListener('click', async () => {
+    await appWindow.toggleMaximize();
+    syncMaximizeIcon();
+  });
+  appWindow.onResized(() => syncMaximizeIcon());
+  syncMaximizeIcon();
+
   // ── App version in the topbar ─────────────────────────────────────────────
   // Pulled at runtime from the bundle version (tauri.conf.json) via the global
   // Tauri API — never hardcoded, so a release bump needs no UI edit.
@@ -605,6 +680,27 @@
     }
     setDashboardToggle(!!launchOnLogin);
   }
+
+  // Change replays folder (dashboard). Opens the native picker via the same
+  // command onboarding uses — it validates, persists, and live-re-points the
+  // bridge. On success we update the displayed path; cancel is a no-op.
+  document.getElementById('btn-change-path').addEventListener('click', async () => {
+    const errEl = document.getElementById('path-error');
+    errEl.style.display = 'none';
+    try {
+      const result = await invoke('pick_replays_folder');
+      if (result.ok && result.path) {
+        document.getElementById('current-path-text').textContent = result.path;
+      } else if (result.error) {
+        errEl.textContent = result.error;
+        errEl.style.display = 'block';
+      }
+      // result.ok false + no error = user cancelled; do nothing.
+    } catch (err) {
+      errEl.textContent = String(err);
+      errEl.style.display = 'block';
+    }
+  });
 
   // Open Battle Monitor button.
   document.getElementById('btn-open-monitor').addEventListener('click', async () => {
