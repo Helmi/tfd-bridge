@@ -9,6 +9,10 @@ Versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.5.0] — 2026-06-16
+
 ### Added
 - **Full per-target damage breakdown in the battle-result API.** Each player in `GET /v1/replays/{name}/result` (and `/latest/result`) now carries an `interactions` array — the attacker→victim matrix the decoder previously discarded. Per target it reports damage split by weapon type (main battery, secondary, torpedo, aircraft, fire, flood, ram, depth charge, other), spotting damage, fires / floods / crits / citadels, the killing blow, and the first-spot, sorted by damage dealt. "Damage *received* from a ship" is the transpose: find that ship's interaction whose `target_id` is you. This is the data a full post-battle damage-analysis result screen needs. The result `schema_version` is now `1.1` (purely additive — every existing field is unchanged).
 - **Self-validating decode (`meta.decode_status` + `meta.decode_checks`).** Every decoded result is now checked against the values we *expect*, and graded by how far it deviates — so a future game patch that silently shifts the replay's positional field layout is caught instead of served as plausible-but-wrong numbers on a normal `200`. `decode_status` (always present) is `ok` / `degraded` / `unreliable`; `decode_checks` lists each expectation that failed with its `severity` and an expected-vs-actual `detail`. The checks span structural anchors (player-array length, the account-id anchor at index 0, the exp/raw_exp win-multiplier ≈1.5/1.0), per-field domain ranges (team id ∈ {0,1}, ship tier 1–11, frags 0–12, hits ≤ shots fired, no negative damage/XP, plausible raw-XP), the game-version known-good gate, ship-resolution rate, and a cross-field reconciliation of the new interaction matrix against total damage received. A handful of outliers reads as `degraded`; a *systematic* break (the signature of a layout shift) reads as `unreliable`, so the result screen can show "decode unreliable — update needed" rather than rendering corrupt stats. (WoWS 15.3 and 15.4 are confirmed layout-identical, so the bundled mapping is correct for both today.)
@@ -163,7 +167,9 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Helmi/tfd-bridge/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/Helmi/tfd-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Helmi/tfd-bridge/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Helmi/tfd-bridge/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Helmi/tfd-bridge/compare/v0.2.4...v0.3.0
