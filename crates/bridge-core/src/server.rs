@@ -1908,7 +1908,7 @@ mod tests {
     // no real sidecar or replay files are needed.
 
     use crate::battle_result::{
-        BattleData, BattleMeta, BattlePlayer, DecodeConfig, DecodeError, Tables,
+        BattleData, BattleMeta, BattlePlayer, DecodeConfig, DecodeError, DecodeStatus, Tables,
     };
     use std::sync::atomic::AtomicU32;
 
@@ -1919,6 +1919,7 @@ mod tests {
             public_indices: std::collections::HashMap::new(),
             common_results: Vec::new(),
             interaction_details: Vec::new(),
+            interaction_index: std::collections::HashMap::new(),
             private_results: Vec::new(),
             init_economics_indices: std::collections::HashMap::new(),
             ships: std::collections::HashMap::new(),
@@ -1950,6 +1951,8 @@ mod tests {
                 battle_time: Some(1700000000),
                 source_file_hash: hash.to_string(),
                 owner_account_db_id: Some(591735977),
+                decode_status: DecodeStatus::Ok,
+                decode_checks: Vec::new(),
                 warnings: Vec::new(),
             },
             players: vec![BattlePlayer {
@@ -1982,6 +1985,7 @@ mod tests {
                 survived: Some(true),
                 is_self: true,
                 won: Some(true),
+                interactions: Vec::new(),
             }],
         }
     }

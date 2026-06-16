@@ -49,8 +49,59 @@ pub struct BattleMeta {
     pub battle_time: Option<i64>,
     pub source_file_hash: String,
     pub owner_account_db_id: Option<i64>,
+    /// Machine-readable trust signal for this decode. ALWAYS emitted (never
+    /// skipped) so a consumer can branch on it without sniffing `warnings`.
+    /// `unreliable` means a structural invariant failed (the positional layout
+    /// almost certainly shifted on a new game patch) — do not trust the numbers.
+    pub decode_status: DecodeStatus,
+    /// Every expected-value check that did NOT hold, with its severity and a
+    /// human-readable detail (expected vs actual). Empty ⇒ everything met
+    /// expectations. This is the "what changed and how severe" record — a new
+    /// game patch that shifts the layout lights up many `critical` checks at once.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub decode_checks: Vec<DecodeCheck>,
+    /// Flat detail strings of the failing checks (back-compat with the 1.1
+    /// `warnings` field; same content as `decode_checks[].detail`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+/// Confidence in a decoded result. A future WoWS patch can shift the positional
+/// field layout while the bundled `constants.json` stays stale; that produces
+/// plausible-but-wrong numbers. This lets the result screen show
+/// "decode unreliable / update needed" instead of rendering corrupt stats.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecodeStatus {
+    /// Structural invariants hold — values are trustworthy.
+    Ok,
+    /// A soft check tripped (unknown game version, low ship-resolution rate, odd
+    /// winner/loser XP) — probably fine, but flag it.
+    Degraded,
+    /// A hard invariant failed (player arrays too short, account-id anchor
+    /// mismatch, or the exp/raw_exp win multiplier is wrong) — the layout almost
+    /// certainly shifted; the numbers are not safe to use.
+    Unreliable,
+}
+
+/// Severity of a single expected-value check.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckSeverity {
+    /// Plausibility dipped (isolated outliers, unknown version) → `degraded`.
+    Warn,
+    /// A structural/domain expectation broke broadly → `unreliable` (layout shift).
+    Critical,
+}
+
+/// One expected-value check that failed: its name, severity, and an
+/// expected-vs-actual detail. The decoded `decode_status` is the worst severity
+/// across all of these.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DecodeCheck {
+    pub name: String,
+    pub severity: CheckSeverity,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -86,6 +137,227 @@ pub struct BattlePlayer {
     pub survived: Option<bool>,
     pub is_self: bool,
     pub won: Option<bool>,
+    /// Per-victim damage this player dealt — the attacker→victim matrix
+    /// (schema 1.1). Sorted by total damage descending; only victims this player
+    /// actually affected (damage, spotting, a kill, or a first-spot) are listed.
+    /// "Damage RECEIVED from X" is the transpose: scan player X's `interactions`
+    /// for the entry whose `target_id` equals this player's `account_db_id`.
+    /// Empty when the replay carries no interaction data.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub interactions: Vec<DamageInteraction>,
+}
+
+/// One attacker→victim damage record, resolved from a player's
+/// `CLIENT_VEH_INTERACTION_DETAILS` array. Damage is split into weapon-type
+/// buckets; zero buckets are omitted from the JSON to keep the payload small.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DamageInteraction {
+    /// Victim's `account_db_id`. Join to `players[].account_db_id` for the
+    /// victim's ship (name / tier / class) and side.
+    pub target_id: i64,
+    /// Total HP damage dealt to this victim (sum of the weapon-type buckets).
+    pub damage: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_main: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_secondary: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_torpedo: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_aircraft: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_fire: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_flood: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_ram: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_depth_charge: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub damage_other: i64,
+    /// Spotting (scouting) damage credited against this victim.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub spotting_damage: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub fires: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub floods: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub crits: i64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub citadels: i64,
+    /// This player landed the killing blow on the victim.
+    #[serde(skip_serializing_if = "is_false")]
+    pub killed: bool,
+    /// This player got the first-spot (detection) on the victim.
+    #[serde(skip_serializing_if = "is_false")]
+    pub spotted: bool,
+}
+
+fn is_zero(v: &i64) -> bool {
+    *v == 0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+// Weapon-type damage buckets, by `CLIENT_VEH_INTERACTION_DETAILS` field name.
+// Summed by name (not fixed index) so the grouping survives field reordering.
+const DMG_MAIN: &[&str] = &["damage_main_ap", "damage_main_cs", "damage_main_he"];
+const DMG_SECONDARY: &[&str] = &[
+    "damage_atba_ap",
+    "damage_atba_cs",
+    "damage_atba_he",
+    "damage_atba_ap_manual",
+    "damage_atba_cs_manual",
+    "damage_atba_he_manual",
+];
+const DMG_TORPEDO: &[&str] = &["damage_tpd_normal", "damage_tpd_deep", "damage_tpd_alter"];
+const DMG_AIRCRAFT: &[&str] = &[
+    "damage_bomb",
+    "damage_bomb_avia",
+    "damage_bomb_alt",
+    "damage_bomb_airsupport",
+    "damage_tbomb",
+    "damage_tbomb_avia",
+    "damage_tbomb_alt",
+    "damage_tbomb_airsupport",
+    "damage_rocket",
+    "damage_rocket_avia",
+    "damage_rocket_alt",
+    "damage_rocket_airsupport",
+    "damage_skip",
+    "damage_skip_avia",
+    "damage_skip_alt",
+    "damage_skip_airsupport",
+];
+const DMG_FIRE: &[&str] = &["damage_fire"];
+const DMG_FLOOD: &[&str] = &["damage_flood"];
+const DMG_RAM: &[&str] = &["damage_ram"];
+const DMG_DEPTH_CHARGE: &[&str] = &[
+    "damage_dbomb_direct",
+    "damage_dbomb_splash",
+    "damage_dbomb_airsupport",
+];
+const DMG_OTHER: &[&str] = &[
+    "damage_sea_mine",
+    "damage_wave",
+    "damage_charge_laser",
+    "damage_pulse_laser",
+    "damage_axis_laser",
+    "damage_phaser_laser",
+    "damage_event_1",
+    "damage_event_2",
+    "damage_adbomb",
+    "damage_missile",
+];
+
+/// Resolve a player's `interactions` value ({victim_id → field array}) into the
+/// attacker→victim matrix. Tolerant: bad entries are skipped, not fatal.
+/// Empty/no-effect interactions (zero damage, no spot, no kill) are dropped.
+fn build_interactions(
+    interactions_val: Option<&serde_json::Value>,
+    tables: &Tables,
+) -> Vec<DamageInteraction> {
+    let obj = match interactions_val.and_then(|v| v.as_object()) {
+        Some(o) => o,
+        None => return Vec::new(),
+    };
+    let idx = &tables.interaction_index;
+    let mut out: Vec<DamageInteraction> = Vec::with_capacity(obj.len());
+
+    for (vid_str, varr_val) in obj {
+        let target_id: i64 = match vid_str.parse() {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
+        let varr = match varr_val.as_array() {
+            Some(a) => a,
+            None => continue,
+        };
+        let get = |name: &str| -> i64 {
+            idx.get(name)
+                .and_then(|&i| varr.get(i))
+                .and_then(to_i64_tolerant)
+                .unwrap_or(0)
+        };
+        let sum = |names: &[&str]| -> i64 { names.iter().map(|n| get(n)).sum() };
+        // Flags may serialise as bool OR 0/1 int — use the bool-tolerant coercion.
+        let get_bool = |name: &str| -> bool {
+            idx.get(name)
+                .and_then(|&i| varr.get(i))
+                .and_then(to_bool_tolerant)
+                .unwrap_or(false)
+        };
+
+        let damage_main = sum(DMG_MAIN);
+        let damage_secondary = sum(DMG_SECONDARY);
+        let damage_torpedo = sum(DMG_TORPEDO);
+        let damage_aircraft = sum(DMG_AIRCRAFT);
+        let damage_fire = sum(DMG_FIRE);
+        let damage_flood = sum(DMG_FLOOD);
+        let damage_ram = sum(DMG_RAM);
+        let damage_depth_charge = sum(DMG_DEPTH_CHARGE);
+        let damage_other = sum(DMG_OTHER);
+        let damage = damage_main
+            + damage_secondary
+            + damage_torpedo
+            + damage_aircraft
+            + damage_fire
+            + damage_flood
+            + damage_ram
+            + damage_depth_charge
+            + damage_other;
+
+        let spotting_damage = get("scouting_damage");
+        let fires = get("fires");
+        let floods = get("floods");
+        let crits = get("crits");
+        let citadels = get("citadels");
+        let killed = get_bool("ship_killed");
+        let spotted =
+            get_bool("is_primary_spotted_by_ship") || get_bool("is_primary_spotted_by_plane");
+
+        // Drop interactions with no observable effect (the array often contains a
+        // slot for every enemy, most all-zero).
+        if damage == 0
+            && spotting_damage == 0
+            && fires == 0
+            && floods == 0
+            && crits == 0
+            && citadels == 0
+            && !killed
+            && !spotted
+        {
+            continue;
+        }
+
+        out.push(DamageInteraction {
+            target_id,
+            damage,
+            damage_main,
+            damage_secondary,
+            damage_torpedo,
+            damage_aircraft,
+            damage_fire,
+            damage_flood,
+            damage_ram,
+            damage_depth_charge,
+            damage_other,
+            spotting_damage,
+            fires,
+            floods,
+            crits,
+            citadels,
+            killed,
+            spotted,
+        });
+    }
+
+    // Highest-damage victims first — convenient for a result screen.
+    out.sort_by(|a, b| b.damage.cmp(&a.damage).then(a.target_id.cmp(&b.target_id)));
+    out
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -127,6 +399,9 @@ pub struct Tables {
     pub public_indices: HashMap<String, usize>,
     pub common_results: Vec<String>,
     pub interaction_details: Vec<String>,
+    /// name → position in `interaction_details`, for resolving the per-victim
+    /// `CLIENT_VEH_INTERACTION_DETAILS` arrays (the attacker→victim matrix).
+    pub interaction_index: HashMap<String, usize>,
     pub private_results: Vec<String>,
     /// INIT_ECONOMICS_INDICES (name → index) for the owner-only economics array.
     pub init_economics_indices: HashMap<String, usize>,
@@ -175,12 +450,17 @@ impl Tables {
             .collect();
 
         // CLIENT_VEH_INTERACTION_DETAILS: ordered array
-        let interaction_details = constants
+        let interaction_details: Vec<String> = constants
             .get("CLIENT_VEH_INTERACTION_DETAILS")
             .and_then(|v| v.as_array())
             .unwrap_or(&vec![])
             .iter()
             .map(|v| v.as_str().unwrap_or("").to_string())
+            .collect();
+        let interaction_index: HashMap<String, usize> = interaction_details
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.clone(), i))
             .collect();
 
         // PLAYER_PRIVATE_RESULTS: ordered array (is_afk at index 37)
@@ -240,6 +520,7 @@ impl Tables {
             public_indices,
             common_results,
             interaction_details,
+            interaction_index,
             private_results,
             init_economics_indices,
             ships,
@@ -416,6 +697,255 @@ fn parse_jsonl_and_build(
     build_battle_data(meta_obj, br, source_file_hash, replay_path, tables)
 }
 
+/// Structural counters gathered while resolving players, fed to the self-check.
+struct LayoutStats {
+    n_players: usize,
+    n_arr_short: usize,
+    n_anchor_checked: usize,
+    n_anchor_match: usize,
+    max_pub_idx: usize,
+}
+
+/// Expected-value security check: compare the decoded battle against everything
+/// we expect to be true, and return each expectation that did NOT hold with a
+/// severity. This is the patch-resilience tripwire — a game update that shifts
+/// the positional layout breaks many of these at once. Robust, version-stable
+/// expectations only (game rules / ranges / relationships, NOT economy specifics)
+/// so it stays valid across patches and flags *deviation from expectation*.
+fn run_self_checks(
+    players: &[BattlePlayer],
+    winner_team: Option<i64>,
+    game_version_short: Option<&str>,
+    layout: &LayoutStats,
+) -> Vec<DecodeCheck> {
+    let mut checks: Vec<DecodeCheck> = Vec::new();
+    // Inline push macros (NOT closures): a closure capturing `checks` by &mut
+    // would hold that borrow for its whole body and conflict with the other
+    // pushes; a macro borrows `checks` only momentarily at each call site.
+    macro_rules! warn {
+        ($n:expr, $d:expr $(,)?) => {
+            checks.push(DecodeCheck {
+                name: $n.into(),
+                severity: CheckSeverity::Warn,
+                detail: $d,
+            })
+        };
+    }
+    macro_rules! crit {
+        ($n:expr, $d:expr $(,)?) => {
+            checks.push(DecodeCheck {
+                name: $n.into(),
+                severity: CheckSeverity::Critical,
+                detail: $d,
+            })
+        };
+    }
+    // viol of total players → Warn for an isolated outlier, Critical when the
+    // majority violate (a systematic / layout-shift signature).
+    macro_rules! domain {
+        ($n:expr, $viol:expr, $total:expr, $what:expr $(,)?) => {{
+            let (viol, total) = ($viol, $total);
+            if viol > 0 && total > 0 {
+                let sev = if viol * 2 > total {
+                    CheckSeverity::Critical
+                } else {
+                    CheckSeverity::Warn
+                };
+                checks.push(DecodeCheck {
+                    name: $n.into(),
+                    severity: sev,
+                    detail: format!("{viol}/{total} players: {}", $what),
+                });
+            }
+        }};
+    }
+    let n = layout.n_players;
+    let count = |pred: &dyn Fn(&BattlePlayer) -> bool| players.iter().filter(|p| pred(p)).count();
+
+    // ── Structural anchors (a global index shift breaks these) ────────────────
+    if n >= 4 {
+        if layout.n_arr_short * 2 > n {
+            crit!(
+                "array_length",
+                format!(
+                    "{}/{} player arrays shorter than the expected layout (need index > {})",
+                    layout.n_arr_short, n, layout.max_pub_idx
+                )
+            );
+        }
+        if layout.n_anchor_checked >= 4 && layout.n_anchor_match * 2 < layout.n_anchor_checked {
+            crit!(
+                "account_id_anchor",
+                format!(
+                    "account_db_id at array[0] mismatched the player key in {}/{} players",
+                    layout.n_anchor_checked - layout.n_anchor_match,
+                    layout.n_anchor_checked
+                )
+            );
+        }
+    }
+
+    // ── exp/raw_exp win multiplier (sharpest one-slot-shift detector) ─────────
+    if let Some(wt) = winner_team {
+        let median = |won: bool| -> Option<f64> {
+            let mut rs: Vec<f64> = players
+                .iter()
+                .filter(|p| p.team_id.is_some() && (p.team_id == Some(wt)) == won)
+                .filter_map(|p| match (p.exp, p.raw_exp) {
+                    (Some(e), Some(r)) if r > 0 && e > 0 => Some(e as f64 / r as f64),
+                    _ => None,
+                })
+                .collect();
+            if rs.len() < 3 {
+                return None;
+            }
+            rs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            Some(rs[rs.len() / 2])
+        };
+        let w = median(true);
+        let l = median(false);
+        if w.is_some_and(|m| !(1.40..=1.60).contains(&m))
+            || l.is_some_and(|m| !(0.95..=1.08).contains(&m))
+        {
+            crit!(
+                "exp_raw_multiplier",
+                format!(
+                    "winner exp/raw median {w:?} (expect ≈1.5), loser median {l:?} (expect ≈1.0)"
+                )
+            );
+        }
+    }
+
+    // ── Per-field domain ranges (game-rule bounds) — pervasive ⇒ critical ─────
+    domain!(
+        "team_id_domain",
+        count(&|p| p.team_id.is_some_and(|t| t != 0 && t != 1)),
+        n,
+        "team_id outside {0,1}",
+    );
+    domain!(
+        "ship_tier_domain",
+        count(&|p| p.ship_tier.is_some_and(|t| !(1..=11).contains(&t))),
+        count(&|p| p.ship_tier.is_some()),
+        "ship_tier outside 1..=11",
+    );
+    domain!(
+        "frags_domain",
+        count(&|p| p.frags.is_some_and(|f| !(0..=12).contains(&f))),
+        n,
+        "frags outside 0..=12",
+    );
+    domain!(
+        "raw_exp_range",
+        count(&|p| p.raw_exp.is_some_and(|r| !(0..=8000).contains(&r))),
+        count(&|p| p.raw_exp.is_some()),
+        "raw_exp outside 0..=8000",
+    );
+    domain!(
+        "nonnegative_values",
+        count(&|p| {
+            [
+                p.damage_dealt,
+                p.spotting_damage,
+                p.damage_received,
+                p.exp,
+                p.raw_exp,
+            ]
+            .iter()
+            .any(|v| v.is_some_and(|x| x < 0))
+        }),
+        n,
+        "a negative damage/xp value",
+    );
+    domain!(
+        "hits_le_shots",
+        count(&|p| matches!((p.hits, p.shots_fired), (Some(h), Some(s)) if h > s)),
+        count(&|p| p.hits.is_some() && p.shots_fired.is_some()),
+        "hits > shots_fired",
+    );
+
+    // ── Soft signals ──────────────────────────────────────────────────────────
+    if let Some(short) = game_version_short {
+        let parts: Vec<u32> = short
+            .splitn(2, '.')
+            .filter_map(|p| p.parse().ok())
+            .collect();
+        if parts.len() == 2 && !KNOWN_GOOD.contains(&(parts[0], parts[1])) {
+            warn!(
+                "known_good_version",
+                format!("game version {short} not in known-good {KNOWN_GOOD:?}; field mapping may be stale"),
+            );
+        }
+    }
+    let with_id = count(&|p| p.ship_id.is_some());
+    if with_id > 0 {
+        let resolved = count(&|p| p.ship_name.is_some());
+        let rate = resolved as f64 / with_id as f64;
+        if rate < 0.8 {
+            warn!(
+                "ship_resolution_rate",
+                format!("only {:.0}% of ships resolved ({resolved}/{with_id}); ship_index.json may be stale", rate * 100.0),
+            );
+        }
+    }
+    if let Some(wt) = winner_team {
+        let avg = |won: bool| -> Option<f64> {
+            let v: Vec<i64> = players
+                .iter()
+                .filter(|p| p.team_id.is_some() && (p.team_id == Some(wt)) == won)
+                .filter_map(|p| p.raw_exp)
+                .collect();
+            (!v.is_empty()).then(|| v.iter().sum::<i64>() as f64 / v.len() as f64)
+        };
+        if let (Some(w), Some(l)) = (avg(true), avg(false)) {
+            if w < l * 0.8 {
+                warn!(
+                    "winner_xp_order",
+                    format!("winner avg raw_exp {w:.0} < loser avg {l:.0}")
+                );
+            }
+        }
+    }
+    // Cross-field reconciliation using the interaction matrix: in a closed PvP
+    // battle, total damage dealt (summed over the attacker→victim matrix) should
+    // be the same order as total damage received. A big divergence means the
+    // interaction parse or the received-damage fields drifted apart.
+    let dealt: i64 = players
+        .iter()
+        .flat_map(|p| &p.interactions)
+        .map(|i| i.damage)
+        .sum();
+    let received: i64 = players.iter().filter_map(|p| p.damage_received).sum();
+    if dealt > 0 && received > 0 {
+        let ratio = dealt as f64 / received as f64;
+        if !(0.5..=2.0).contains(&ratio) {
+            warn!(
+                "damage_reconciliation",
+                format!("interaction damage dealt {dealt} vs received {received} (ratio {ratio:.2}) — cross-field mismatch"),
+            );
+        }
+    }
+    if n == 0 && winner_team.is_some() {
+        warn!(
+            "empty_roster",
+            "finished battle resolved zero players".into()
+        );
+    }
+
+    checks
+}
+
+/// Worst severity across the checks → the headline `decode_status`.
+fn status_from_checks(checks: &[DecodeCheck]) -> DecodeStatus {
+    if checks.iter().any(|c| c.severity == CheckSeverity::Critical) {
+        DecodeStatus::Unreliable
+    } else if checks.is_empty() {
+        DecodeStatus::Ok
+    } else {
+        DecodeStatus::Degraded
+    }
+}
+
 /// Build [`BattleData`] from a resolved `BattleResults` JSON value plus the
 /// replay meta object. Shared by the in-process decoder ([`extract_battle_results`])
 /// and the test-only JSONL helper ([`parse_jsonl_and_build`]).
@@ -484,28 +1014,8 @@ fn build_battle_data(
         .map(|s| s.strip_prefix("spaces/").unwrap_or(s).to_string())
         .unwrap_or_default();
 
-    // ── Version and sanity warnings ───────────────────────────────────────────
-
-    let mut warnings: Vec<String> = Vec::new();
-
-    if !game_version.is_empty() {
-        if let Some(ref short) = game_version_short {
-            let parts: Vec<u32> = short
-                .splitn(2, '.')
-                .filter_map(|p| p.parse().ok())
-                .collect();
-            if parts.len() == 2 {
-                let maj = parts[0];
-                let min = parts[1];
-                if !KNOWN_GOOD.contains(&(maj, min)) {
-                    warnings.push(format!(
-                        "game version {short} is not in the known-good set {:?}; bundled constants/parser may be stale",
-                        KNOWN_GOOD
-                    ));
-                }
-            }
-        }
-    }
+    // Version/range/relationship validation happens in run_self_checks() after
+    // the players are resolved (single source of truth for the trust status).
 
     // ── Players ───────────────────────────────────────────────────────────────
 
@@ -519,7 +1029,14 @@ fn build_battle_data(
         br.get("privateDataList").and_then(|v| v.as_array());
 
     let mut players: Vec<BattlePlayer> = Vec::with_capacity(players_public.len());
-    let mut unknown_ship_count = 0usize;
+
+    // Structural-validation counters — a global positional shift (new patch with
+    // stale constants) breaks array length and the account-id anchor (index 0).
+    let max_pub_idx = tables.public_indices.values().copied().max().unwrap_or(0);
+    let acct_idx = tables.public_indices.get("account_db_id").copied();
+    let mut n_arr_short = 0usize;
+    let mut n_anchor_checked = 0usize;
+    let mut n_anchor_match = 0usize;
 
     for (db_id_str, arr_val) in players_public {
         let arr = match arr_val.as_array() {
@@ -531,6 +1048,16 @@ fn build_battle_data(
             Ok(id) => id,
             Err(_) => continue,
         };
+
+        if arr.len() <= max_pub_idx {
+            n_arr_short += 1;
+        }
+        if let Some(ai) = acct_idx {
+            n_anchor_checked += 1;
+            if arr.get(ai).and_then(to_i64_tolerant) == Some(db_id) {
+                n_anchor_match += 1;
+            }
+        }
 
         let is_owner = db_id == owner_db_id;
         let private_for_owner = if is_owner { private_list } else { None };
@@ -544,59 +1071,37 @@ fn build_battle_data(
             private_for_owner.map(|v| v.as_slice()),
         );
 
-        if player.ship_id.is_some() && player.ship_name.is_none() {
-            unknown_ship_count += 1;
-        }
-
         players.push(player);
     }
 
-    // Sanity: ship resolution rate.
-    if !players.is_empty() {
-        let total_with_ship_id = players.iter().filter(|p| p.ship_id.is_some()).count();
-        if total_with_ship_id > 0 {
-            let resolved = players.iter().filter(|p| p.ship_name.is_some()).count();
-            let rate = resolved as f64 / total_with_ship_id as f64;
-            if rate < 0.8 {
-                warnings.push(format!(
-                    "ship resolution rate {:.0}% is low ({} of {} ships resolved); ship_index.json may be stale",
-                    rate * 100.0,
-                    resolved,
-                    total_with_ship_id
-                ));
-            }
-        }
-        let _ = unknown_ship_count; // already counted via ship_name.is_none()
-    }
-
-    // XP ratio sanity check: winner team exp should be higher on average.
-    if let Some(wt) = winner_team {
-        let winners_raw: Vec<i64> = players
-            .iter()
-            .filter(|p| p.team_id == Some(wt))
-            .filter_map(|p| p.raw_exp)
-            .collect();
-        let losers_raw: Vec<i64> = players
-            .iter()
-            .filter(|p| p.team_id.is_some() && p.team_id != Some(wt))
-            .filter_map(|p| p.raw_exp)
-            .collect();
-        if !winners_raw.is_empty() && !losers_raw.is_empty() {
-            let w_avg = winners_raw.iter().sum::<i64>() as f64 / winners_raw.len() as f64;
-            let l_avg = losers_raw.iter().sum::<i64>() as f64 / losers_raw.len() as f64;
-            if w_avg < l_avg * 0.8 {
-                warnings.push(format!(
-                    "XP sanity: winner team avg raw_exp {w_avg:.0} < loser avg {l_avg:.0}; data may be misresolved"
-                ));
-            }
-        }
-    }
+    // ── Expected-value self-check (extraction-failure / patch-shift detection) ─
+    // The dangerous failure mode is a new game patch shifting the positional
+    // layout while the bundled field-mapping stays stale: plausible-but-WRONG
+    // numbers served as a normal 200. run_self_checks compares the decode against
+    // every expectation (structural anchors, exp/raw multiplier, per-field domain
+    // ranges, cross-field reconciliation) and grades deviations; decode_status is
+    // the worst severity. warnings mirrors the failing checks' details (back-compat).
+    let layout = LayoutStats {
+        n_players: players.len(),
+        n_arr_short,
+        n_anchor_checked,
+        n_anchor_match,
+        max_pub_idx,
+    };
+    let decode_checks = run_self_checks(
+        &players,
+        winner_team,
+        game_version_short.as_deref(),
+        &layout,
+    );
+    let decode_status = status_from_checks(&decode_checks);
+    let warnings: Vec<String> = decode_checks.iter().map(|c| c.detail.clone()).collect();
 
     let _ = replay_path; // used by caller for logging if needed
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.0".into(),
+            schema_version: "1.1".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -607,6 +1112,8 @@ fn build_battle_data(
             battle_time,
             source_file_hash,
             owner_account_db_id,
+            decode_status,
+            decode_checks,
             warnings,
         },
         players,
@@ -769,6 +1276,10 @@ pub(crate) fn resolve_player(
         None
     };
 
+    // Per-victim damage matrix (schema 1.1). The public "interactions" slot holds
+    // {victim_id → CLIENT_VEH_INTERACTION_DETAILS array}; resolve each victim.
+    let interactions = build_interactions(get_val("interactions"), tables);
+
     BattlePlayer {
         account_db_id,
         player_name,
@@ -799,6 +1310,7 @@ pub(crate) fn resolve_player(
         survived,
         is_self,
         won,
+        interactions,
     }
 }
 
@@ -1218,6 +1730,72 @@ mod tests {
     }
 
     #[test]
+    fn resolve_player_builds_interaction_matrix() {
+        let tables = make_tables_from_fixture();
+        let ii = tables.interaction_index.clone();
+        let n = tables.interaction_details.len().max(1);
+        let set = |arr: &mut Vec<serde_json::Value>, name: &str, v: serde_json::Value| {
+            if let Some(&i) = ii.get(name) {
+                arr[i] = v;
+            }
+        };
+
+        // victim A (222): main + torpedo + fire damage, a citadel, the kill, spotted, scouting.
+        let mut va = vec![serde_json::Value::Null; n];
+        set(&mut va, "damage_main_he", serde_json::json!(10000));
+        set(&mut va, "damage_tpd_normal", serde_json::json!(5000));
+        set(&mut va, "damage_fire", serde_json::json!(2000));
+        set(&mut va, "citadels", serde_json::json!(1));
+        set(&mut va, "ship_killed", serde_json::json!(true));
+        set(&mut va, "scouting_damage", serde_json::json!(3000));
+        set(&mut va, "is_primary_spotted_by_ship", serde_json::json!(1));
+
+        // victim B (333): all-zero → must be dropped.
+        let vb = vec![serde_json::Value::Null; n];
+
+        // victim C (444): moderate main-battery damage only.
+        let mut vc = vec![serde_json::Value::Null; n];
+        set(&mut vc, "damage_main_ap", serde_json::json!(8000));
+
+        let mut arr = make_arr(540);
+        let interactions_idx = tables.public_indices["interactions"];
+        arr[interactions_idx] = serde_json::json!({ "222": va, "333": vb, "444": vc });
+
+        let player = resolve_player(&arr, 111, &tables, 111, Some(1), None);
+
+        // All-zero victim dropped; remaining sorted by damage desc.
+        assert_eq!(
+            player.interactions.len(),
+            2,
+            "all-zero victim must be dropped"
+        );
+        let a = &player.interactions[0];
+        assert_eq!(a.target_id, 222);
+        assert_eq!(a.damage_main, 10000);
+        assert_eq!(a.damage_torpedo, 5000);
+        assert_eq!(a.damage_fire, 2000);
+        assert_eq!(a.damage_secondary, 0);
+        assert_eq!(a.damage, 17000, "total = main+torp+fire");
+        assert_eq!(a.spotting_damage, 3000);
+        assert_eq!(a.citadels, 1);
+        assert!(a.killed);
+        assert!(a.spotted);
+
+        let c = &player.interactions[1];
+        assert_eq!(c.target_id, 444);
+        assert_eq!(c.damage, 8000);
+        assert!(!c.killed);
+    }
+
+    #[test]
+    fn resolve_player_no_interactions_field_is_empty() {
+        let tables = make_tables_from_fixture();
+        let arr = make_arr(540); // index 405 (interactions) is null
+        let player = resolve_player(&arr, 1, &tables, 999, None, None);
+        assert!(player.interactions.is_empty());
+    }
+
+    #[test]
     fn resolve_player_null_fields_are_none() {
         let tables = make_tables_from_fixture();
         // All-null array — every optional field should be None.
@@ -1490,7 +2068,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.0");
+        assert_eq!(data.meta.schema_version, "1.1");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────
@@ -1548,6 +2126,116 @@ mod tests {
             "warning must mention the version; got: {:?}",
             data.meta.warnings
         );
+    }
+
+    // ── decode_status (extraction-failure detection) ──────────────────────────
+
+    /// A full-length player array (> max public index 502) with matching anchor.
+    fn make_full_player(db_id: i64, team: i64, raw_exp: i64, exp: i64) -> Vec<serde_json::Value> {
+        let mut a = vec![serde_json::Value::Null; 505];
+        a[0] = serde_json::json!(db_id); // account_db_id (the anchor)
+        a[6] = serde_json::json!(team); // team_id
+        a[403] = serde_json::json!(raw_exp);
+        a[404] = serde_json::json!(exp);
+        a
+    }
+
+    fn build_status_battle(players: serde_json::Value, winner: i64) -> BattleData {
+        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let inner = serde_json::json!({
+            "arenaUniqueID": 7777, "accountDBID": 1,
+            "commonList": [7777, 0, 0, winner, 0, 0, "regular", 0, 600, 0, "domination", 0, 7, "", {}, 0, 0, 0],
+            "playersPublicInfo": players, "privateDataList": []
+        });
+        let inner_str = serde_json::to_string(&inner).unwrap();
+        let jsonl = format!(
+            "{{\"matchGroup\":\"pvp\",\"clientVersionFromExe\":\"15,4,0,1\"}}\n{{\"packet_type\":34,\"payload\":{{\"BattleResults\":{inner_str:?}}}}}"
+        );
+        parse_jsonl_and_build(jsonl, "h".into(), Path::new("t.wowsreplay"), &tables)
+            .expect("should build")
+    }
+
+    #[test]
+    fn decode_status_ok_for_valid_layout() {
+        // Winners ratio 1.5, losers 1.0, anchors match, full-length arrays.
+        let players = serde_json::json!({
+            "10": make_full_player(10, 1, 800, 1200),
+            "11": make_full_player(11, 1, 700, 1050),
+            "20": make_full_player(20, 0, 600, 600),
+            "21": make_full_player(21, 0, 500, 500),
+        });
+        let data = build_status_battle(players, 1);
+        assert_eq!(
+            data.meta.decode_status,
+            DecodeStatus::Ok,
+            "warnings: {:?}",
+            data.meta.warnings
+        );
+    }
+
+    #[test]
+    fn decode_status_unreliable_on_broken_exp_ratio() {
+        // Winners with exp==raw_exp (ratio 1.0, should be ~1.5) — the index-shift
+        // signature. ≥3 winners so the median check fires.
+        let players = serde_json::json!({
+            "10": make_full_player(10, 1, 800, 800),
+            "11": make_full_player(11, 1, 700, 700),
+            "12": make_full_player(12, 1, 900, 900),
+            "20": make_full_player(20, 0, 600, 600),
+            "21": make_full_player(21, 0, 500, 500),
+            "22": make_full_player(22, 0, 550, 550),
+        });
+        let data = build_status_battle(players, 1);
+        assert_eq!(data.meta.decode_status, DecodeStatus::Unreliable);
+        assert!(
+            data.meta
+                .decode_checks
+                .iter()
+                .any(|c| c.name == "exp_raw_multiplier" && c.severity == CheckSeverity::Critical),
+            "expected a critical exp_raw_multiplier check; got {:?}",
+            data.meta.decode_checks
+        );
+    }
+
+    #[test]
+    fn decode_status_degraded_on_field_outlier() {
+        // One player with hits > shots_fired (impossible) — an isolated outlier
+        // ⇒ a Warn check ⇒ overall Degraded (not Unreliable).
+        let mut p_bad = make_full_player(10, 1, 800, 1200);
+        p_bad[35] = serde_json::json!(1); // shots_main_ap → shots_fired = 1
+        p_bad[66] = serde_json::json!(50); // hits_main_ap → hits = 50
+        let players = serde_json::json!({
+            "10": p_bad,
+            "11": make_full_player(11, 1, 700, 1050),
+            "20": make_full_player(20, 0, 600, 600),
+            "21": make_full_player(21, 0, 500, 500),
+        });
+        let data = build_status_battle(players, 1);
+        assert_eq!(data.meta.decode_status, DecodeStatus::Degraded);
+        assert!(
+            data.meta
+                .decode_checks
+                .iter()
+                .any(|c| c.name == "hits_le_shots" && c.severity == CheckSeverity::Warn),
+            "checks: {:?}",
+            data.meta.decode_checks
+        );
+    }
+
+    #[test]
+    fn decode_status_unreliable_on_anchor_mismatch() {
+        // arr[0] (account_db_id) != the playersPublicInfo key for every player.
+        let mk = |team: i64, exp: i64| {
+            let mut a = make_full_player(987654321, team, 800, exp); // wrong anchor id
+            a[0] = serde_json::json!(987654321);
+            a
+        };
+        let players = serde_json::json!({
+            "10": mk(1, 1200), "11": mk(1, 1050),
+            "20": mk(0, 800), "21": mk(0, 800),
+        });
+        let data = build_status_battle(players, 1);
+        assert_eq!(data.meta.decode_status, DecodeStatus::Unreliable);
     }
 
     // ── E2E integration test (real sidecar, real replays) ─────────────────────
@@ -1694,6 +2382,7 @@ mod tests {
         let mut total_players_checked: usize = 0;
         let mut total_field_checks: usize = 0;
 
+        let mut skipped = 0usize;
         for (replay_path, ref_json) in &candidates {
             let fname = replay_path.file_name().unwrap().to_string_lossy();
             let ver = parse_version_short(
@@ -1705,8 +2394,36 @@ mod tests {
 
             eprintln!("  decoding {} ({})", fname, ver);
 
-            let battle_data = decode_battle_result(replay_path, &cfg, &tables)
-                .unwrap_or_else(|e| panic!("decode failed for {}: {e}", fname));
+            let battle_data = match decode_battle_result(replay_path, &cfg, &tables) {
+                Ok(d) => d,
+                // The installed game ships only the CURRENT build's entity specs,
+                // so replays from an uninstalled older build cannot be parsed.
+                // Skip them rather than failing — expected once the game updates.
+                Err(DecodeError::Resources(msg)) => {
+                    eprintln!("    SKIP {fname} (specs unavailable: {msg})");
+                    skipped += 1;
+                    continue;
+                }
+                Err(e) => panic!("decode failed for {fname}: {e}"),
+            };
+
+            // Real-replay smoke check for the new fields (schema 1.1): a finished
+            // pvp battle on a known-good build must decode as trustworthy and
+            // expose a non-empty attacker→victim matrix for active players.
+            assert_eq!(
+                battle_data.meta.decode_status,
+                DecodeStatus::Ok,
+                "{fname}: expected decode_status=ok for a real {ver} battle"
+            );
+            let total_interactions: usize = battle_data
+                .players
+                .iter()
+                .map(|p| p.interactions.len())
+                .sum();
+            assert!(
+                total_interactions > 0,
+                "{fname}: expected a non-empty interaction matrix"
+            );
 
             if !battle_data.meta.warnings.is_empty() {
                 eprintln!("    warnings: {:?}", battle_data.meta.warnings);
@@ -1986,13 +2703,21 @@ mod tests {
         }
 
         let matched = total_field_checks - failures.len();
+        let decoded = candidates.len() - skipped;
         eprintln!(
-            "\nE2E summary: {} replays, {} players, {}/{} field checks passed (100% = {})",
+            "\nE2E summary: {} replays ({} decoded, {} skipped — build not installed), {} players, {}/{} field checks passed (100% = {})",
             candidates.len(),
+            decoded,
+            skipped,
             total_players_checked,
             matched,
             total_field_checks,
             failures.is_empty()
+        );
+        assert!(
+            decoded > 0,
+            "no candidate replay was decodable on this install (all {} skipped); install a known-good build to run the oracle",
+            candidates.len()
         );
 
         if !failures.is_empty() {
