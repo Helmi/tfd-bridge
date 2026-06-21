@@ -26,7 +26,7 @@ use wowsunpack::rpc::entitydefs::EntitySpec;
 // ── Known-good version set ─────────────────────────────────────────────────────
 
 /// Pairs (major, minor) for which the bundled constants + parser are confirmed good.
-const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 4)];
+const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 4), (15, 5)];
 
 // ── Output structs ─────────────────────────────────────────────────────────────
 
@@ -126,7 +126,12 @@ pub struct BattlePlayer {
     pub frags: Option<i64>,
     pub xp_contribution: Option<f64>,
     pub ribbons_torpedo_hits: Option<i64>,
-    pub ribbons_plane_kills: Option<i64>,
+    /// Aircraft this player shot down — a public per-player count present for
+    /// ALL players. It is `planes_killed_by_ship` (AA) + `planes_killed_by_plane`
+    /// (carrier aircraft). Replaces the former `ribbons_plane_kills`, which read
+    /// the self-only `RIBBON_PLANE` ribbon — a `10000` sentinel that produced the
+    /// bogus values on the post-battle plane column. (td-4b4c1a)
+    pub planes_killed: Option<i64>,
     pub ribbons_hits: Option<i64>,
     pub spotting_damage: Option<i64>,
     pub damage_received: Option<i64>,
@@ -1212,8 +1217,20 @@ pub(crate) fn resolve_player(
     let hits = Some(hits_ap + hits_cs + hits_he);
 
     let ribbons_torpedo_hits = get_i64("RIBBON_TORPEDO");
-    let ribbons_plane_kills = get_i64("RIBBON_PLANE");
     let ribbons_hits = get_i64("RIBBON_MAIN_CALIBER");
+
+    // Aircraft shot down — a public per-player count for ALL players. The
+    // self-only `RIBBON_PLANE` ribbon is a `10000` sentinel (0 for everyone
+    // else), so it was never a usable plane-kill count. A surface ship scores
+    // these via AA (`planes_killed_by_ship`); a carrier also via its aircraft
+    // (`planes_killed_by_plane`). The total is their sum. (td-4b4c1a)
+    let planes_killed = match (
+        get_i64("planes_killed_by_ship"),
+        get_i64("planes_killed_by_plane"),
+    ) {
+        (None, None) => None,
+        (by_ship, by_plane) => Some(by_ship.unwrap_or(0) + by_plane.unwrap_or(0)),
+    };
 
     // Spotting (scouting) damage — public, all players.
     let spotting_damage = get_i64("scouting_damage");
@@ -1301,7 +1318,7 @@ pub(crate) fn resolve_player(
         frags,
         xp_contribution: None, // v1.0: None (team-share derived, deferred)
         ribbons_torpedo_hits,
-        ribbons_plane_kills,
+        planes_killed,
         ribbons_hits,
         spotting_damage,
         damage_received,
@@ -1504,7 +1521,8 @@ mod tests {
         set_i(&mut arr, 426, 75898); // damage → damage_dealt
         set_i(&mut arr, 446, 5); // RIBBON_MAIN_CALIBER → ribbons_hits
         set_i(&mut arr, 447, 3); // RIBBON_TORPEDO → ribbons_torpedo_hits
-        set_i(&mut arr, 449, 0); // RIBBON_PLANE → ribbons_plane_kills
+        set_i(&mut arr, 280, 2); // planes_killed_by_ship
+        set_i(&mut arr, 281, 1); // planes_killed_by_plane → planes_killed = 3
 
         let player = resolve_player(
             &arr,
@@ -1539,12 +1557,41 @@ mod tests {
         assert_eq!(player.frags, Some(2));
         assert_eq!(player.xp_contribution, None);
         assert_eq!(player.ribbons_torpedo_hits, Some(3));
-        assert_eq!(player.ribbons_plane_kills, Some(0));
+        // planes_killed = planes_killed_by_ship(2) + planes_killed_by_plane(1)
+        assert_eq!(player.planes_killed, Some(3));
         assert_eq!(player.ribbons_hits, Some(5));
         assert_eq!(player.survived, Some(false));
         assert!(player.is_self);
         // won: winner_team(1) == team_id(1) → true
         assert_eq!(player.won, Some(true));
+    }
+
+    /// Lock the planes_killed aggregation edge cases (td-4b4c1a): both source
+    /// fields absent → None; a single field present → the other counts as 0.
+    /// Real data always carries both, but a future constants reshuffle dropping
+    /// one must not silently turn the sum into a wrong value or a panic.
+    #[test]
+    fn resolve_player_planes_killed_none_and_partial() {
+        let tables = make_tables_from_fixture();
+
+        // Both planes_killed_by_ship (280) and planes_killed_by_plane (281)
+        // absent (JSON null) → planes_killed is None.
+        let arr_absent = make_arr(540);
+        let p = resolve_player(&arr_absent, 42, &tables, 42, Some(1), None);
+        assert_eq!(
+            p.planes_killed, None,
+            "both plane-kill fields absent → planes_killed = None"
+        );
+
+        // Only planes_killed_by_ship present → the missing field counts as 0.
+        let mut arr_partial = make_arr(540);
+        set_i(&mut arr_partial, 280, 4); // planes_killed_by_ship
+        let p = resolve_player(&arr_partial, 42, &tables, 42, Some(1), None);
+        assert_eq!(
+            p.planes_killed,
+            Some(4),
+            "one plane-kill field present → other treated as 0"
+        );
     }
 
     #[test]
@@ -2087,10 +2134,11 @@ mod tests {
             "privateDataList": []
         });
         let inner_str = serde_json::to_string(&inner).unwrap();
-        // clientVersionFromExe "15,5,0,1" → short "15.5" — NOT in KNOWN_GOOD → should warn.
+        // clientVersionFromExe "15,9,0,1" → short "15.9" — a future version NOT in
+        // KNOWN_GOOD → should warn. (15.3/15.4/15.5 are all known-good now.)
         // mapName "spaces/23_Shards" → map_name should be "23_Shards" (strip prefix).
         // matchGroup "ranked" → match_group should be Some("ranked").
-        let meta_line = r#"{"matchGroup":"ranked","clientVersionFromExe":"15,5,0,1","mapName":"spaces/23_Shards"}"#;
+        let meta_line = r#"{"matchGroup":"ranked","clientVersionFromExe":"15,9,0,1","mapName":"spaces/23_Shards"}"#;
         let jsonl = format!(
             "{meta_line}\n{{\"packet_type\":34,\"clock\":1.0,\"payload\":{{\"BattleResults\":{inner_str:?}}}}}"
         );
@@ -2108,7 +2156,7 @@ mod tests {
         );
         assert_eq!(
             data.meta.game_version_short,
-            Some("15.5".into()),
+            Some("15.9".into()),
             "game_version_short must be parsed from clientVersionFromExe"
         );
         assert_eq!(
@@ -2116,13 +2164,13 @@ mod tests {
             Some("ranked".into()),
             "match_group must be taken from meta matchGroup"
         );
-        // 15.5 is not in KNOWN_GOOD → must have a stale-version warning.
+        // 15.9 is not in KNOWN_GOOD → must have a stale-version warning.
         assert!(
             !data.meta.warnings.is_empty(),
-            "stale version 15.5 must produce a warning"
+            "stale version 15.9 must produce a warning"
         );
         assert!(
-            data.meta.warnings.iter().any(|w| w.contains("15.5")),
+            data.meta.warnings.iter().any(|w| w.contains("15.9")),
             "warning must mention the version; got: {:?}",
             data.meta.warnings
         );
@@ -2257,7 +2305,9 @@ mod tests {
         let extracted_dir = PathBuf::from(
             r"C:\Users\fhelm\Documents\tfd-bridge\private-sync\notes\xp-analysis\extracted",
         );
-        let archive_dir = PathBuf::from(r"C:\Users\fhelm\Documents\wows-replay-archive");
+        // Canonical archive lives on the T: drive, partitioned by patch:
+        // T:\wows-replay-archive\<patch>\<donor>\<file>.
+        let archive_dir = PathBuf::from(r"T:\wows-replay-archive");
         let wows_replays = PathBuf::from(r"C:\Games\World_of_Warships\replays");
 
         // Pre-flight checks.
@@ -2293,9 +2343,21 @@ mod tests {
             if file_name.is_empty() || donor.is_empty() {
                 return None;
             }
-            let candidate = archive_dir.join(donor).join(file_name);
+            // Canonical layout: <archive>\<patch>\<donor>\<file>.
+            let short = parse_version_short(
+                ref_json["meta"]["clientVersionFromExe"]
+                    .as_str()
+                    .unwrap_or(""),
+            )
+            .unwrap_or_default();
+            let candidate = archive_dir.join(&short).join(donor).join(file_name);
             if candidate.exists() {
                 return Some(candidate);
+            }
+            // Legacy flat layout fallback: <archive>\<donor>\<file>.
+            let flat = archive_dir.join(donor).join(file_name);
+            if flat.exists() {
+                return Some(flat);
             }
             // Try nested under wows_replays/<version>/
             std::fs::read_dir(&wows_replays)
@@ -2323,11 +2385,12 @@ mod tests {
             .collect();
         all_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // Collect up to 5 from each version bucket (15.3 and 15.4).
+        // Collect up to 5 from each version bucket (15.3, 15.4 and 15.5).
         let mut v15_3: Vec<(PathBuf, serde_json::Value)> = Vec::new();
         let mut v15_4: Vec<(PathBuf, serde_json::Value)> = Vec::new();
+        let mut v15_5: Vec<(PathBuf, serde_json::Value)> = Vec::new();
         for (_, path) in &all_entries {
-            if v15_3.len() >= 5 && v15_4.len() >= 5 {
+            if v15_3.len() >= 5 && v15_4.len() >= 5 && v15_5.len() >= 5 {
                 break;
             }
             let content = match std::fs::read_to_string(path) {
@@ -2350,26 +2413,31 @@ mod tests {
                 v15_3.push((replay_path, ref_json));
             } else if short == "15.4" && v15_4.len() < 5 {
                 v15_4.push((replay_path, ref_json));
+            } else if short == "15.5" && v15_5.len() < 5 {
+                v15_5.push((replay_path, ref_json));
             }
         }
 
         let n_15_3 = v15_3.len();
         let n_15_4 = v15_4.len();
+        let n_15_5 = v15_5.len();
         let candidates: Vec<(PathBuf, serde_json::Value)> =
-            v15_3.into_iter().chain(v15_4).collect();
+            v15_3.into_iter().chain(v15_4).chain(v15_5).collect();
 
         eprintln!(
-            "E2E: collected {} candidates (15.3: {}, 15.4: {})",
+            "E2E: collected {} candidates (15.3: {}, 15.4: {}, 15.5: {})",
             candidates.len(),
             n_15_3,
-            n_15_4
+            n_15_4,
+            n_15_5
         );
 
-        // Both version buckets must be represented so the test covers both
-        // constants/sidecar compatibility across the known-good set.
+        // 15.5 must be represented — it is the newest known-good version and the
+        // build currently installed, so it is the one this run actually decodes
+        // (older builds whose entity specs are uninstalled are skipped below).
         assert!(
-            n_15_3 >= 1 && n_15_4 >= 1,
-            "E2E requires replays from both 15.3 and 15.4; got 15.3={n_15_3}, 15.4={n_15_4}"
+            n_15_5 >= 1,
+            "E2E requires 15.5 replays; got 15.3={n_15_3}, 15.4={n_15_4}, 15.5={n_15_5}"
         );
         assert!(
             candidates.len() >= 5,
@@ -2609,18 +2677,19 @@ mod tests {
                     }
                 }
 
-                // ribbons_plane_kills = RIBBON_PLANE
+                // planes_killed = planes_killed_by_ship + planes_killed_by_plane (td-4b4c1a)
                 {
                     total_field_checks += 1;
-                    let ref_val = ref_player["RIBBON_PLANE"].as_f64().map(|v| v as i64);
-                    if let Some(rv) = ref_val {
-                        let expected = Some(rv);
-                        if got.ribbons_plane_kills != expected {
-                            failures.push(format!(
-                                "{}: player {db_id_str} ribbons_plane_kills (RIBBON_PLANE): got {:?} expected {:?}",
-                                fname, got.ribbons_plane_kills, expected
-                            ));
-                        }
+                    let by_ship =
+                        ref_player["planes_killed_by_ship"].as_f64().unwrap_or(0.0) as i64;
+                    let by_plane =
+                        ref_player["planes_killed_by_plane"].as_f64().unwrap_or(0.0) as i64;
+                    let expected = Some(by_ship + by_plane);
+                    if got.planes_killed != expected {
+                        failures.push(format!(
+                            "{}: player {db_id_str} planes_killed (by_ship+by_plane): got {:?} expected {:?}",
+                            fname, got.planes_killed, expected
+                        ));
                     }
                 }
 

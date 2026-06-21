@@ -1976,7 +1976,7 @@ mod tests {
                 frags: Some(1),
                 xp_contribution: None,
                 ribbons_torpedo_hits: Some(0),
-                ribbons_plane_kills: Some(0),
+                planes_killed: Some(0),
                 ribbons_hits: Some(5),
                 spotting_damage: Some(12345),
                 damage_received: Some(6789),

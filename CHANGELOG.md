@@ -9,6 +9,12 @@ Versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Post-battle plane-kills column showed garbage (e.g. `10000`).** The per-player aircraft-destroyed value was read from the `RIBBON_PLANE` ribbon, which is populated only for the recording player and only ever as a `10000` sentinel (it is `0` for everyone else) — never a real count. The battle-result API now exposes **`planes_killed`** = `planes_killed_by_ship` (AA) + `planes_killed_by_plane` (carrier aircraft), a public per-player count present and correct for **all** players. Validated against 212 real players across 15.4/15.5 reference replays (100% match). The old `ribbons_plane_kills` field is removed in favour of `planes_killed` (which the engine already prefers). (td-4b4c1a)
+
+### Changed
+- **WoWS 15.5 is now a known-good decode version.** Added `(15, 5)` to the known-good set, so 15.5 replays no longer carry the `known_good_version` "field mapping may be stale" warning. Confirmed by decoding 5 real 15.5 **PvP** battles end-to-end (`decode_status = ok`, full per-player field cross-check passes across 212 players). 15.5 shares the 15.3/15.4 positional layout; no constants/parser change was required (upstream `wows-toolkit` has only an unrelated GUI export change since the pinned rev). (Co-op/PVE battles can still read `decode_status = unreliable` via the PvP-tuned win-XP-multiplier check — a pre-existing behaviour, unchanged here.)
+
 ---
 
 ## [0.5.0] — 2026-06-16
