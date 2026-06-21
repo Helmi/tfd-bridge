@@ -3,7 +3,10 @@ use crate::apply_replays_path;
 use crate::donation::DonationConsent;
 use bridge_core::{
     config::AppConfig,
-    detection::{detect_replays_paths, validate_replays_folder, DetectedPath, SearchRoots},
+    detection::{
+        detect_replays_paths, resolve_replays_folder, validate_replays_folder, DetectedPath,
+        SearchRoots,
+    },
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -39,6 +42,11 @@ pub struct OnboardingStatus {
 pub struct SetPathResult {
     pub ok: bool,
     pub path: Option<PathBuf>,
+    /// True when the stored `path` differs from what the user picked because we
+    /// auto-resolved it to the canonical replays folder (descended into a
+    /// `replays` child, or ascended from a version-sorter subfolder). The UI
+    /// shows a brief notice when this is set.
+    pub corrected: bool,
     pub error: Option<String>,
 }
 
@@ -125,28 +133,7 @@ pub fn set_donation_consent(app: AppHandle, opted_in: bool) {
 /// Confirm a detected or manually entered path and persist it.
 #[tauri::command]
 pub fn confirm_replays_path(app: AppHandle, path: String) -> SetPathResult {
-    let candidate = PathBuf::from(&path);
-    if !validate_replays_folder(&candidate) {
-        return SetPathResult {
-            ok: false,
-            path: None,
-            error: Some(format!(
-                "The folder '{}' does not appear to be a WoWS replays directory.",
-                path
-            )),
-        };
-    }
-    let mut cfg = load_config(&app);
-    cfg.replays_path = Some(candidate.clone());
-    cfg.onboarding_done = true;
-    save_config(&app, &cfg);
-    apply_replays_path(&app, candidate.clone());
-
-    SetPathResult {
-        ok: true,
-        path: Some(candidate),
-        error: None,
-    }
+    store_replays_pick(&app, PathBuf::from(&path))
 }
 
 /// Open a native folder-picker dialog and validate + persist the result.
@@ -160,39 +147,60 @@ pub fn pick_replays_folder(app: AppHandle) -> SetPathResult {
         .blocking_pick_folder();
 
     let folder_path = match picked {
-        Some(fp) => fp.as_path().map(PathBuf::from).unwrap_or_else(|| {
-            PathBuf::from(fp.to_string())
-        }),
+        Some(fp) => fp
+            .as_path()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(fp.to_string())),
         None => {
             // User cancelled
             return SetPathResult {
                 ok: false,
                 path: None,
+                corrected: false,
                 error: None,
             };
         }
     };
 
-    if !validate_replays_folder(&folder_path) {
+    store_replays_pick(&app, folder_path)
+}
+
+/// Resolve a user-picked folder to the canonical replays directory, validate
+/// it, and persist it. Shared by `confirm_replays_path` (a detected or typed
+/// path) and `pick_replays_folder` (the native dialog).
+///
+/// The resolver fixes the two common mis-picks — selecting the game folder that
+/// contains `replays`, or a version-sorter subfolder inside it — and reports
+/// whether the stored path was corrected so the UI can show a brief notice. The
+/// error message references the original pick, which is what the user saw.
+fn store_replays_pick(app: &AppHandle, picked: PathBuf) -> SetPathResult {
+    let (final_path, corrected) = match resolve_replays_folder(&picked) {
+        Some(r) => (r.path, r.corrected),
+        None => (picked.clone(), false),
+    };
+
+    if !validate_replays_folder(&final_path) {
         return SetPathResult {
             ok: false,
             path: None,
+            corrected: false,
             error: Some(format!(
                 "The folder '{}' does not appear to be a WoWS replays directory.",
-                folder_path.display()
+                picked.display()
             )),
         };
     }
 
-    let mut cfg = load_config(&app);
-    cfg.replays_path = Some(folder_path.clone());
+    let mut cfg = load_config(app);
+    cfg.replays_path = Some(final_path.clone());
     cfg.onboarding_done = true;
-    save_config(&app, &cfg);
-    apply_replays_path(&app, folder_path.clone());
+    save_config(app, &cfg);
+    apply_replays_path(app, final_path.clone());
 
     SetPathResult {
         ok: true,
-        path: Some(folder_path),
+        path: Some(final_path),
+        corrected,
         error: None,
     }
 }
@@ -443,6 +451,7 @@ mod tests {
         let res = SetPathResult {
             ok: true,
             path: Some(std::path::PathBuf::from("/replays")),
+            corrected: true,
             error: None,
         };
         let v = serde_json::to_value(&res).expect("serialisation failed");
@@ -451,5 +460,7 @@ mod tests {
         assert!(v.get("ok").is_some());
         assert!(v.get("path").is_some());
         assert!(v.get("error").is_some());
+        // The auto-correct flag the UI reads must be present.
+        assert_eq!(v.get("corrected").and_then(|c| c.as_bool()), Some(true));
     }
 }
