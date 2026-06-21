@@ -104,6 +104,10 @@
     .win-btn svg { display: block; width: 12px; height: 12px; }
     .win-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--fg); }
     .win-btn.close:hover { background: var(--danger); color: #fff; }
+    /* Restore icon is hidden until the window is maximized; JS toggles the
+       inline display from syncMaximizeIcon(). Kept here (not as an inline
+       style attribute) so the CSP style-src nonce isn't required. */
+    .win-btn .icon-restore { display: none; }
 
     /* ── Content ───────────────────────────────────────────────────────────── */
     .content {
@@ -243,6 +247,36 @@
       font-size: 0.84rem;
       line-height: 1.5;
       margin-bottom: 0.8rem;
+    }
+
+    /* Transient bottom toast — used to tell the user we auto-corrected their
+       replays-folder pick. Auto-dismisses; fixed so it survives the
+       onboarding→dashboard view swap. */
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 1.1rem;
+      transform: translateX(-50%) translateY(0.5rem);
+      width: calc(100% - 2.5rem);
+      max-width: 440px;
+      background: var(--surface-2);
+      border: 1px solid var(--accent);
+      border-radius: 9px;
+      padding: 0.6rem 0.85rem;
+      color: var(--fg);
+      font-size: 0.78rem;
+      line-height: 1.45;
+      white-space: pre-line;
+      word-break: break-word;
+      box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      z-index: 50;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
 
     /* ── Buttons ───────────────────────────────────────────────────────────── */
@@ -438,7 +472,7 @@
         <svg class="icon-maximize" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2.25" y="2.25" width="7.5" height="7.5" rx="1" />
         </svg>
-        <svg class="icon-restore" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+        <svg class="icon-restore" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="3.75" width="6.25" height="6.25" rx="1" />
           <path d="M4 3.75V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-.75" />
         </svg>
@@ -591,10 +625,34 @@
     </div>
   </main>
 
+  <!-- Transient notice (e.g. replays-folder auto-correction). -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
 <script>
   // Tauri v2 IPC via window.__TAURI__.core.invoke — available because
   // withGlobalTauri: true is set in tauri.conf.json.
   const invoke = (...args) => window.__TAURI__.core.invoke(...args);
+
+  // ── Transient toast ───────────────────────────────────────────────────────
+  // Shows a brief, auto-dismissing notice at the bottom of the window. Used to
+  // tell the user when their replays-folder pick was auto-corrected.
+  let toastTimer = null;
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 6000);
+  }
+
+  // Notice shown when confirm/pick auto-resolved the selection to the canonical
+  // replays folder (game-folder descend or version-subfolder ascend).
+  function notifyIfCorrected(result) {
+    if (result && result.corrected && result.path) {
+      showToast(`Adjusted to your replays folder:\n${result.path}`);
+    }
+  }
 
   // ── Frameless window controls ─────────────────────────────────────────────
   // getCurrentWindow() comes from the global Tauri API (withGlobalTauri).
@@ -691,6 +749,7 @@
       const result = await invoke('pick_replays_folder');
       if (result.ok && result.path) {
         document.getElementById('current-path-text').textContent = result.path;
+        notifyIfCorrected(result);
       } else if (result.error) {
         errEl.textContent = result.error;
         errEl.style.display = 'block';
@@ -876,6 +935,7 @@
         await applyLaunchOnLogin();
         document.getElementById('onboarding').style.display = 'none';
         showRunning(result.path, getLaunchOnLoginPref());
+        notifyIfCorrected(result);
       } else if (result.error) {
         showError(result.error);
       }
@@ -892,6 +952,7 @@
         await applyLaunchOnLogin();
         document.getElementById('onboarding').style.display = 'none';
         showRunning(result.path, getLaunchOnLoginPref());
+        notifyIfCorrected(result);
       } else if (result.error) {
         showError(result.error);
       }

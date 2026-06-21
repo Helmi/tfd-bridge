@@ -120,6 +120,72 @@ pub fn validate_replays_folder(path: &Path) -> bool {
     has_replay_file(path)
 }
 
+/// The outcome of resolving a user-picked folder to the canonical replays dir.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedReplays {
+    /// The canonical replays folder to store.
+    pub path: PathBuf,
+    /// True when `path` differs from the picked folder because we descended
+    /// into a `replays` child or ascended to a `replays` ancestor.
+    pub corrected: bool,
+}
+
+/// Resolve a user-picked folder to the canonical WoWS replays folder.
+///
+/// People mis-pick in two predictable ways; this fixes both transparently:
+///  1. The pick already *is* a replays folder (its name contains "replays")
+///     → keep it as-is.
+///  2. The pick is the WoWS **game folder** that holds a `replays` child
+///     (e.g. `…\World_of_Warships`) → descend into that child.
+///  3. The pick is a folder **inside** replays — typically a version-sorter
+///     mod's subfolder (`…\replays\15.4.0.0`) → ascend to the nearest
+///     `replays` ancestor that contains them all.
+///
+/// Returns `None` when the pick is not a directory or has no structural
+/// relationship to a replays folder; the caller then surfaces the normal
+/// "not a replays directory" error. A custom-named folder that directly holds
+/// `.wowsreplay` files is accepted as-is (`corrected = false`), preserving the
+/// lenient behaviour of [`validate_replays_folder`].
+pub fn resolve_replays_folder(picked: &Path) -> Option<ResolvedReplays> {
+    if !picked.is_dir() {
+        return None;
+    }
+
+    // 1. The pick itself looks like the replays folder.
+    if dir_name_is_replays(picked) {
+        return Some(ResolvedReplays {
+            path: picked.to_path_buf(),
+            corrected: false,
+        });
+    }
+
+    // 2. Game folder: it holds a `replays` child directory.
+    if let Some(child) = replays_child(picked) {
+        return Some(ResolvedReplays {
+            path: child,
+            corrected: true,
+        });
+    }
+
+    // 3. Subfolder inside replays: walk up to the nearest `replays` ancestor.
+    if let Some(ancestor) = nearest_replays_ancestor(picked) {
+        return Some(ResolvedReplays {
+            path: ancestor,
+            corrected: true,
+        });
+    }
+
+    // 4. Lenient fallback: a custom-named folder that directly holds replays.
+    if has_replay_file(picked) {
+        return Some(ResolvedReplays {
+            path: picked.to_path_buf(),
+            corrected: false,
+        });
+    }
+
+    None
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 fn detect_steam(roots: &SearchRoots) -> Vec<DetectedPath> {
@@ -307,6 +373,48 @@ pub fn derive_game_dir(replays_path: &Path) -> Option<PathBuf> {
         replays_path.display()
     );
     replays_path.parent().map(PathBuf::from)
+}
+
+/// True if the dir's own name contains "replays" (case-insensitive) — the same
+/// name test [`validate_replays_folder`] uses.
+fn dir_name_is_replays(path: &Path) -> bool {
+    path.file_name()
+        .map(|n| n.to_string_lossy().to_lowercase().contains("replays"))
+        .unwrap_or(false)
+}
+
+/// Find a direct child directory whose name looks like a replays folder.
+///
+/// Uses a directory scan rather than `join("replays")` so the match is
+/// case-insensitive even on case-sensitive filesystems (test fixtures on
+/// macOS). An exact "replays" match is preferred over names that merely
+/// contain it; ties break on the lowercased name for deterministic results.
+fn replays_child(parent: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(parent)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir() && dir_name_is_replays(p))
+        .collect();
+    candidates.sort_by_key(|p| {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_lowercase());
+        let exact = name.as_deref() == Some("replays");
+        (!exact, name.unwrap_or_default())
+    });
+    candidates.into_iter().next()
+}
+
+/// Walk up from `path` to the nearest ancestor whose name looks like a replays
+/// folder (case-insensitive). Returns that ancestor, or `None` if there is one.
+fn nearest_replays_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir_name_is_replays(dir) {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
 }
 
 fn has_replay_file(dir: &Path) -> bool {
@@ -547,6 +655,113 @@ mod tests {
         // Should return the parent as fallback
         assert!(result.is_some());
         assert_eq!(result.unwrap(), Path::new(r"C:\SomePath\battles"));
+    }
+
+    // ── resolve_replays_folder tests ─────────────────────────────────────────
+
+    #[test]
+    fn resolve_keeps_replays_folder_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let replays = tmp.path().join("replays");
+        fs::create_dir_all(&replays).unwrap();
+
+        let r = resolve_replays_folder(&replays).expect("should resolve");
+        assert_eq!(r.path, replays);
+        assert!(!r.corrected, "picking replays itself is not a correction");
+    }
+
+    #[test]
+    fn resolve_descends_into_replays_child_of_game_folder() {
+        // User picked the game folder; it holds a `replays` child.
+        let tmp = TempDir::new().unwrap();
+        let game = tmp.path().join("World_of_Warships");
+        let replays = game.join("replays");
+        fs::create_dir_all(&replays).unwrap();
+        // A sibling dir that must NOT be chosen.
+        fs::create_dir_all(game.join("bin")).unwrap();
+
+        let r = resolve_replays_folder(&game).expect("should resolve");
+        assert_eq!(r.path, replays);
+        assert!(r.corrected, "descending into the child is a correction");
+    }
+
+    #[test]
+    fn resolve_descends_case_insensitively() {
+        // Game folder with a capital-R `Replays` child (case-insensitive match).
+        let tmp = TempDir::new().unwrap();
+        let game = tmp.path().join("WorldOfWarships");
+        let replays = game.join("Replays");
+        fs::create_dir_all(&replays).unwrap();
+
+        let r = resolve_replays_folder(&game).expect("should resolve");
+        assert_eq!(r.path, replays);
+        assert!(r.corrected);
+    }
+
+    #[test]
+    fn resolve_ascends_from_version_subfolder() {
+        // Version-sorter mod created `replays/15.4.0.0`; user picked that.
+        let tmp = TempDir::new().unwrap();
+        let replays = tmp.path().join("replays");
+        let version = replays.join("15.4.0.0");
+        fs::create_dir_all(&version).unwrap();
+
+        let r = resolve_replays_folder(&version).expect("should resolve");
+        assert_eq!(r.path, replays);
+        assert!(r.corrected, "ascending to the parent is a correction");
+    }
+
+    #[test]
+    fn resolve_ascends_through_nested_subfolders() {
+        // Picked a directory two levels below replays.
+        let tmp = TempDir::new().unwrap();
+        let replays = tmp.path().join("replays");
+        let nested = replays.join("15.4.0.0").join("ranked");
+        fs::create_dir_all(&nested).unwrap();
+
+        let r = resolve_replays_folder(&nested).expect("should resolve");
+        assert_eq!(r.path, replays);
+        assert!(r.corrected);
+    }
+
+    #[test]
+    fn resolve_keeps_custom_folder_holding_replay_files() {
+        // A non-"replays"-named folder that directly contains a .wowsreplay.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("battles");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("battle.wowsreplay"), b"fake").unwrap();
+
+        let r = resolve_replays_folder(&dir).expect("should resolve");
+        assert_eq!(r.path, dir);
+        assert!(!r.corrected);
+    }
+
+    #[test]
+    fn resolve_rejects_unrelated_folder() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("documents");
+        fs::create_dir_all(&dir).unwrap();
+        assert!(resolve_replays_folder(&dir).is_none());
+    }
+
+    #[test]
+    fn resolve_rejects_nonexistent_path() {
+        assert!(resolve_replays_folder(Path::new("/does/not/exist")).is_none());
+    }
+
+    #[test]
+    fn resolve_prefers_exact_replays_child_over_lookalike() {
+        // Game folder holds both `replays` and `replays_backup`; pick the exact.
+        let tmp = TempDir::new().unwrap();
+        let game = tmp.path().join("game");
+        let replays = game.join("replays");
+        fs::create_dir_all(&replays).unwrap();
+        fs::create_dir_all(game.join("replays_backup")).unwrap();
+
+        let r = resolve_replays_folder(&game).expect("should resolve");
+        assert_eq!(r.path, replays);
+        assert!(r.corrected);
     }
 
     #[test]
