@@ -9,6 +9,10 @@ Versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [0.5.1] — 2026-06-21
+
 ### Fixed
 - **Post-battle plane-kills column showed garbage (e.g. `10000`).** The per-player aircraft-destroyed value was read from the `RIBBON_PLANE` ribbon, which is populated only for the recording player and only ever as a `10000` sentinel (it is `0` for everyone else) — never a real count. The battle-result API now exposes **`planes_killed`** = `planes_killed_by_ship` (AA) + `planes_killed_by_plane` (carrier aircraft), a public per-player count present and correct for **all** players. Validated against 212 real players across 15.4/15.5 reference replays (100% match). The old `ribbons_plane_kills` field is removed in favour of `planes_killed` (which the engine already prefers). (td-4b4c1a)
 
