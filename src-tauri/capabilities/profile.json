@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "profile-remote",
+  "description": "Window controls (drag / minimize / close) for profile-link windows and tabs showing the remote engine.tfd.rocks page. Mirrors monitor.json's least-privilege posture: grants ONLY window manipulation — no file, bridge, store, dialog, or app commands — so a profile page can manage its own window but cannot reach anything sensitive. The label globs (profile-* / profile-tab-*) keep these dynamic remote views OUT of the local 'default' capability (which is scoped to 'main' only).",
+  "windows": [
+    "profile-*"
+  ],
+  "webviews": [
+    "profile-tab-*"
+  ],
+  "remote": {
+    "urls": [
+      "https://engine.tfd.rocks"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-close"
+  ]
+}

@@ -411,6 +411,75 @@
       transform: translateX(18px);
     }
 
+    /* ── Segmented control (3-way preference selector) ─────────────────────────
+       Brand-matched pill group used for the "profile links open in" choice.
+       Active state is toggled via .is-active (classList) + aria-checked — no
+       inline style attributes, so the CSP / index_html test stays satisfied. */
+    .seg-block {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+    .seg-label {
+      font-size: 0.78rem;
+      color: var(--fg-muted);
+      margin-bottom: 0.5rem;
+    }
+    .seg {
+      display: flex;
+      gap: 3px;
+      padding: 3px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+    .seg-btn {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      padding: 0.42rem 0.5rem;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--fg-muted);
+      font-family: var(--font-sans);
+      font-size: 0.8rem;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+      transition: background 0.13s, color 0.13s, border-color 0.13s;
+    }
+    .seg-btn:hover { color: var(--fg); }
+    .seg-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    /* Active pill: accent-tinted fill, accent text, subtle accent border. */
+    .seg-btn.is-active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    /* Small "Experimental" tag on the New Tab pill — mirrors .badge-soon. */
+    .seg-tag {
+      font-size: 0.56rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--fg-faint);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.08rem 0.32rem;
+      line-height: 1;
+    }
+    /* When the New Tab pill is active the tag adopts the accent tint too. */
+    .seg-btn.is-active .seg-tag {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
     .error {
       color: var(--danger);
       font-size: 0.83rem;
@@ -530,6 +599,27 @@
             </svg>
             Open Battle Monitor
           </button>
+
+          <!-- Where profile links in the Battle Monitor open. Default: Browser
+               (system browser — no behaviour change for existing users).
+               The actual decision is read in Rust inside the SENTINEL_EXTERNAL
+               navigation arm via the persisted "linkTarget" store key; this UI
+               only persists the preference, it does not route links itself.
+               Security: only engine.tfd.rocks ever loads in-app; the Rust side
+               re-checks the host for the window/tab branches and otherwise
+               always opens the system browser. -->
+          <div class="seg-block">
+            <div class="seg-label" id="link-target-label">Profile links open in</div>
+            <div class="seg" id="link-target-seg" role="radiogroup"
+                 aria-labelledby="link-target-label">
+              <button class="seg-btn" type="button" role="radio"
+                      data-value="browser" aria-checked="false">Browser</button>
+              <button class="seg-btn" type="button" role="radio"
+                      data-value="window" aria-checked="false">New Window</button>
+              <button class="seg-btn" type="button" role="radio"
+                      data-value="tab" aria-checked="false">New Tab<span class="seg-tag">Experimental</span></button>
+            </div>
+          </div>
         </div>
 
         <!-- Launch-on-login toggle (dashboard) -->
@@ -716,6 +806,8 @@
     // The donation card shows in both views: the active ask during onboarding
     // (new installs) or on the dashboard (existing installs after update).
     refreshDonation();
+    // Reflect the persisted profile-link target preference on the dashboard.
+    initLinkTarget();
   }
 
   function setDashboardToggle(enabled) {
@@ -782,6 +874,56 @@
       // Revert on failure.
       setDashboardToggle(currentlyOn);
       console.error('set_launch_on_login failed:', err);
+    }
+  });
+
+  // ── Profile-link target (Browser / New Window / New Tab) ──────────────────
+  // A persisted preference only — the actual routing decision is made in Rust
+  // inside the monitor-embed SENTINEL_EXTERNAL navigation arm by reading the
+  // "linkTarget" store key. The injected monitor JS needs no IPC for this.
+  const LINK_TARGETS = ['browser', 'window', 'tab'];
+
+  // Reflect the active value across the three pills via classList + aria-checked.
+  function setLinkTargetSegment(value) {
+    const seg = document.getElementById('link-target-seg');
+    if (!seg) return;
+    const target = LINK_TARGETS.includes(value) ? value : 'browser';
+    seg.querySelectorAll('.seg-btn').forEach((btn) => {
+      const active = btn.dataset.value === target;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-checked', String(active));
+    });
+  }
+
+  // Read the persisted preference on init; default to 'browser' on any error
+  // (matches the Rust default — no behaviour change for existing users).
+  async function initLinkTarget() {
+    try {
+      setLinkTargetSegment(await invoke('get_link_target'));
+    } catch (err) {
+      console.warn('get_link_target failed, defaulting to browser:', err);
+      setLinkTargetSegment('browser');
+    }
+  }
+
+  // One delegated click handler for the whole group: optimistic update, then
+  // persist; revert the visual selection if the IPC call fails (mirrors the
+  // launch-on-login toggle handler).
+  document.getElementById('link-target-seg').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn) return;
+    const next = btn.dataset.value;
+    const seg = document.getElementById('link-target-seg');
+    const prevBtn = seg.querySelector('.seg-btn.is-active');
+    const prev = prevBtn ? prevBtn.dataset.value : 'browser';
+    if (next === prev) return;
+    setLinkTargetSegment(next);
+    try {
+      await invoke('set_link_target', { target: next });
+    } catch (err) {
+      // Revert on failure.
+      setLinkTargetSegment(prev);
+      console.error('set_link_target failed:', err);
     }
   });
 

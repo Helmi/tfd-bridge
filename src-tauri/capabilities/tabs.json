@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "tabs-chrome",
+  "description": "Local tab-bar chrome (bundled ui/tabbar.html, label 'tabbar') inside the reusable 'tabs' window. Scoped via the 'webviews' field (NOT 'windows') so it grants IPC to the LOCAL chrome webview ONLY — the REMOTE content webviews in the same window (profile-tab-*) are covered separately by profile.json's least-privilege remote block and never get this surface. The chrome needs core:default (IPC + the events it listens to for 'tabs-changed' + the tab_* app commands, which are auto-allowed for an own #[tauri::command] once the webview has core:default) plus explicit window controls for its frameless topbar (drag / minimize / maximize / close). No remote block: this is a local app page, so engine.tfd.rocks can never inherit these perms.",
+  "webviews": [
+    "tabbar"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close"
+  ]
+}
