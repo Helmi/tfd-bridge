@@ -350,8 +350,30 @@ fn save_donation_consent(app: &AppHandle, consent: DonationConsent) {
     }
 }
 
-/// Read the persisted launch-on-login pref from the store. Absent key → `true`
-/// (launch-on-login is ON by default); a store-open failure → `false`.
+/// Replay donation is ON by default (opt-out) for FRESH installs only. On first
+/// launch — onboarding not yet completed AND no donation decision stored — this
+/// persists `OptedIn`, so a new user starts opted in (the onboarding card shows
+/// it on, with the privacy copy, and they can decline). Existing installs are
+/// never touched: a user who never answered the original prompt keeps `Unset`
+/// and still gets the one-time ask — no silent opt-in on update. Idempotent.
+pub fn seed_fresh_install_donation_default(app: &AppHandle) {
+    let Ok(store) = app.store(STORE_FILE) else {
+        return;
+    };
+    let decided = store.get(KEY_DONATION_CONSENT).is_some();
+    let onboarding_done = store
+        .get(KEY_ONBOARDING_DONE)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if decided || onboarding_done {
+        return; // existing install, or already decided — leave as-is
+    }
+    save_donation_consent(app, DonationConsent::OptedIn);
+}
+
+/// Read the persisted launch-on-login pref from the store. Returns `false` when
+/// the key is absent or unparseable — fresh installs still get launch-on-login
+/// via the pre-checked onboarding option, which persists the value on completion.
 fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     let Ok(store) = app.store(STORE_FILE) else {
         return false;
@@ -359,7 +381,7 @@ fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     store
         .get(KEY_LAUNCH_ON_LOGIN)
         .and_then(|v| v.as_bool())
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 /// Returns the platform-appropriate search roots.

@@ -440,9 +440,9 @@ pub(crate) fn on_donation_consent_changed(
 // ── Autostart helpers ────────────────────────────────────────────────────────
 
 /// Read the persisted launch-on-login preference.
-/// Returns `true` when the key is absent — launch-on-login is ON by default
-/// (opt-out). A store-open failure still returns `false` (can't safely enable
-/// autostart without a working store).
+/// Returns `false` when the key is absent or cannot be parsed. Fresh installs
+/// still get launch-on-login via the pre-checked onboarding option, which
+/// persists the value on completion.
 fn read_launch_on_login(app: &tauri::AppHandle) -> bool {
     let Ok(store) = app.store(STORE_FILE) else {
         return false;
@@ -450,7 +450,7 @@ fn read_launch_on_login(app: &tauri::AppHandle) -> bool {
     store
         .get(KEY_LAUNCH_ON_LOGIN)
         .and_then(|v| v.as_bool())
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 /// Persist the launch-on-login preference.
@@ -1115,7 +1115,11 @@ pub fn run() {
                 });
             }
 
-            // ── Seed the donation-consent cache from the store ──────────────
+            // ── Replay-donation defaults + cache seed ───────────────────────
+            // Fresh-install opt-out default: a brand-new install (onboarding not
+            // done, no decision stored) starts with replay donation ON. Existing
+            // installs are untouched. Must run BEFORE seeding the cache below.
+            commands::seed_fresh_install_donation_default(app.handle());
             // The uploader (td-c8973d) reads donation::consent() without an
             // AppHandle — seed it here so an autostart run where the dashboard
             // never loads still sees the persisted decision; the donation
@@ -1182,12 +1186,13 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    /// Verify the pref-parsing logic: None → true (launch-on-login ON by default).
+    /// Verify the pref-parsing logic: None → false (absent key parses to off;
+    /// fresh installs get launch-on-login via the pre-checked onboarding option).
     #[test]
-    fn launch_on_login_default_is_true() {
+    fn launch_on_login_default_is_false() {
         let v: Option<serde_json::Value> = None;
-        let result = v.and_then(|v| v.as_bool()).unwrap_or(true);
-        assert!(result, "default should be true (on by default)");
+        let result = v.and_then(|v| v.as_bool()).unwrap_or(false);
+        assert!(!result, "absent key should parse to false");
     }
 
     #[test]
