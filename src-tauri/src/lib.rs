@@ -559,14 +559,14 @@ const MONITOR_EMBED_JS: &str = r#"
   }
   function injectBar() {
     if (document.getElementById('tfd-embed-bar') || !document.body) return;
-    // The bar adapts to context (all read synchronously off the global Tauri
-    // window API + location — no IPC, no permission):
-    //  - profile-* window  → New Window mode: a profile in its own window (title + Close).
-    //  - main, on /monitor  → the live Battle Monitor (← Dashboard + Close to tray).
-    //  - main, other page   → Same-window mode: navigated to a profile in the main
-    //    window; a solid "← Battle Monitor" return + history Back/Forward.
+    // The bar shows in two contexts (read synchronously off the global Tauri
+    // window API — no IPC, no permission):
+    //  - profile-* window → New Window mode: one profile in its own window; the
+    //    main window owns cross-view navigation, so this bar is just a Close.
+    //  - main window      → a PERSISTENT nav bar on EVERY engine page (monitor,
+    //    profile, clan, …): history Back/Forward + Dashboard + Battle Monitor,
+    //    ALWAYS, independent of the current page.
     var isProfile = winLabel().indexOf('profile-') === 0;
-    var isMonitor = location.pathname === '/monitor' || location.pathname === '/monitor/';
     var bar = document.createElement('div');
     bar.id = 'tfd-embed-bar';
     // The bar itself is the drag handle (buttons inside stay clickable: Tauri
@@ -574,41 +574,32 @@ const MONITOR_EMBED_JS: &str = r#"
     bar.setAttribute('data-tauri-drag-region', '');
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;display:flex;align-items:center;gap:8px;padding:0 8px;background:#05070e;border-bottom:1px solid rgba(255,255,255,0.1);font:600 12px/1 -apple-system,Segoe UI,sans-serif;color:#dfe6e8;-webkit-user-select:none;user-select:none;';
     var leftControls = [];
-    var titleText;
     var closeTip;
     if (isProfile) {
-      // New Window mode: a profile in its own top-level window. Nowhere to
-      // navigate back to, so no nav controls — just a REAL close (the
-      // CloseRequested handler only closes-to-tray for label "main").
-      titleText = 'Player Profile';
+      // New Window mode: a single profile in its own top-level window. No
+      // cross-view nav here — just a REAL close (the CloseRequested handler
+      // only closes-to-tray for label "main").
       closeTip = 'Close';
-    } else if (isMonitor) {
-      // The live Battle Monitor in the main window.
-      leftControls.push(mkBtn('← Dashboard', 'Back to Dashboard', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
-      titleText = 'Battle Monitor';
-      closeTip = 'Close to tray';
     } else {
-      // Same-window mode: navigated to a profile (or other engine page) inside
-      // the main window. Provide a solid return to the live monitor plus
-      // browser-style history Back/Forward, all in the title bar.
-      leftControls.push(mkBtn('← Battle Monitor', 'Back to the live Battle Monitor', function () { location.assign(ORIGIN + '/monitor'); }));
+      // Main window: the SAME four controls on every engine page. Back/Forward
+      // walk the webview's own session history (no-op when empty); Dashboard and
+      // Battle Monitor are absolute jumps via location.assign.
       leftControls.push(mkBtn('‹', 'Back', function () { history.back(); }));
       leftControls.push(mkBtn('›', 'Forward', function () { history.forward(); }));
-      titleText = 'Player Profile';
+      leftControls.push(mkBtn('Dashboard', 'Back to Dashboard', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
+      leftControls.push(mkBtn('Battle Monitor', 'Go to the live Battle Monitor', function () { location.assign(ORIGIN + '/monitor'); }));
       closeTip = 'Close to tray';
     }
     var title = document.createElement('span');
     title.setAttribute('data-tauri-drag-region', '');
-    title.style.cssText = 'pointer-events:none;opacity:0.7;';
-    title.appendChild(document.createTextNode(titleText));
-    var spacer = document.createElement('div');
-    spacer.setAttribute('data-tauri-drag-region', '');
-    spacer.style.cssText = 'flex:1;';
+    // The title is also the flexible drag area; it truncates so the nav buttons
+    // and window controls always stay visible even in a narrow window.
+    title.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none;opacity:0.7;padding:0 6px;';
+    title.appendChild(document.createTextNode(isProfile ? 'Player Profile' : (document.title || 'TFD Bridge')));
     var min = mkBtn('—', 'Minimize', function () { var w = winApi(); if (w) w.minimize(); });
     var close = mkBtn('✕', closeTip, function () { var w = winApi(); if (w) w.close(); });
     leftControls.forEach(function (b) { bar.appendChild(b); });
     bar.appendChild(title);
-    bar.appendChild(spacer);
     bar.appendChild(min);
     bar.appendChild(close);
     document.documentElement.appendChild(bar);
