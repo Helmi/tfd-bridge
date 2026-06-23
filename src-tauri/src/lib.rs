@@ -440,7 +440,9 @@ pub(crate) fn on_donation_consent_changed(
 // ── Autostart helpers ────────────────────────────────────────────────────────
 
 /// Read the persisted launch-on-login preference.
-/// Returns `false` when the key is absent or cannot be parsed (opt-in default).
+/// Returns `true` when the key is absent — launch-on-login is ON by default
+/// (opt-out). A store-open failure still returns `false` (can't safely enable
+/// autostart without a working store).
 fn read_launch_on_login(app: &tauri::AppHandle) -> bool {
     let Ok(store) = app.store(STORE_FILE) else {
         return false;
@@ -448,7 +450,7 @@ fn read_launch_on_login(app: &tauri::AppHandle) -> bool {
     store
         .get(KEY_LAUNCH_ON_LOGIN)
         .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Persist the launch-on-login preference.
@@ -574,6 +576,7 @@ const MONITOR_EMBED_JS: &str = r#"
     bar.setAttribute('data-tauri-drag-region', '');
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;display:flex;align-items:center;gap:8px;padding:0 8px;background:#05070e;border-bottom:1px solid rgba(255,255,255,0.1);font:600 12px/1 -apple-system,Segoe UI,sans-serif;color:#dfe6e8;-webkit-user-select:none;user-select:none;';
     var leftControls = [];
+    var rightControls = [];
     var closeTip;
     if (isProfile) {
       // New Window mode: a single profile in its own top-level window. No
@@ -581,25 +584,29 @@ const MONITOR_EMBED_JS: &str = r#"
       // only closes-to-tray for label "main").
       closeTip = 'Close';
     } else {
-      // Main window: the SAME four controls on every engine page. Back/Forward
-      // walk the webview's own session history (no-op when empty); Dashboard and
-      // Battle Monitor are absolute jumps via location.assign.
+      // Main window: the same persistent controls on EVERY engine page. Left:
+      // history Back/Forward + the two engine destinations — Dashboard (engine
+      // home '/') and Battle Monitor ('/monitor'). Right (pushed over): Settings
+      // = the local TFD Bridge page, reached via the same-origin sentinel
+      // /__tfd_dashboard (named for the sentinel, NOT the engine Dashboard).
       leftControls.push(mkBtn('‹', 'Back', function () { history.back(); }));
       leftControls.push(mkBtn('›', 'Forward', function () { history.forward(); }));
-      leftControls.push(mkBtn('Dashboard', 'Back to Dashboard', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
+      leftControls.push(mkBtn('Dashboard', 'Go to the engine Dashboard', function () { location.assign(ORIGIN + '/'); }));
       leftControls.push(mkBtn('Battle Monitor', 'Go to the live Battle Monitor', function () { location.assign(ORIGIN + '/monitor'); }));
+      rightControls.push(mkBtn('Settings', 'TFD Bridge settings', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
       closeTip = 'Close to tray';
     }
     var title = document.createElement('span');
     title.setAttribute('data-tauri-drag-region', '');
-    // The title is also the flexible drag area; it truncates so the nav buttons
-    // and window controls always stay visible even in a narrow window.
+    // The title is also the flexible drag area (it pushes Settings + the window
+    // controls to the right); it truncates so they always stay visible.
     title.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none;opacity:0.7;padding:0 6px;';
     title.appendChild(document.createTextNode(isProfile ? 'Player Profile' : (document.title || 'TFD Bridge')));
     var min = mkBtn('—', 'Minimize', function () { var w = winApi(); if (w) w.minimize(); });
     var close = mkBtn('✕', closeTip, function () { var w = winApi(); if (w) w.close(); });
     leftControls.forEach(function (b) { bar.appendChild(b); });
     bar.appendChild(title);
+    rightControls.forEach(function (b) { bar.appendChild(b); });
     bar.appendChild(min);
     bar.appendChild(close);
     document.documentElement.appendChild(bar);
@@ -1175,12 +1182,12 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    /// Verify the pref-parsing logic: None → false (opt-in: OFF by default).
+    /// Verify the pref-parsing logic: None → true (launch-on-login ON by default).
     #[test]
-    fn launch_on_login_default_is_false() {
+    fn launch_on_login_default_is_true() {
         let v: Option<serde_json::Value> = None;
-        let result = v.and_then(|v| v.as_bool()).unwrap_or(false);
-        assert!(!result, "default should be false (opt-in)");
+        let result = v.and_then(|v| v.as_bool()).unwrap_or(true);
+        assert!(result, "default should be true (on by default)");
     }
 
     #[test]

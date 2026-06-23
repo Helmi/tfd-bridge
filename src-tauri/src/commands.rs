@@ -350,7 +350,8 @@ fn save_donation_consent(app: &AppHandle, consent: DonationConsent) {
     }
 }
 
-/// Read the persisted launch-on-login pref from the store.
+/// Read the persisted launch-on-login pref from the store. Absent key → `true`
+/// (launch-on-login is ON by default); a store-open failure → `false`.
 fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     let Ok(store) = app.store(STORE_FILE) else {
         return false;
@@ -358,7 +359,7 @@ fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     store
         .get(KEY_LAUNCH_ON_LOGIN)
         .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Returns the platform-appropriate search roots.

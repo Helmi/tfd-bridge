@@ -8,13 +8,18 @@
 //! stops uploads immediately" is just "check `donation::consent()` before
 //! every upload".
 //!
+//! Replay donation is ON BY DEFAULT (opt-out): a fresh install with no stored
+//! value reads as `OptedIn` (see `from_store_value`). The onboarding/settings
+//! card shows the toggle on with the full privacy copy, so the user sees it and
+//! can decline; the engine's `replay_donation` feature flag still AND-gates any
+//! actual upload (that gating lives with the uploader, td-c8973d).
+//!
 //! The three states are deliberate:
-//! - `Unset`    — never asked. The UI shows the one active ask (onboarding
-//!                for new installs, first dashboard run after update for
-//!                existing ones). Never uploads.
-//! - `OptedIn`  — explicit yes. Uploads allowed, subject to the engine's
-//!                `replay_donation` feature flag — that AND-gating lives with
-//!                the uploader (td-c8973d), not here.
+//! - `Unset`    — undecided with no default applied (only reachable if a value
+//!                is explicitly cleared). The UI shows the active ask. Never
+//!                uploads.
+//! - `OptedIn`  — opted in: the default for a fresh install, or an explicit yes.
+//!                Uploads allowed, subject to the engine `replay_donation` flag.
 //! - `Declined` — explicit no. Never uploads, never asked again.
 
 use serde::{Deserialize, Serialize};
@@ -45,12 +50,19 @@ impl DonationConsent {
         self == DonationConsent::OptedIn
     }
 
-    /// Parse the persisted store value. An absent key and an unrecognised
-    /// value both read as `Unset` (conservative: never invent consent).
+    /// Parse the persisted store value.
+    ///
+    /// An ABSENT key (fresh install) reads as `OptedIn` — replay donation is ON
+    /// by default (opt-out). The onboarding card shows the toggle on with the
+    /// full privacy copy, so a new user sees it and can decline; the engine's
+    /// `replay_donation` flag still AND-gates any upload. An unrecognised
+    /// (garbage) value stays conservative and reads as `Unset` — corruption must
+    /// never silently flip to consent.
     pub fn from_store_value(value: Option<&serde_json::Value>) -> Self {
-        value
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or(DonationConsent::Unset)
+        match value {
+            None => DonationConsent::OptedIn,
+            Some(v) => serde_json::from_value(v.clone()).unwrap_or(DonationConsent::Unset),
+        }
     }
 }
 
@@ -158,14 +170,14 @@ mod tests {
         }
     }
 
-    /// An absent store key (fresh install, or an install updated to a build
-    /// that introduces the setting) must read as Unset — that is what makes
-    /// the one-time active ask fire.
+    /// An absent store key (fresh install) reads as OptedIn — replay donation
+    /// is ON by default (opt-out); the onboarding card shows it on, with the
+    /// privacy copy, so the user can decline. Garbage still reads as Unset.
     #[test]
-    fn absent_store_key_is_unset() {
+    fn absent_store_key_is_opted_in() {
         assert_eq!(
             DonationConsent::from_store_value(None),
-            DonationConsent::Unset
+            DonationConsent::OptedIn
         );
     }
 
