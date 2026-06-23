@@ -625,7 +625,13 @@ const MONITOR_EMBED_JS: &str = r#"
       // <html> (a sibling of <body>), so transforming <body> leaves the bar
       // pinned at top:0 while everything inside <body> moves below it. Cap body
       // height so the page is not left 34px too tall.
-      'body{transform:translateY(34px)!important;height:calc(100vh - 34px)!important;}'
+      'body{transform:translateY(34px)!important;height:calc(100vh - 34px)!important;}',
+      // Full-viewport-height containers must shrink by the bar height too — left
+      // a whole viewport tall inside the 34px-shorter <body> they overflow it and
+      // add a SECOND scrollbar (the page's own scroll PLUS the body overflow).
+      // Cover Tailwind's screen + dynamic-viewport (dvh/svh/lvh) height utilities.
+      '.h-screen,.h-dvh,.h-svh,.h-lvh{height:calc(100vh - 34px)!important;}',
+      '.min-h-screen,.min-h-dvh,.min-h-svh,.min-h-lvh{min-height:calc(100vh - 34px)!important;}'
     ].join('');
     document.head.appendChild(style);
   }
