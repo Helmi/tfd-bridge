@@ -1,6 +1,7 @@
 /// Tauri commands for first-start onboarding and replays-folder management.
 use crate::apply_replays_path;
 use crate::donation::DonationConsent;
+use crate::link_target::{self, LinkTarget};
 use bridge_core::{
     config::AppConfig,
     detection::{
@@ -128,6 +129,27 @@ pub fn set_donation_consent(app: AppHandle, opted_in: bool) {
     // handles the queue/backfill bookkeeping.
     crate::on_donation_consent_changed(&app, consent);
     emit_donation_status(&app);
+}
+
+/// Return the stored profile-link target as its snake_case string
+/// (`"browser"` | `"window"` | `"tab"`). Default is `"browser"`. Thin wrapper
+/// over the store helper in `link_target.rs` (store-only pref, like `lastView`).
+#[tauri::command]
+pub fn get_link_target(app: AppHandle) -> String {
+    serde_json::to_value(link_target::read_link_target(&app))
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "browser".to_string())
+}
+
+/// Persist the profile-link target. Unknown strings fall back to `Browser`
+/// (no behaviour change), mirroring the conservative store-read default — so a
+/// stray IPC value can never select an in-app target.
+#[tauri::command]
+pub fn set_link_target(app: AppHandle, target: String) {
+    let parsed = serde_json::from_value::<LinkTarget>(serde_json::Value::String(target))
+        .unwrap_or(LinkTarget::Browser);
+    link_target::save_link_target(&app, parsed);
 }
 
 /// Confirm a detected or manually entered path and persist it.
@@ -328,7 +350,8 @@ fn save_donation_consent(app: &AppHandle, consent: DonationConsent) {
     }
 }
 
-/// Read the persisted launch-on-login pref from the store.
+/// Read the persisted launch-on-login pref from the store. Absent key → `true`
+/// (launch-on-login is ON by default); a store-open failure → `false`.
 fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     let Ok(store) = app.store(STORE_FILE) else {
         return false;
@@ -336,7 +359,7 @@ fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     store
         .get(KEY_LAUNCH_ON_LOGIN)
         .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Returns the platform-appropriate search roots.
