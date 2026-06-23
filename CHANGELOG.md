@@ -11,6 +11,26 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.6.0] — 2026-06-23
+
+### Added
+- **Choose where Battle Monitor links open.** A new Settings option — **"Profile links open in"** — controls what happens when you click a player, clan, or other engine link in the embedded Battle Monitor:
+  - **Same window** — opens in place; the title bar keeps **Dashboard**, **Battle Monitor**, **Settings**, and back/forward controls, so you can open a profile and step straight back to the live monitor.
+  - **New Window** — opens the link in its own in-app window, leaving the live monitor running untouched in the main window.
+  - **Browser** — opens it in your default browser (the previous behaviour, and the default).
+
+  Only `engine.tfd.rocks` links ever open in-app; any other site always opens in your browser.
+- **Persistent navigation bar in the Battle Monitor.** The embedded monitor's title bar now always shows **Dashboard**, **Battle Monitor**, back/forward, and **Settings** — on every engine page — so you can navigate no matter where a link took you.
+
+### Changed
+- **The local TFD Bridge page is now "Settings".** What used to be called the "Dashboard" is really the settings page (replays folder, launch-on-login, replay donation, and the new link-target option). The title-bar **Dashboard** button now opens the **engine's** dashboard, and **Settings** opens the local page — clearing up the name clash between the two.
+- **New installs: Replay donation is on by default (opt-out).** Previously every new user was asked first; a brand-new install now starts with donation enabled (shown on, with the full privacy copy, during onboarding — you can decline). **Existing installs are unchanged** — whatever you chose is kept, and anyone who never answered the original prompt still gets the one-time ask. As always: a replay contains the battle data of all players in the match, including their names and in-game chat; only `*.wowsreplay` files are uploaded; uploads are anonymous (no account); donation can be paused server-side; and anything already uploaded stays donated if you later opt out.
+
+### Fixed
+- **Battle Monitor content no longer hides under the title bar.** On the current engine layout the page's fixed header could overlap the app's title bar; the page is now offset correctly so nothing sits behind the bar.
+
+---
+
 ## [0.5.1] — 2026-06-21
 
 ### Fixed
@@ -177,7 +197,9 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Helmi/tfd-bridge/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/Helmi/tfd-bridge/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Helmi/tfd-bridge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Helmi/tfd-bridge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Helmi/tfd-bridge/compare/v0.3.1...v0.4.0
