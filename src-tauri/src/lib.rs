@@ -606,9 +606,15 @@ const MONITOR_EMBED_JS: &str = r#"
     var style = document.createElement('style');
     style.id = 'tfd-embed-bar-style';
     style.textContent = [
-      'body{padding-top:34px!important;}',
-      '.min-h-screen{min-height:calc(100vh - 34px)!important;}',
-      '.h-screen{height:calc(100vh - 34px)!important;}'
+      // The engine app-shell anchors its top elements with fixed/sticky
+      // positioning, which ignore `body{padding-top}` (content slid UNDER the
+      // bar). Transform <body> (NOT <html>): a transformed element becomes the
+      // containing block for its fixed descendants, so the page content — fixed
+      // elements included — shifts down by the bar height. The bar is appended to
+      // <html> (a sibling of <body>), so transforming <body> leaves the bar
+      // pinned at top:0 while everything inside <body> moves below it. Cap body
+      // height so the page is not left 34px too tall.
+      'body{transform:translateY(34px)!important;height:calc(100vh - 34px)!important;}'
     ].join('');
     document.head.appendChild(style);
   }

@@ -261,6 +261,18 @@ fn logical_inner_size(win: &Window) -> tauri::Result<LogicalSize<f64>> {
 /// chrome, activates it (shows it, hides the others), shows/focuses the window,
 /// and emits `tabs-changed` so the chrome re-renders the strip.
 pub fn open_profile_tab(app: &AppHandle, url: &str) {
+    // Creation MUST be deferred off the synchronous on_navigation handler:
+    // building a window/webview inline there deadlocks WebView2 on Windows
+    // (wry #583) — the observed symptom was "opens a window then hangs". This
+    // mirrors open_profile_window, which already hops onto the async runtime.
+    let app = app.clone();
+    let url = url.to_string();
+    tauri::async_runtime::spawn(async move {
+        open_profile_tab_inner(&app, &url);
+    });
+}
+
+fn open_profile_tab_inner(app: &AppHandle, url: &str) {
     let parsed = match tauri::Url::parse(url) {
         Ok(u) => u,
         Err(e) => {
