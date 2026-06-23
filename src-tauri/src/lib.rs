@@ -2,7 +2,6 @@ mod commands;
 pub mod donation;
 pub mod engine;
 pub mod link_target;
-pub mod tabs;
 pub mod uploader;
 
 use bridge_core::battle_result::{DecodeConfig, Tables};
@@ -560,28 +559,42 @@ const MONITOR_EMBED_JS: &str = r#"
   }
   function injectBar() {
     if (document.getElementById('tfd-embed-bar') || !document.body) return;
-    // Profile windows/tabs (label `profile-*`) get a simple Back/min/close bar;
-    // the main monitor window keeps its "← Dashboard" bar. The label is read
-    // synchronously off the global Tauri window API — no IPC, no permission.
+    // The bar adapts to context (all read synchronously off the global Tauri
+    // window API + location — no IPC, no permission):
+    //  - profile-* window  → New Window mode: a profile in its own window (title + Close).
+    //  - main, on /monitor  → the live Battle Monitor (← Dashboard + Close to tray).
+    //  - main, other page   → Same-window mode: navigated to a profile in the main
+    //    window; a solid "← Battle Monitor" return + history Back/Forward.
     var isProfile = winLabel().indexOf('profile-') === 0;
+    var isMonitor = location.pathname === '/monitor' || location.pathname === '/monitor/';
     var bar = document.createElement('div');
     bar.id = 'tfd-embed-bar';
     // The bar itself is the drag handle (buttons inside stay clickable: Tauri
     // only starts a drag when the mousedown target carries the attribute).
     bar.setAttribute('data-tauri-drag-region', '');
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;display:flex;align-items:center;gap:8px;padding:0 8px;background:#05070e;border-bottom:1px solid rgba(255,255,255,0.1);font:600 12px/1 -apple-system,Segoe UI,sans-serif;color:#dfe6e8;-webkit-user-select:none;user-select:none;';
-    var lead;
+    var leftControls = [];
     var titleText;
     var closeTip;
     if (isProfile) {
-      // Profile window: Back = browser-style history back; close is a REAL close
-      // (the CloseRequested handler only closes-to-tray for label "main").
-      lead = mkBtn('← Back', 'Back', function () { history.back(); });
+      // New Window mode: a profile in its own top-level window. Nowhere to
+      // navigate back to, so no nav controls — just a REAL close (the
+      // CloseRequested handler only closes-to-tray for label "main").
       titleText = 'Player Profile';
       closeTip = 'Close';
-    } else {
-      lead = mkBtn('← Dashboard', 'Back to Dashboard', function () { location.assign(ORIGIN + '/__tfd_dashboard'); });
+    } else if (isMonitor) {
+      // The live Battle Monitor in the main window.
+      leftControls.push(mkBtn('← Dashboard', 'Back to Dashboard', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
       titleText = 'Battle Monitor';
+      closeTip = 'Close to tray';
+    } else {
+      // Same-window mode: navigated to a profile (or other engine page) inside
+      // the main window. Provide a solid return to the live monitor plus
+      // browser-style history Back/Forward, all in the title bar.
+      leftControls.push(mkBtn('← Battle Monitor', 'Back to the live Battle Monitor', function () { location.assign(ORIGIN + '/monitor'); }));
+      leftControls.push(mkBtn('‹', 'Back', function () { history.back(); }));
+      leftControls.push(mkBtn('›', 'Forward', function () { history.forward(); }));
+      titleText = 'Player Profile';
       closeTip = 'Close to tray';
     }
     var title = document.createElement('span');
@@ -593,7 +606,7 @@ const MONITOR_EMBED_JS: &str = r#"
     spacer.style.cssText = 'flex:1;';
     var min = mkBtn('—', 'Minimize', function () { var w = winApi(); if (w) w.minimize(); });
     var close = mkBtn('✕', closeTip, function () { var w = winApi(); if (w) w.close(); });
-    bar.appendChild(lead);
+    leftControls.forEach(function (b) { bar.appendChild(b); });
     bar.appendChild(title);
     bar.appendChild(spacer);
     bar.appendChild(min);
@@ -677,7 +690,7 @@ static PROFILE_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32:
 ///    to load a foreign origin in a Tauri window.
 ///
 /// Only once the target is confirmed to be `engine.tfd.rocks` over http(s) is
-/// the stored `LinkTarget` read and the Browser/Window/Tab branch taken.
+/// the stored `LinkTarget` read and the Browser/Window/SameWindow branch taken.
 fn dispatch_external(app: &AppHandle, raw: &str) {
     use tauri_plugin_opener::OpenerExt;
 
@@ -703,7 +716,29 @@ fn dispatch_external(app: &AppHandle, raw: &str) {
             let _ = app.opener().open_url(parsed.as_str(), None::<&str>);
         }
         link_target::LinkTarget::Window => open_profile_window(app, parsed.as_str()),
-        link_target::LinkTarget::Tab => tabs::open_profile_tab(app, parsed.as_str()),
+        link_target::LinkTarget::SameWindow => navigate_main_in_place(app, parsed.as_str()),
+    }
+}
+
+/// Same-window link target: navigate the MAIN window's webview in place to the
+/// (already scheme+host validated) engine `url`. Uses `location.assign` via
+/// `eval` rather than a bare load so it pushes a real session-history entry —
+/// the injected title-bar Back/Forward + "Battle Monitor" controls then behave
+/// like a browser. The live monitor is replaced by the profile and reloads when
+/// the user navigates back: the accepted trade for staying in one window without
+/// the (Windows/WebView2-unstable) multi-webview path.
+fn navigate_main_in_place(app: &AppHandle, url: &str) {
+    let Some(win) = app.get_webview_window("main") else {
+        log::error!("same-window navigate: main window missing");
+        return;
+    };
+    // JSON-encode the URL so it is a safe JS string literal inside location.assign().
+    let script = format!(
+        "location.assign({});",
+        serde_json::to_string(url).unwrap_or_else(|_| "'/monitor'".to_string())
+    );
+    if let Err(e) = win.eval(&script) {
+        log::error!("same-window navigate failed: {e}");
     }
 }
 
@@ -725,7 +760,7 @@ fn dispatch_external(app: &AppHandle, raw: &str) {
 /// SECURITY — an `on_navigation` host gate pins the window to
 /// `engine.tfd.rocks` for its whole lifetime, so a later same-window
 /// navigation (link click / `location` set / redirect) cannot load a foreign
-/// origin in-app. This mirrors the Tab path's pin in `tabs::open_profile_tab`.
+/// origin in this window.
 pub(crate) fn open_profile_window(app: &AppHandle, url: &str) {
     let app = app.clone();
     let url = url.to_string();
@@ -742,7 +777,7 @@ pub(crate) fn open_profile_window(app: &AppHandle, url: &str) {
             .min_inner_size(480.0, 400.0)
             .decorations(false)
             .focused(true)
-            // SECURITY — origin pin (mirrors tabs.rs `open_profile_tab`). The
+            // SECURITY — origin pin. The
             // INITIAL load is already engine-only (dispatch_external host-gates
             // before reaching here), but without this hook a SUBSEQUENT
             // same-window navigation — a plain `<a>` click, a JS `location`
@@ -867,32 +902,12 @@ pub fn run() {
         .manage(LaunchOnLoginItem(Mutex::new(None)))
         .manage(Quitting(AtomicBool::new(false)))
         .manage(DashboardUrl(Mutex::new(None)))
-        // Registry backing the Experimental "Tab" link target (src/tabs.rs).
-        // The tab commands and open_profile_tab read it via app.state::<TabsState>(),
-        // which panics if the state is unmanaged — so it MUST be registered here.
-        .manage(tabs::TabsState::default())
         .on_window_event(|window, event| {
-            // The tabs window (Experimental Tab link target) drives its
-            // multi-webview layout manually: re-apply chrome + content rects on
-            // every resize. Other windows ignore this branch.
-            if let tauri::WindowEvent::Resized(_) = event {
-                if window.label() == "tabs" {
-                    tabs::reflow(window);
-                }
-            }
-            // When the tabs window is destroyed (its last tab closed it, or the
-            // user closed it outright), drop the tab registry so the next open
-            // rebuilds cleanly and no stale labels linger.
-            if let tauri::WindowEvent::Destroyed = event {
-                if window.label() == "tabs" {
-                    tabs::clear_registry(window.app_handle());
-                }
-            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Only the main window closes-to-tray. Profile windows/tabs
-                // (label `profile-*`) and the multi-tab `tabs` window must close
-                // for REAL — otherwise their bar's ✕ would merely hide them,
-                // leaking a hidden engine webview and trapping the feature.
+                // Only the main window closes-to-tray. Profile windows (label
+                // `profile-*`, the New Window link target) must close for REAL —
+                // otherwise their bar's ✕ would merely hide them, leaking a
+                // hidden engine webview.
                 if window.label() != "main" {
                     return;
                 }
@@ -1148,13 +1163,6 @@ pub fn run() {
             commands::set_donation_consent,
             commands::get_link_target,
             commands::set_link_target,
-            // Experimental in-window tab commands (src/tabs.rs). Registered
-            // here so the backend owns the handler list; the tab agent fills
-            // the bodies behind these names.
-            tabs::tab_list,
-            tabs::tab_switch,
-            tabs::tab_close,
-            tabs::tab_new,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1269,7 +1277,6 @@ mod tests {
 
     const TAURI_CONF: &str = include_str!("../tauri.conf.json");
     const INDEX_HTML: &str = include_str!("../../ui/index.html");
-    const TABBAR_HTML: &str = include_str!("../../ui/tabbar.html");
 
     fn bundled_csp() -> String {
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
@@ -1326,19 +1333,6 @@ mod tests {
         assert!(
             !INDEX_HTML.contains("style=\""),
             "ui/index.html must not use inline style attributes (CSP-blocked)"
-        );
-    }
-
-    #[test]
-    fn tabbar_html_has_no_inline_style_attributes() {
-        // The tab-bar chrome (ui/tabbar.html) is bundled and served over the
-        // tauri protocol under the SAME app CSP as index.html (default-src
-        // 'self', no 'unsafe-inline'). Inline style attributes can't carry the
-        // Tauri-injected style-src nonce and would be silently dropped — so all
-        // styling must live in the <style> block, exactly like index.html.
-        assert!(
-            !TABBAR_HTML.contains("style=\""),
-            "ui/tabbar.html must not use inline style attributes (CSP-blocked)"
         );
     }
 }

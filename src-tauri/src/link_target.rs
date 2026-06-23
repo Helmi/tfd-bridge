@@ -11,12 +11,13 @@
 //! pref) — the injected JS needs no IPC to make the choice.
 //!
 //! The three states map to the three behaviours:
-//! - `Browser` — open the link in the system browser (the default; the
-//!               behaviour every existing install has had, so an absent or
-//!               garbled value MUST read as `Browser`).
-//! - `Window`  — open the engine link in a new in-app top-level window.
-//! - `Tab`     — (Experimental) open the engine link as an in-window tab so the
-//!               live monitor stays mounted underneath.
+//! - `Browser`    — open the link in the system browser (the default; the
+//!                  behaviour every existing install has had, so an absent or
+//!                  garbled value MUST read as `Browser`).
+//! - `Window`     — open the engine link in a new in-app top-level window.
+//! - `SameWindow` — navigate the main window in place to the engine link; the
+//!                  title bar gains a "Battle Monitor" return + history
+//!                  back/forward (the live monitor reloads when you go back).
 //!
 //! SECURITY: this pref is only ever consulted AFTER the caller has confirmed the
 //! target is `https`/`http` on `engine.tfd.rocks`. Any other host always goes to
@@ -30,9 +31,9 @@ const STORE_FILE: &str = "config.json";
 const KEY_LINK_TARGET: &str = "linkTarget";
 
 /// Where a Battle-Monitor profile link opens. The wire AND store representation
-/// is the snake_case string (`"browser"` / `"window"` / `"tab"`); anything
-/// unrecognised reads as `Browser` — the safe, no-behaviour-change default. An
-/// unknown value must never silently load a page in-app.
+/// is the snake_case string (`"browser"` / `"window"` / `"same_window"`);
+/// anything unrecognised reads as `Browser` — the safe, no-behaviour-change
+/// default. An unknown value must never silently load a page in-app.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkTarget {
@@ -41,8 +42,10 @@ pub enum LinkTarget {
     Browser,
     /// Open the engine link in a new in-app top-level window.
     Window,
-    /// Open the engine link as an in-window tab (Experimental).
-    Tab,
+    /// Navigate the main window in place to the engine link. The injected title
+    /// bar then shows a "Battle Monitor" return + history Back/Forward; the live
+    /// monitor reloads when the user navigates back to it.
+    SameWindow,
 }
 
 impl LinkTarget {
@@ -104,8 +107,8 @@ mod tests {
             serde_json::json!("window")
         );
         assert_eq!(
-            serde_json::to_value(LinkTarget::Tab).unwrap(),
-            serde_json::json!("tab")
+            serde_json::to_value(LinkTarget::SameWindow).unwrap(),
+            serde_json::json!("same_window")
         );
     }
 
@@ -113,7 +116,11 @@ mod tests {
     /// every value.
     #[test]
     fn store_round_trip_all() {
-        for t in [LinkTarget::Browser, LinkTarget::Window, LinkTarget::Tab] {
+        for t in [
+            LinkTarget::Browser,
+            LinkTarget::Window,
+            LinkTarget::SameWindow,
+        ] {
             let stored = serde_json::to_value(t).unwrap();
             assert_eq!(
                 LinkTarget::from_store_value(Some(&stored)),

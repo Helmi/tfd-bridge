@@ -613,11 +613,11 @@
             <div class="seg" id="link-target-seg" role="radiogroup"
                  aria-labelledby="link-target-label">
               <button class="seg-btn" type="button" role="radio"
-                      data-value="browser" aria-checked="false">Browser</button>
+                      data-value="same_window" aria-checked="false">Same window</button>
               <button class="seg-btn" type="button" role="radio"
                       data-value="window" aria-checked="false">New Window</button>
               <button class="seg-btn" type="button" role="radio"
-                      data-value="tab" aria-checked="false">New Tab<span class="seg-tag">Experimental</span></button>
+                      data-value="browser" aria-checked="false">Browser</button>
             </div>
           </div>
         </div>
@@ -881,7 +881,7 @@
   // A persisted preference only — the actual routing decision is made in Rust
   // inside the monitor-embed SENTINEL_EXTERNAL navigation arm by reading the
   // "linkTarget" store key. The injected monitor JS needs no IPC for this.
-  const LINK_TARGETS = ['browser', 'window', 'tab'];
+  const LINK_TARGETS = ['same_window', 'window', 'browser'];
 
   // Reflect the active value across the three pills via classList + aria-checked.
   function setLinkTargetSegment(value) {
