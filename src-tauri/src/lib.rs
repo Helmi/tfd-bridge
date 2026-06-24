@@ -603,37 +603,62 @@ const MONITOR_EMBED_JS: &str = r#"
     title.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none;opacity:0.7;padding:0 6px;';
     title.appendChild(document.createTextNode(isProfile ? 'Player Profile' : (document.title || 'TFD Bridge')));
     var min = mkBtn('—', 'Minimize', function () { var w = winApi(); if (w) w.minimize(); });
+    // Maximize / restore — the same control the local Settings topbar has. The
+    // glyph reflects the current state and flips on click (needs
+    // core:window:allow-toggle-maximize + allow-is-maximized, granted to the
+    // remote engine pages by monitor.json / profile.json).
+    function syncMaxGlyph(m) { maxBtn.textContent = m ? '❐' : '□'; maxBtn.title = m ? 'Restore' : 'Maximize'; }
+    var maxBtn = mkBtn('□', 'Maximize', function () {
+      var w = winApi(); if (!w) return;
+      w.toggleMaximize().then(function () { return w.isMaximized(); })
+        .then(syncMaxGlyph).catch(function () {});
+    });
+    (function () { var w = winApi(); if (w) w.isMaximized().then(syncMaxGlyph).catch(function () {}); })();
     var close = mkBtn('✕', closeTip, function () { var w = winApi(); if (w) w.close(); });
     leftControls.forEach(function (b) { bar.appendChild(b); });
     bar.appendChild(title);
     rightControls.forEach(function (b) { bar.appendChild(b); });
     bar.appendChild(min);
+    bar.appendChild(maxBtn);
     bar.appendChild(close);
     document.documentElement.appendChild(bar);
-    // Push page content below the fixed bar WITHOUT adding to total scroll height.
-    // body { padding-top } alone makes 100vh children overflow by the bar height
-    // (100vh + 34px = overscroll). Instead: offset body down by 34px AND shrink
-    // min-h-screen / h-screen by the same amount so the net height stays 100vh.
-    var style = document.createElement('style');
-    style.id = 'tfd-embed-bar-style';
-    style.textContent = [
-      // The engine app-shell anchors its top elements with fixed/sticky
-      // positioning, which ignore `body{padding-top}` (content slid UNDER the
-      // bar). Transform <body> (NOT <html>): a transformed element becomes the
-      // containing block for its fixed descendants, so the page content — fixed
-      // elements included — shifts down by the bar height. The bar is appended to
-      // <html> (a sibling of <body>), so transforming <body> leaves the bar
-      // pinned at top:0 while everything inside <body> moves below it. Cap body
-      // height so the page is not left 34px too tall.
-      'body{transform:translateY(34px)!important;height:calc(100vh - 34px)!important;}',
-      // Full-viewport-height containers must shrink by the bar height too — left
-      // a whole viewport tall inside the 34px-shorter <body> they overflow it and
-      // add a SECOND scrollbar (the page's own scroll PLUS the body overflow).
-      // Cover Tailwind's screen + dynamic-viewport (dvh/svh/lvh) height utilities.
-      '.h-screen,.h-dvh,.h-svh,.h-lvh{height:calc(100vh - 34px)!important;}',
-      '.min-h-screen,.min-h-dvh,.min-h-svh,.min-h-lvh{min-height:calc(100vh - 34px)!important;}'
-    ].join('');
-    document.head.appendChild(style);
+    // Inset the ENTIRE engine document 34px below the fixed title bar by turning
+    // <body> into a viewport-anchored scroll box (top:34px → bottom:0). This is the
+    // SINGLE source of the title-bar offset and is page-agnostic: every engine page
+    // starts below the bar, and BODY owns the one scrollbar — fully on-screen between
+    // the bar and the window's bottom edge.
+    //
+    // --discord-bar-h is LEFT ALONE. It is the engine's OWN variable: the
+    // DiscordLinkBanner (a `fixed top-0` bar shown only to logged-in-but-unlinked
+    // users) publishes its height into it, and the engine's sidebar / sticky header /
+    // fullscreen main / page content all shift down by that var. We must not stomp it
+    // (an earlier build forced it to 0 and the banner vanished behind the title bar).
+    // We only compose WITH it:
+    //   • Full-viewport HEIGHTS (`h-[calc(100vh-var)]`, `.h-screen`, the min-height
+    //     content column) get OUR 34px subtracted too, so they fit the shorter body
+    //     box whether or not the banner is showing.
+    //   • The engine's VIEWPORT-FIXED top bars are not moved by the body inset (fixed
+    //     elements are viewport-relative), so each is pushed below the title bar:
+    //     the Discord banner (fixed top-0) and the `.fixed` sidebar/toggle (top-[var]).
+    //     Sticky headers live INSIDE the body box and already sit correctly — they are
+    //     deliberately NOT shifted (they carry `.sticky`, not `.fixed`).
+    //
+    // Set HERE (DOM ready), idempotently — NOT at document-start: that runs before
+    // <html>/<body> exist in the Tauri webview and throws, killing this whole script.
+    if (!document.getElementById('tfd-embed-barvar')) {
+      var bv = document.createElement('style');
+      bv.id = 'tfd-embed-barvar';
+      bv.textContent =
+          'html{overflow:hidden!important;}'
+        + 'body{position:fixed!important;top:34px!important;left:0!important;right:0!important;bottom:0!important;margin:0!important;overflow-x:hidden!important;overflow-y:auto!important;}'
+        + '.h-screen,.h-dvh,.h-svh,.h-lvh{height:calc(100vh - 34px)!important;}'
+        + '[class^="h-[calc(100vh-var(--discord-bar-h"],[class*=" h-[calc(100vh-var(--discord-bar-h"]{height:calc(100vh - 34px - var(--discord-bar-h,0px))!important;}'
+        + '[class*="min-h-[calc(100vh-var(--discord-bar-h"]{min-height:calc(100vh - 34px - var(--discord-bar-h,0px))!important;}'
+        + '[class*="bg-indigo-500/10"]{top:34px!important;}'
+        + '.fixed[class*="top-[var(--discord-bar-h"]{top:calc(34px + var(--discord-bar-h,0px))!important;}'
+        + '.fixed[class*="top-[calc(1rem+var(--discord-bar-h"]{top:calc(1rem + 34px + var(--discord-bar-h,0px))!important;}';
+      document.head.appendChild(bv);
+    }
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', injectBar);
