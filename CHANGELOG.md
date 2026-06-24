@@ -11,6 +11,20 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.6.2] — 2026-06-24
+
+### Added
+- **Maximize/restore button in the Battle Monitor.** The embedded monitor's title bar now has the same maximize/restore control as the local Settings page — between minimize and close, with an icon and tooltip that reflect the current state. On Windows 10, double-clicking a frameless title bar does not maximize, so this button is the reliable way to maximize the monitor window (and any profile-link window opened with the **New Window** option).
+
+### Fixed
+- **Battle Monitor layout is correct on small / size-constrained windows.** The embedded page is now inset below the title bar as a single scroll area: content no longer starts *behind* the bar at the top or runs *under* the window's bottom edge, and there is exactly one scrollbar — it sits fully on-screen and reaches the very bottom. This holds on every engine page (live monitor, post-battle results, dashboard, profiles, clans), at any window height. (Replaces the earlier offset approach, which only shifted some of the engine's layout wrappers and left the page's outer container behind the bar.)
+- **The engine's "Connect Discord" banner no longer hides behind the title bar.** For users who are signed in but have not linked Discord, the engine shows a connect-Discord bar at the very top of the page. It now sits directly below the app's title bar — fully visible, with page content below it — instead of being covered by the bar.
+
+### Security
+- The embedded engine pages' window-controls capability now additionally allows maximize/restore (`core:window:allow-toggle-maximize` / `allow-is-maximized`) — this is what powers the new maximize button. It remains window-manipulation only: the remote `engine.tfd.rocks` pages still have **no** file, bridge, store, dialog, or app access.
+
+---
+
 ## [0.6.1] — 2026-06-23
 
 ### Fixed
@@ -204,7 +218,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/Helmi/tfd-bridge/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/Helmi/tfd-bridge/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Helmi/tfd-bridge/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Helmi/tfd-bridge/compare/v0.5.0...v0.5.1
