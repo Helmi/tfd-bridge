@@ -16,7 +16,7 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -150,12 +150,77 @@ pub struct BattlePlayer {
     /// Empty when the replay carries no interaction data.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub interactions: Vec<DamageInteraction>,
+
+    // ── Schema 1.2 additions (result-data expansion) ────────────────────────
+    /// Per-player damage DEALT, bucketed with the SAME buckets as `interactions`
+    /// (so the per-player total reconciles with the matrix sum, modulo buildings
+    /// / environment). Always present (zero-filled) for predictable reconcile.
+    pub damage_dealt_by_type: DamageDealtByType,
+    /// Achievement ribbon counts — **non-zero entries only**, keyed by a stable
+    /// lowercased name (the `RIBBON_` prefix stripped): e.g. `"citadel"`,
+    /// `"main_caliber"`, `"base_capture"`, `"base_defense"`, `"building_kill"`.
+    /// Omitted entirely when the player earned no ribbons.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub ribbons: BTreeMap<String, i64>,
+    /// First-spot (detection) counts, beyond the top-level `spotting_damage`.
+    pub detection: Detection,
+    /// Objective capture play (per-player base points).
+    pub capture: Capture,
+    /// Air-group losses (kills are the top-level `planes_killed`).
+    pub planes: Planes,
+    /// Module damage this player caused to enemies.
+    pub modules: Modules,
+}
+
+/// Schema 1.2: per-player damage dealt, bucketed to mirror [`DamageInteraction`]'s
+/// weapon-type buckets. All fields always serialized (zero-filled).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct DamageDealtByType {
+    pub main: i64,
+    pub secondary: i64,
+    pub torpedo: i64,
+    pub aircraft: i64,
+    pub fire: i64,
+    pub flood: i64,
+    pub ram: i64,
+    pub depth_charge: i64,
+    pub other: i64,
+}
+
+/// Schema 1.2: first-spot counts (each = `_by_ship` + `_by_plane`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct Detection {
+    pub first_ships_spotted: i64,
+    pub first_planes_spotted: i64,
+}
+
+/// Schema 1.2: objective capture play.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct Capture {
+    pub capture_points: i64,
+    pub dropped_capture_points: i64,
+}
+
+/// Schema 1.2: air-group losses (kills = top-level `planes_killed`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct Planes {
+    pub lost: i64,
+}
+
+/// Schema 1.2: module damage caused to enemies.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct Modules {
+    pub crits: i64,
+    pub major_crits: i64,
+    pub breaks: i64,
+    pub fires: i64,
+    pub floods: i64,
 }
 
 /// One attacker→victim damage record, resolved from a player's
 /// `CLIENT_VEH_INTERACTION_DETAILS` array. Damage is split into weapon-type
 /// buckets; zero buckets are omitted from the JSON to keep the payload small.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct DamageInteraction {
     /// Victim's `account_db_id`. Join to `players[].account_db_id` for the
     /// victim's ship (name / tier / class) and side.
@@ -365,6 +430,42 @@ fn build_interactions(
     out
 }
 
+/// HP-damage fields a player deals TO a structure, in `CLIENT_BUILDING_INTERACTION_DETAILS`.
+const BUILDING_DMG: &[&str] = &[
+    "building_damage_main_he",
+    "building_damage_main_ap",
+    "building_damage_main_cs",
+    "building_damage_flood",
+    "building_damage_fire",
+    "building_damage_bomb_ap",
+    "building_damage_bomb_he",
+    "building_damage_tbomb",
+];
+
+/// Schema 1.2: total HP damage a player dealt to structures, summed over their
+/// `buildingInteractions` ({building_id → CLIENT_BUILDING_INTERACTION_DETAILS array}).
+/// Returns 0 when the player hit no buildings or the field is absent. Tolerant.
+fn sum_building_damage(val: Option<&serde_json::Value>, tables: &Tables) -> i64 {
+    let obj = match val.and_then(|v| v.as_object()) {
+        Some(o) => o,
+        None => return 0,
+    };
+    let idx = &tables.building_interaction_index;
+    let mut total = 0i64;
+    for (_bid, barr_val) in obj {
+        let barr = match barr_val.as_array() {
+            Some(a) => a,
+            None => continue,
+        };
+        for name in BUILDING_DMG {
+            if let Some(&i) = idx.get(*name) {
+                total += barr.get(i).and_then(to_i64_tolerant).unwrap_or(0);
+            }
+        }
+    }
+    total
+}
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShipClass {
@@ -407,6 +508,9 @@ pub struct Tables {
     /// name → position in `interaction_details`, for resolving the per-victim
     /// `CLIENT_VEH_INTERACTION_DETAILS` arrays (the attacker→victim matrix).
     pub interaction_index: HashMap<String, usize>,
+    /// name → position in `CLIENT_BUILDING_INTERACTION_DETAILS`, for resolving a
+    /// player's `buildingInteractions` arrays (schema 1.2 `damage_to_buildings`).
+    pub building_interaction_index: HashMap<String, usize>,
     pub private_results: Vec<String>,
     /// INIT_ECONOMICS_INDICES (name → index) for the owner-only economics array.
     pub init_economics_indices: HashMap<String, usize>,
@@ -468,6 +572,16 @@ impl Tables {
             .map(|(i, name)| (name.clone(), i))
             .collect();
 
+        // CLIENT_BUILDING_INTERACTION_DETAILS: ordered array → name → index map.
+        let building_interaction_index: HashMap<String, usize> = constants
+            .get("CLIENT_BUILDING_INTERACTION_DETAILS")
+            .and_then(|v| v.as_array())
+            .unwrap_or(&vec![])
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.as_str().map(|s| (s.to_string(), i)))
+            .collect();
+
         // PLAYER_PRIVATE_RESULTS: ordered array (is_afk at index 37)
         let private_results = constants
             .get("PLAYER_PRIVATE_RESULTS")
@@ -526,6 +640,7 @@ impl Tables {
             common_results,
             interaction_details,
             interaction_index,
+            building_interaction_index,
             private_results,
             init_economics_indices,
             ships,
@@ -1079,6 +1194,26 @@ fn build_battle_data(
         players.push(player);
     }
 
+    // ── Schema 1.2: xp_contribution = share of the team's experience ──────────
+    // Base is raw_exp (pre win-multiplier) so winners aren't inflated relative to
+    // losers. Each player's value = their raw_exp / Σ raw_exp of the same team.
+    // Needs all players resolved first, hence this post-pass.
+    let mut team_raw_exp: HashMap<i64, i64> = HashMap::new();
+    for p in &players {
+        if let (Some(tid), Some(r)) = (p.team_id, p.raw_exp) {
+            *team_raw_exp.entry(tid).or_insert(0) += r.max(0);
+        }
+    }
+    for p in &mut players {
+        p.xp_contribution = match (p.team_id, p.raw_exp) {
+            (Some(tid), Some(r)) => match team_raw_exp.get(&tid).copied() {
+                Some(total) if total > 0 => Some(r.max(0) as f64 / total as f64),
+                _ => None,
+            },
+            _ => None,
+        };
+    }
+
     // ── Expected-value self-check (extraction-failure / patch-shift detection) ─
     // The dangerous failure mode is a new game patch shifting the positional
     // layout while the bundled field-mapping stays stale: plausible-but-WRONG
@@ -1106,7 +1241,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.1".into(),
+            schema_version: "1.2".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -1297,6 +1432,62 @@ pub(crate) fn resolve_player(
     // {victim_id → CLIENT_VEH_INTERACTION_DETAILS array}; resolve each victim.
     let interactions = build_interactions(get_val("interactions"), tables);
 
+    // ── Schema 1.2 result-data expansion ────────────────────────────────────
+    let sum_pub = |names: &[&str]| -> i64 { names.iter().map(|n| get_i64(n).unwrap_or(0)).sum() };
+
+    // Damage DEALT by weapon-type bucket — SAME bucket field-lists as the
+    // interaction matrix, so per-player totals reconcile with the matrix sum.
+    let damage_dealt_by_type = DamageDealtByType {
+        main: sum_pub(DMG_MAIN),
+        secondary: sum_pub(DMG_SECONDARY),
+        torpedo: sum_pub(DMG_TORPEDO),
+        aircraft: sum_pub(DMG_AIRCRAFT),
+        fire: sum_pub(DMG_FIRE),
+        flood: sum_pub(DMG_FLOOD),
+        ram: sum_pub(DMG_RAM),
+        depth_charge: sum_pub(DMG_DEPTH_CHARGE),
+        other: sum_pub(DMG_OTHER),
+    };
+
+    // Damage to structures (was null in 1.1; now wired from buildingInteractions).
+    let damage_to_buildings = Some(sum_building_damage(get_val("buildingInteractions"), tables));
+
+    // Ribbons — every non-zero RIBBON_* public field, keyed by the stripped,
+    // lowercased name. Map (not frozen list) so new WG ribbons appear for free.
+    let mut ribbons: BTreeMap<String, i64> = BTreeMap::new();
+    for name in pub_idx.keys() {
+        if let Some(stripped) = name.strip_prefix("RIBBON_") {
+            let count = get_i64(name).unwrap_or(0);
+            if count > 0 {
+                ribbons.insert(stripped.to_ascii_lowercase(), count);
+            }
+        }
+    }
+
+    let detection = Detection {
+        first_ships_spotted: get_i64("first_ships_spotted_by_ship").unwrap_or(0)
+            + get_i64("first_ships_spotted_by_plane").unwrap_or(0),
+        first_planes_spotted: get_i64("first_planes_spotted_by_ship").unwrap_or(0)
+            + get_i64("first_planes_spotted_by_plane").unwrap_or(0),
+    };
+
+    let capture = Capture {
+        capture_points: get_i64("capture_points").unwrap_or(0),
+        dropped_capture_points: get_i64("dropped_capture_points").unwrap_or(0),
+    };
+
+    let planes = Planes {
+        lost: get_i64("planes_lost").unwrap_or(0),
+    };
+
+    let modules = Modules {
+        crits: get_i64("module_crits").unwrap_or(0),
+        major_crits: get_i64("module_major_crits").unwrap_or(0),
+        breaks: get_i64("module_breaks").unwrap_or(0),
+        fires: get_i64("module_fires").unwrap_or(0),
+        floods: get_i64("module_floods").unwrap_or(0),
+    };
+
     BattlePlayer {
         account_db_id,
         player_name,
@@ -1311,12 +1502,14 @@ pub(crate) fn resolve_player(
         exp,
         raw_exp,
         damage_dealt,
-        damage_to_buildings: None, // v1.0: None (no public key; buildingInteractions not wired)
+        damage_to_buildings, // schema 1.2: wired from buildingInteractions
         damage_potential,
         shots_fired,
         hits,
         frags,
-        xp_contribution: None, // v1.0: None (team-share derived, deferred)
+        // xp_contribution needs team totals → filled by a post-pass in
+        // build_battle_data once all players are resolved.
+        xp_contribution: None,
         ribbons_torpedo_hits,
         planes_killed,
         ribbons_hits,
@@ -1328,6 +1521,12 @@ pub(crate) fn resolve_player(
         is_self,
         won,
         interactions,
+        damage_dealt_by_type,
+        ribbons,
+        detection,
+        capture,
+        planes,
+        modules,
     }
 }
 
@@ -1547,7 +1746,8 @@ mod tests {
         assert_eq!(player.exp, Some(1314));
         assert_eq!(player.raw_exp, Some(876));
         assert_eq!(player.damage_dealt, Some(75898));
-        assert_eq!(player.damage_to_buildings, None);
+        // schema 1.2: wired from buildingInteractions; this synthetic arr has none → Some(0)
+        assert_eq!(player.damage_to_buildings, Some(0));
         // damage_potential = 862200 + 115200 + 0 + 0 = 977400
         assert_eq!(player.damage_potential, Some(977400));
         // shots_fired = 54 + 0 + 6 = 60
@@ -1564,6 +1764,200 @@ mod tests {
         assert!(player.is_self);
         // won: winner_team(1) == team_id(1) → true
         assert_eq!(player.won, Some(true));
+    }
+
+    /// Schema 1.2: the new result groups populate from the public fields. Sets
+    /// fields by NAME (via the loaded index map) so the test isn't pinned to
+    /// positions, and confirms the ribbons map drops zero entries.
+    #[test]
+    fn resolve_player_schema_1_2_groups() {
+        let tables = make_tables_from_fixture();
+        let max = *tables.public_indices.values().max().unwrap();
+        let mut arr = make_arr(max + 1);
+        let idx = |name: &str| tables.public_indices[name];
+
+        // damage dealt by type — one field per bucket
+        arr[idx("damage_main_he")] = serde_json::json!(1000); // main
+        arr[idx("damage_atba_he")] = serde_json::json!(200); // secondary
+        arr[idx("damage_tpd_normal")] = serde_json::json!(3000); // torpedo
+        arr[idx("damage_bomb")] = serde_json::json!(500); // aircraft
+        arr[idx("damage_fire")] = serde_json::json!(700); // fire
+        arr[idx("damage_flood")] = serde_json::json!(400); // flood
+        arr[idx("damage_ram")] = serde_json::json!(50); // ram
+        arr[idx("damage_dbomb_direct")] = serde_json::json!(80); // depth_charge
+        arr[idx("damage_sea_mine")] = serde_json::json!(9); // other
+                                                            // ribbons — two non-zero, one explicit zero (must be omitted from the map)
+        arr[idx("RIBBON_CITADEL")] = serde_json::json!(4);
+        arr[idx("RIBBON_BASE_CAPTURE")] = serde_json::json!(7);
+        arr[idx("RIBBON_BURN")] = serde_json::json!(0);
+        // detection (each = by_ship + by_plane)
+        arr[idx("first_ships_spotted_by_ship")] = serde_json::json!(2);
+        arr[idx("first_ships_spotted_by_plane")] = serde_json::json!(1);
+        arr[idx("first_planes_spotted_by_ship")] = serde_json::json!(5);
+        // capture
+        arr[idx("capture_points")] = serde_json::json!(33);
+        arr[idx("dropped_capture_points")] = serde_json::json!(12);
+        // planes
+        arr[idx("planes_lost")] = serde_json::json!(6);
+        // modules
+        arr[idx("module_crits")] = serde_json::json!(9);
+        arr[idx("module_major_crits")] = serde_json::json!(2);
+        arr[idx("module_breaks")] = serde_json::json!(1);
+        arr[idx("module_fires")] = serde_json::json!(3);
+        arr[idx("module_floods")] = serde_json::json!(4);
+
+        let p = resolve_player(&arr, 42, &tables, 42, Some(1), None);
+
+        let d = &p.damage_dealt_by_type;
+        assert_eq!(
+            (d.main, d.secondary, d.torpedo, d.aircraft, d.fire),
+            (1000, 200, 3000, 500, 700)
+        );
+        assert_eq!((d.flood, d.ram, d.depth_charge, d.other), (400, 50, 80, 9));
+
+        assert_eq!(p.ribbons.get("citadel"), Some(&4));
+        assert_eq!(p.ribbons.get("base_capture"), Some(&7));
+        assert_eq!(p.ribbons.get("burn"), None, "zero ribbons must be omitted");
+
+        assert_eq!(p.detection.first_ships_spotted, 3); // 2 + 1
+        assert_eq!(p.detection.first_planes_spotted, 5); // 5 + 0
+        assert_eq!(p.capture.capture_points, 33);
+        assert_eq!(p.capture.dropped_capture_points, 12);
+        assert_eq!(p.planes.lost, 6);
+        assert_eq!(
+            (
+                p.modules.crits,
+                p.modules.major_crits,
+                p.modules.breaks,
+                p.modules.fires,
+                p.modules.floods
+            ),
+            (9, 2, 1, 3, 4)
+        );
+    }
+
+    /// Schema 1.2: damage_to_buildings sums the `building_damage_*` fields across
+    /// the player's `buildingInteractions`, and EXCLUDES `vehicle_damage_*`.
+    #[test]
+    fn resolve_player_damage_to_buildings() {
+        let tables = make_tables_from_fixture();
+        let max = *tables.public_indices.values().max().unwrap();
+        let mut arr = make_arr(max + 1);
+
+        let blen = tables.building_interaction_index.values().max().unwrap() + 1;
+        let mut barr = vec![serde_json::Value::Null; blen];
+        barr[tables.building_interaction_index["building_damage_main_he"]] =
+            serde_json::json!(1200);
+        barr[tables.building_interaction_index["building_damage_fire"]] = serde_json::json!(300);
+        // vehicle_damage_* in the same detail array must NOT be counted.
+        if let Some(&vi) = tables
+            .building_interaction_index
+            .get("vehicle_damage_main_he")
+        {
+            barr[vi] = serde_json::json!(99999);
+        }
+        arr[tables.public_indices["buildingInteractions"]] = serde_json::json!({ "777": barr });
+
+        let p = resolve_player(&arr, 42, &tables, 42, Some(1), None);
+        assert_eq!(p.damage_to_buildings, Some(1500)); // 1200 + 300; vehicle_* excluded
+    }
+
+    /// Drift guard: the serialized `BattlePlayer` key set IS the wire contract
+    /// (notes/bridge-result-api-contract.md). If this breaks, a field was
+    /// added/renamed/removed — update the contract doc, bump `schema_version`,
+    /// then update this expected set.
+    #[test]
+    fn battle_player_wire_keys_are_stable() {
+        let mut ribbons = BTreeMap::new();
+        ribbons.insert("citadel".to_string(), 1);
+        let p = BattlePlayer {
+            account_db_id: 1,
+            player_name: Some("x".into()),
+            clan_id: Some(2),
+            clan_tag: Some("y".into()),
+            ship_id: Some(3),
+            ship_name: Some("z".into()),
+            ship_tier: Some(9),
+            ship_class: Some(ShipClass::Destroyer),
+            team_id: Some(0),
+            prebattle_id: Some(0),
+            exp: Some(1),
+            raw_exp: Some(1),
+            damage_dealt: Some(1),
+            damage_to_buildings: Some(0),
+            damage_potential: Some(1),
+            shots_fired: Some(1),
+            hits: Some(1),
+            frags: Some(0),
+            xp_contribution: Some(0.5),
+            ribbons_torpedo_hits: Some(0),
+            planes_killed: Some(0),
+            ribbons_hits: Some(0),
+            spotting_damage: Some(0),
+            damage_received: Some(0),
+            credits: Some(0),
+            afk: Some(false),
+            survived: Some(true),
+            is_self: true,
+            won: Some(true),
+            interactions: vec![DamageInteraction {
+                target_id: 9,
+                damage: 1,
+                ..Default::default()
+            }],
+            damage_dealt_by_type: Default::default(),
+            ribbons,
+            detection: Default::default(),
+            capture: Default::default(),
+            planes: Default::default(),
+            modules: Default::default(),
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        let mut expected = vec![
+            "account_db_id",
+            "player_name",
+            "clan_id",
+            "clan_tag",
+            "ship_id",
+            "ship_name",
+            "ship_tier",
+            "ship_class",
+            "team_id",
+            "prebattle_id",
+            "exp",
+            "raw_exp",
+            "damage_dealt",
+            "damage_to_buildings",
+            "damage_potential",
+            "shots_fired",
+            "hits",
+            "frags",
+            "xp_contribution",
+            "ribbons_torpedo_hits",
+            "planes_killed",
+            "ribbons_hits",
+            "spotting_damage",
+            "damage_received",
+            "credits",
+            "afk",
+            "survived",
+            "is_self",
+            "won",
+            "interactions",
+            "damage_dealt_by_type",
+            "ribbons",
+            "detection",
+            "capture",
+            "planes",
+            "modules",
+        ];
+        expected.sort();
+        assert_eq!(
+            keys, expected,
+            "BattlePlayer wire keys changed — update the contract doc + schema_version + this test"
+        );
     }
 
     /// Lock the planes_killed aggregation edge cases (td-4b4c1a): both source
@@ -2115,7 +2509,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.1");
+        assert_eq!(data.meta.schema_version, "1.2");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────

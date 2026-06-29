@@ -1920,6 +1920,7 @@ mod tests {
             common_results: Vec::new(),
             interaction_details: Vec::new(),
             interaction_index: std::collections::HashMap::new(),
+            building_interaction_index: std::collections::HashMap::new(),
             private_results: Vec::new(),
             init_economics_indices: std::collections::HashMap::new(),
             ships: std::collections::HashMap::new(),
@@ -1986,6 +1987,12 @@ mod tests {
                 is_self: true,
                 won: Some(true),
                 interactions: Vec::new(),
+                damage_dealt_by_type: Default::default(),
+                ribbons: Default::default(),
+                detection: Default::default(),
+                capture: Default::default(),
+                planes: Default::default(),
+                modules: Default::default(),
             }],
         }
     }
