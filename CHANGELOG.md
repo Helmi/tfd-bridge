@@ -11,6 +11,17 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.7.0] — 2026-06-29
+
+### Added
+- Unified title bar on every view — logo, version, the same nav (Back/Forward/Dashboard/Battle Monitor/Settings), and window controls.
+- More post-battle stats for the Battle Monitor (decode schema 1.2): per-weapon damage, ribbons, detection, capture points, planes lost, module damage, structure damage, and team-XP share.
+
+### Fixed
+- Settings no longer opens a black window when the app starts on the Battle Monitor.
+
+---
+
 ## [0.6.2] — 2026-06-24
 
 ### Added
@@ -218,7 +229,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Helmi/tfd-bridge/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/Helmi/tfd-bridge/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/Helmi/tfd-bridge/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Helmi/tfd-bridge/compare/v0.5.1...v0.6.0
