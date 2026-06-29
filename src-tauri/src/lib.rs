@@ -530,22 +530,29 @@ const SENTINEL_DASHBOARD: &str = "/__tfd_dashboard";
 /// the remote page needs NO Tauri IPC. On the local dashboard it is a no-op.
 const MONITOR_EMBED_JS: &str = r##"
 (function () {
-  if (location.origin !== 'https://engine.tfd.rocks') return;
+  // ONE title bar for every page in the main webview — the local dashboard AND
+  // every engine page. `isEngine` gates the engine-only behaviours; the bar,
+  // brand, nav and window controls are identical everywhere.
   var ORIGIN = 'https://engine.tfd.rocks';
-  function openExternal(href) {
-    // Defence in depth: only route http(s) links to the system browser.
-    if (href && /^https?:\/\//i.test(href)) {
-      location.assign(ORIGIN + '/__tfd_open_external?url=' + encodeURIComponent(href));
-    }
-  }
-  // Only intercept explicit new-tab links; same-window navigation (incl. the
-  // Wargaming OAuth redirect) is left untouched so login still works in-app.
-  document.addEventListener('click', function (e) {
-    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
-    if (a && a.target === '_blank') { e.preventDefault(); openExternal(a.href); }
-  }, true);
+  var isEngine = location.origin === ORIGIN;
   function winApi() {
     try { return window.__TAURI__.window.getCurrentWindow(); } catch (e) { return null; }
+  }
+  function invokeCmd(cmd) {
+    try { return window.__TAURI__.core.invoke(cmd); } catch (e) { return Promise.reject(e); }
+  }
+  // New-tab links → system browser. Engine pages only (the local app has none).
+  // Same-window navigation (incl. the Wargaming OAuth redirect) is left untouched.
+  if (isEngine) {
+    var openExternal = function (href) {
+      if (href && /^https?:\/\//i.test(href)) {
+        location.assign(ORIGIN + '/__tfd_open_external?url=' + encodeURIComponent(href));
+      }
+    };
+    document.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (a && a.target === '_blank') { e.preventDefault(); openExternal(a.href); }
+    }, true);
   }
   function mkBtn(label, tip, onClick) {
     var b = document.createElement('button');
@@ -594,6 +601,7 @@ const MONITOR_EMBED_JS: &str = r##"
     brand.appendChild(brandVer);
 
     var navControls = [];
+    var settingsBtn = null;
     var closeTip;
     if (isProfile) {
       // New Window mode: a single profile in its own top-level window. No
@@ -607,9 +615,12 @@ const MONITOR_EMBED_JS: &str = r##"
       // + Settings = the local TFD Bridge page via the same-origin sentinel
       // /__tfd_dashboard (named for the sentinel, NOT the engine Dashboard). The
       // button matching the current path is highlighted as the active view.
-      function navBtn(label, tip, path) {
-        var b = mkBtn(label, tip, function () { location.assign(ORIGIN + path); });
-        if (location.pathname === path) {
+      // `active` highlights the current view. Engine destinations: from an engine
+      // page navigate directly; from the LOCAL app invoke the Tauri command (which
+      // captures the dashboard return-URL + shows the window).
+      function navBtn(label, tip, action, active) {
+        var b = mkBtn(label, tip, action);
+        if (active) {
           b.style.background = 'rgba(0,209,167,0.14)';
           b.style.borderColor = 'rgba(0,209,167,0.55)';
           b.style.color = '#eafffb';
@@ -618,9 +629,17 @@ const MONITOR_EMBED_JS: &str = r##"
       }
       navControls.push(mkBtn('‹', 'Back', function () { history.back(); }));
       navControls.push(mkBtn('›', 'Forward', function () { history.forward(); }));
-      navControls.push(navBtn('Dashboard', 'Go to the engine Dashboard', '/'));
-      navControls.push(navBtn('Battle Monitor', 'Go to the live Battle Monitor', '/monitor'));
-      navControls.push(mkBtn('Settings', 'TFD Bridge settings', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
+      navControls.push(navBtn('Dashboard', 'Go to the engine Dashboard',
+        function () { if (isEngine) location.assign(ORIGIN + '/'); else invokeCmd('open_engine_home'); },
+        isEngine && location.pathname === '/'));
+      navControls.push(navBtn('Battle Monitor', 'Go to the live Battle Monitor',
+        function () { if (isEngine) location.assign(ORIGIN + '/monitor'); else invokeCmd('open_monitor'); },
+        isEngine && location.pathname === '/monitor'));
+      // Settings = the local TFD Bridge app. Right-aligned (after the spacer). On
+      // the local app it IS the current view → active + no-op.
+      settingsBtn = navBtn('Settings', 'TFD Bridge settings',
+        function () { if (isEngine) location.assign(ORIGIN + '/__tfd_dashboard'); },
+        !isEngine);
       closeTip = 'Close to tray';
     }
 
@@ -646,6 +665,7 @@ const MONITOR_EMBED_JS: &str = r##"
     bar.appendChild(brand);
     navControls.forEach(function (b) { bar.appendChild(b); });
     bar.appendChild(spacer);
+    if (settingsBtn) bar.appendChild(settingsBtn);
     bar.appendChild(min);
     bar.appendChild(maxBtn);
     bar.appendChild(close);
@@ -673,7 +693,12 @@ const MONITOR_EMBED_JS: &str = r##"
     //
     // Set HERE (DOM ready), idempotently — NOT at document-start: that runs before
     // <html>/<body> exist in the Tauri webview and throws, killing this whole script.
-    if (!document.getElementById('tfd-embed-barvar')) {
+    //
+    // ENGINE PAGES ONLY: this offset is tuned to the engine's Tailwind layout. The
+    // local dashboard reserves its own 34px (body padding-top in index.html), so we
+    // do NOT inject it there — the engine-specific selectors would be dead weight and
+    // turning the local <body> into a fixed box would fight its own layout.
+    if (isEngine && !document.getElementById('tfd-embed-barvar')) {
       var bv = document.createElement('style');
       bv.id = 'tfd-embed-barvar';
       bv.textContent =
@@ -912,6 +937,16 @@ pub fn run() {
                 )
                 .on_navigation(|webview, url| {
                     log::info!("on_navigation: {url}");
+                    // Remember the local app page as the "Settings" return-target
+                    // whenever the webview actually lands on it. This is the
+                    // reliable capture point: the setup-time seed can run before the
+                    // window has loaded (url = about:blank), and engine pages must
+                    // never become the return-target. (Fixes Settings → black window
+                    // after a restart that restores straight to the monitor.)
+                    if url.scheme() != "about" && url.host_str() != Some("engine.tfd.rocks") {
+                        *webview.app_handle().state::<DashboardUrl>().0.lock().unwrap() =
+                            Some(url.clone());
+                    }
                     if url.host_str() == Some("engine.tfd.rocks") {
                         match url.path() {
                             SENTINEL_EXTERNAL => {
@@ -1216,7 +1251,9 @@ pub fn run() {
             // store a LOCAL (non-engine) URL.
             if let Some(win) = app.get_webview_window("main") {
                 if let Ok(url) = win.url() {
-                    if url.host_str() != Some("engine.tfd.rocks") {
+                    // Skip about:blank (window not loaded yet) and engine URLs — the
+                    // on_navigation hook captures the real local URL once it loads.
+                    if url.scheme() != "about" && url.host_str() != Some("engine.tfd.rocks") {
                         log::info!("seeded dashboard return-URL {url}");
                         *app.state::<DashboardUrl>().0.lock().unwrap() = Some(url);
                     }

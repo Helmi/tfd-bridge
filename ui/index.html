@@ -30,7 +30,7 @@
       --accent-fg:     #04130f;
       --accent-soft:   rgba(0, 209, 167, 0.12);
       --danger:        #e05563;
-      --topbar-h:      40px;
+      --topbar-h:      34px;
       --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, monospace;
     }
@@ -46,96 +46,19 @@
         radial-gradient(120% 90% at 50% -10%, var(--bg-grad) 0%, var(--bg) 60%);
       display: flex;
       flex-direction: column;
-      min-height: 100vh;
+      height: 100%;
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
+      /* Reserve space for the shared injected title bar (#tfd-embed-bar, fixed,
+         34px) — the one bar rendered on every view from src-tauri/src/lib.rs.
+         This 34px MUST match that bar's height. */
+      padding-top: var(--topbar-h);
     }
 
-    /* ── Frameless topbar ──────────────────────────────────────────────────── */
-    .topbar {
-      height: var(--topbar-h);
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0 0.45rem 0 0.85rem;
-      background: rgba(5, 7, 14, 0.72);
-      border-bottom: 1px solid var(--border);
-      -webkit-user-select: none;
-      user-select: none;
-    }
-    /* Flexible drag area between the nav and the window controls. */
-    .topbar-spacer { flex: 1; min-width: 8px; align-self: stretch; }
-    /* Brand sits inside the drag region; pointer-events:none lets the mousedown
-       fall through to the topbar so dragging works even over the logo/title. */
-    .topbar-brand {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      pointer-events: none;
-    }
-    .topbar-brand svg { display: block; width: 18px; height: 18px; }
-    .topbar-title {
-      font-size: 0.78rem;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      color: var(--fg);
-    }
-    .topbar-title .accent { color: var(--accent); }
-    /* Dimmed "(vX.Y.Z)" after the title — populated at runtime, kept subtle. */
-    .topbar-title .version {
-      color: var(--fg-muted);
-      font-weight: 400;
-      margin-left: 0.15rem;
-    }
-
-    /* ── Unified nav (mirrors the injected engine-page bar) ─────────────────── */
-    .topbar-nav { display: flex; align-items: center; gap: 4px; margin-left: 0.4rem; }
-    .nav-btn {
-      height: 24px;
-      padding: 0 9px;
-      display: flex;
-      align-items: center;
-      background: transparent;
-      border: 1px solid rgba(255, 255, 255, 0.16);
-      color: var(--fg-muted);
-      border-radius: 6px;
-      font-weight: 600;
-      font-size: 12px;
-      line-height: 1;
-      cursor: pointer;
-      transition: background 0.12s, color 0.12s, border-color 0.12s;
-    }
-    .nav-btn.arrow { padding: 0 7px; font-size: 14px; }
-    .nav-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--fg); }
-    .nav-btn.is-active {
-      background: rgba(0, 209, 167, 0.14);
-      border-color: rgba(0, 209, 167, 0.55);
-      color: #eafffb;
-      cursor: default;
-    }
-
-    .win-controls { display: flex; align-items: center; gap: 2px; }
-    .win-btn {
-      width: 30px;
-      height: 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border: none;
-      background: transparent;
-      color: var(--fg-muted);
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background 0.12s, color 0.12s;
-    }
-    .win-btn svg { display: block; width: 12px; height: 12px; }
-    .win-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--fg); }
-    .win-btn.close:hover { background: var(--danger); color: #fff; }
-    /* Restore icon is hidden until the window is maximized; JS toggles the
-       inline display from syncMaximizeIcon(). Kept here (not as an inline
-       style attribute) so the CSP style-src nonce isn't required. */
-    .win-btn .icon-restore { display: none; }
+    /* The title bar (brand + nav + window controls) is NOT defined here. It is the
+       single shared bar injected into every page — local and engine — by
+       MONITOR_EMBED_JS in src-tauri/src/lib.rs. The body just reserves 34px for it
+       (see body padding-top above). */
 
     /* ── Content ───────────────────────────────────────────────────────────── */
     .content {
@@ -544,55 +467,8 @@
 </head>
 <body>
 
-  <!-- ── Frameless custom topbar ──────────────────────────────────────────── -->
-  <header class="topbar" data-tauri-drag-region>
-    <div class="topbar-brand" data-tauri-drag-region>
-      <svg viewBox="0 0 24 24" fill="none" stroke="#00d1a7" stroke-width="2.5"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M12 10.189V14" />
-        <path d="M12 2v3" />
-        <path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6" />
-        <path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76" />
-        <path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" />
-      </svg>
-      <span class="topbar-title">TFD <span class="accent">Bridge</span> <span class="version" id="app-version"></span></span>
-    </div>
-    <!-- Unified nav: same destinations as the injected engine-page bar. Back /
-         Forward use webview history; Dashboard + Battle Monitor route through Rust
-         (capture the dashboard URL first); Settings is the current (active) view. -->
-    <nav class="topbar-nav" aria-label="Views">
-      <button class="nav-btn arrow" id="nav-back" type="button" title="Back" aria-label="Back">‹</button>
-      <button class="nav-btn arrow" id="nav-forward" type="button" title="Forward" aria-label="Forward">›</button>
-      <button class="nav-btn" id="nav-dashboard" type="button" title="Go to the engine Dashboard">Dashboard</button>
-      <button class="nav-btn" id="nav-monitor" type="button" title="Go to the live Battle Monitor">Battle Monitor</button>
-      <button class="nav-btn is-active" id="nav-settings" type="button" title="TFD Bridge settings" aria-current="page">Settings</button>
-    </nav>
-    <span class="topbar-spacer" data-tauri-drag-region></span>
-    <div class="win-controls">
-      <button class="win-btn" id="win-minimize" type="button" title="Minimize" aria-label="Minimize">
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-          <line x1="2" y1="6" x2="10" y2="6" />
-        </svg>
-      </button>
-      <button class="win-btn" id="win-maximize" type="button" title="Maximize" aria-label="Maximize">
-        <!-- Restore (overlapping squares) is shown when maximized; the single
-             square is the maximize state. Toggled at runtime. -->
-        <svg class="icon-maximize" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2.25" y="2.25" width="7.5" height="7.5" rx="1" />
-        </svg>
-        <svg class="icon-restore" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2" y="3.75" width="6.25" height="6.25" rx="1" />
-          <path d="M4 3.75V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-.75" />
-        </svg>
-      </button>
-      <button class="win-btn close" id="win-close" type="button" title="Close to tray" aria-label="Close to tray">
-        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-          <line x1="3" y1="3" x2="9" y2="9" />
-          <line x1="9" y1="3" x2="3" y2="9" />
-        </svg>
-      </button>
-    </div>
-  </header>
+  <!-- The title bar is the single shared bar injected by MONITOR_EMBED_JS
+       (src-tauri/src/lib.rs) into every page; the body reserves 34px for it. -->
 
   <!-- ── Dashboard ────────────────────────────────────────────────────────── -->
   <main class="content">
@@ -783,50 +659,9 @@
     }
   }
 
-  // ── Frameless window controls ─────────────────────────────────────────────
-  // getCurrentWindow() comes from the global Tauri API (withGlobalTauri).
-  // .close() routes through the Rust CloseRequested handler, which prevents the
-  // close and hides the window to the tray (see src-tauri/src/lib.rs).
-  const appWindow = window.__TAURI__.window.getCurrentWindow();
-  document.getElementById('win-minimize').addEventListener('click', () => {
-    appWindow.minimize();
-  });
-  document.getElementById('win-close').addEventListener('click', () => {
-    appWindow.close();
-  });
-
-  // Maximize / restore. Win10 doesn't toggle on title-bar double-click for
-  // frameless windows, so this button is the reliable path. The icon and
-  // tooltip reflect the current state, synced after the toggle and whenever
-  // the window is resized (covers OS-snap / drag-to-edge maximize too).
-  const winMaximizeBtn = document.getElementById('win-maximize');
-  async function syncMaximizeIcon() {
-    try {
-      const maxed = await appWindow.isMaximized();
-      winMaximizeBtn.querySelector('.icon-maximize').style.display = maxed ? 'none' : 'block';
-      winMaximizeBtn.querySelector('.icon-restore').style.display = maxed ? 'block' : 'none';
-      const label = maxed ? 'Restore' : 'Maximize';
-      winMaximizeBtn.title = label;
-      winMaximizeBtn.setAttribute('aria-label', label);
-    } catch (err) {
-      console.warn('isMaximized failed:', err);
-    }
-  }
-  winMaximizeBtn.addEventListener('click', async () => {
-    await appWindow.toggleMaximize();
-    syncMaximizeIcon();
-  });
-  appWindow.onResized(() => syncMaximizeIcon());
-  syncMaximizeIcon();
-
-  // ── App version in the topbar ─────────────────────────────────────────────
-  // Pulled at runtime from the bundle version (tauri.conf.json) via the global
-  // Tauri API — never hardcoded, so a release bump needs no UI edit.
-  window.__TAURI__.app.getVersion()
-    .then((v) => {
-      document.getElementById('app-version').textContent = `(v${v})`;
-    })
-    .catch((err) => console.warn('getVersion failed:', err));
+  // The title bar — window controls (minimize/maximize/close-to-tray), brand +
+  // version, and nav — is the single shared bar injected by MONITOR_EMBED_JS
+  // (src-tauri/src/lib.rs), so there are no per-page window-control handlers here.
 
   async function init() {
     try {
@@ -894,28 +729,6 @@
 
   // Open Battle Monitor button.
   document.getElementById('btn-open-monitor').addEventListener('click', async () => {
-    try {
-      await invoke('open_monitor');
-    } catch (err) {
-      console.error('open_monitor failed:', err);
-    }
-  });
-
-  // ── Unified top-bar navigation (mirrors the injected engine-page bar) ───────
-  // Back/Forward act on the webview history. Dashboard + Battle Monitor leave the
-  // local app for the engine, routed through Rust so the dashboard return-URL is
-  // captured first (keeps "Settings" able to come back). Settings is the current
-  // view here, so it is the active, no-op button.
-  document.getElementById('nav-back').addEventListener('click', () => history.back());
-  document.getElementById('nav-forward').addEventListener('click', () => history.forward());
-  document.getElementById('nav-dashboard').addEventListener('click', async () => {
-    try {
-      await invoke('open_engine_home');
-    } catch (err) {
-      console.error('open_engine_home failed:', err);
-    }
-  });
-  document.getElementById('nav-monitor').addEventListener('click', async () => {
     try {
       await invoke('open_monitor');
     } catch (err) {
