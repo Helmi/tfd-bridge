@@ -101,6 +101,15 @@ pub fn open_monitor(app: AppHandle) {
     crate::open_monitor_window(&app);
 }
 
+/// Navigate the main window to the engine home ("Dashboard" in the unified bar).
+/// Used by the local dashboard's nav so it offers the same destinations as the
+/// engine-page bar. Routed through `navigate_engine` so the dashboard return-URL
+/// is captured first (keeps "Settings" working).
+#[tauri::command]
+pub fn open_engine_home(app: AppHandle) {
+    crate::navigate_engine(&app, "/");
+}
+
 /// Return the donation consent + remote-flag snapshot for the dashboard.
 /// While consent reads `unset` the UI shows the one active ask (onboarding
 /// for new installs, first dashboard run after update for existing ones).

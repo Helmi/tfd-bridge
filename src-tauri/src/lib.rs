@@ -528,7 +528,7 @@ const SENTINEL_DASHBOARD: &str = "/__tfd_dashboard";
 /// and routes explicit new-tab links to the system browser through a same-origin
 /// sentinel — so the OAuth redirect flow and internal navigation stay in-app and
 /// the remote page needs NO Tauri IPC. On the local dashboard it is a no-op.
-const MONITOR_EMBED_JS: &str = r#"
+const MONITOR_EMBED_JS: &str = r##"
 (function () {
   if (location.origin !== 'https://engine.tfd.rocks') return;
   var ORIGIN = 'https://engine.tfd.rocks';
@@ -575,36 +575,63 @@ const MONITOR_EMBED_JS: &str = r#"
     // only starts a drag when the mousedown target carries the attribute).
     bar.setAttribute('data-tauri-drag-region', '');
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:34px;z-index:2147483647;display:flex;align-items:center;gap:8px;padding:0 8px;background:#05070e;border-bottom:1px solid rgba(255,255,255,0.1);font:600 12px/1 -apple-system,Segoe UI,sans-serif;color:#dfe6e8;-webkit-user-select:none;user-select:none;';
-    var leftControls = [];
-    var rightControls = [];
+    // Brand (logo + version) — top-left on EVERY view, identical to the local
+    // dashboard topbar. Static (not clickable). The SVG carries only presentation
+    // attributes (no inline `style=`, which the engine CSP would drop); the text
+    // spans get their styling via the CSSOM (.style), which CSP does not restrict.
+    // The version is baked in at compile time (__APP_VERSION__ → CARGO_PKG_VERSION).
+    var brand = document.createElement('span');
+    brand.setAttribute('data-tauri-drag-region', '');
+    brand.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 6px 0 2px;pointer-events:none;white-space:nowrap;flex:none;';
+    brand.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#00d1a7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 10.189V14"/><path d="M12 2v3"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76"/><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg>';
+    var brandName = document.createElement('span');
+    brandName.textContent = 'TFD Bridge';
+    brandName.style.fontWeight = '600';
+    var brandVer = document.createElement('span');
+    brandVer.textContent = 'v__APP_VERSION__';
+    brandVer.style.cssText = 'opacity:0.55;font-weight:500;';
+    brand.appendChild(brandName);
+    brand.appendChild(brandVer);
+
+    var navControls = [];
     var closeTip;
     if (isProfile) {
       // New Window mode: a single profile in its own top-level window. No
-      // cross-view nav here — just a REAL close (the CloseRequested handler
-      // only closes-to-tray for label "main").
+      // cross-view nav here — just the brand + a REAL close (the CloseRequested
+      // handler only closes-to-tray for label "main").
       closeTip = 'Close';
     } else {
-      // Main window: the same persistent controls on EVERY engine page. Left:
-      // history Back/Forward + the two engine destinations — Dashboard (engine
-      // home '/') and Battle Monitor ('/monitor'). Right (pushed over): Settings
-      // = the local TFD Bridge page, reached via the same-origin sentinel
-      // /__tfd_dashboard (named for the sentinel, NOT the engine Dashboard).
-      leftControls.push(mkBtn('‹', 'Back', function () { history.back(); }));
-      leftControls.push(mkBtn('›', 'Forward', function () { history.forward(); }));
-      leftControls.push(mkBtn('Dashboard', 'Go to the engine Dashboard', function () { location.assign(ORIGIN + '/'); }));
-      leftControls.push(mkBtn('Battle Monitor', 'Go to the live Battle Monitor', function () { location.assign(ORIGIN + '/monitor'); }));
-      rightControls.push(mkBtn('Settings', 'TFD Bridge settings', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
+      // Main window: the SAME persistent nav on EVERY engine page (and mirrored
+      // on the local dashboard). History Back/Forward + the two engine
+      // destinations (Dashboard = engine home '/', Battle Monitor = '/monitor')
+      // + Settings = the local TFD Bridge page via the same-origin sentinel
+      // /__tfd_dashboard (named for the sentinel, NOT the engine Dashboard). The
+      // button matching the current path is highlighted as the active view.
+      function navBtn(label, tip, path) {
+        var b = mkBtn(label, tip, function () { location.assign(ORIGIN + path); });
+        if (location.pathname === path) {
+          b.style.background = 'rgba(0,209,167,0.14)';
+          b.style.borderColor = 'rgba(0,209,167,0.55)';
+          b.style.color = '#eafffb';
+        }
+        return b;
+      }
+      navControls.push(mkBtn('‹', 'Back', function () { history.back(); }));
+      navControls.push(mkBtn('›', 'Forward', function () { history.forward(); }));
+      navControls.push(navBtn('Dashboard', 'Go to the engine Dashboard', '/'));
+      navControls.push(navBtn('Battle Monitor', 'Go to the live Battle Monitor', '/monitor'));
+      navControls.push(mkBtn('Settings', 'TFD Bridge settings', function () { location.assign(ORIGIN + '/__tfd_dashboard'); }));
       closeTip = 'Close to tray';
     }
-    var title = document.createElement('span');
-    title.setAttribute('data-tauri-drag-region', '');
-    // The title is also the flexible drag area (it pushes Settings + the window
-    // controls to the right); it truncates so they always stay visible.
-    title.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none;opacity:0.7;padding:0 6px;';
-    title.appendChild(document.createTextNode(isProfile ? 'Player Profile' : (document.title || 'TFD Bridge')));
+
+    // Flexible drag area pushing the window controls to the far right.
+    var spacer = document.createElement('span');
+    spacer.setAttribute('data-tauri-drag-region', '');
+    spacer.style.cssText = 'flex:1;min-width:8px;';
+
     var min = mkBtn('—', 'Minimize', function () { var w = winApi(); if (w) w.minimize(); });
-    // Maximize / restore — the same control the local Settings topbar has. The
-    // glyph reflects the current state and flips on click (needs
+    // Maximize / restore — the same control the local topbar has. The glyph
+    // reflects the current state and flips on click (needs
     // core:window:allow-toggle-maximize + allow-is-maximized, granted to the
     // remote engine pages by monitor.json / profile.json).
     function syncMaxGlyph(m) { maxBtn.textContent = m ? '❐' : '□'; maxBtn.title = m ? 'Restore' : 'Maximize'; }
@@ -615,9 +642,10 @@ const MONITOR_EMBED_JS: &str = r#"
     });
     (function () { var w = winApi(); if (w) w.isMaximized().then(syncMaxGlyph).catch(function () {}); })();
     var close = mkBtn('✕', closeTip, function () { var w = winApi(); if (w) w.close(); });
-    leftControls.forEach(function (b) { bar.appendChild(b); });
-    bar.appendChild(title);
-    rightControls.forEach(function (b) { bar.appendChild(b); });
+
+    bar.appendChild(brand);
+    navControls.forEach(function (b) { bar.appendChild(b); });
+    bar.appendChild(spacer);
     bar.appendChild(min);
     bar.appendChild(maxBtn);
     bar.appendChild(close);
@@ -666,34 +694,47 @@ const MONITOR_EMBED_JS: &str = r#"
     injectBar();
   }
 })();
-"#;
+"##;
+
+/// Navigate the main window to an engine page (a path under `engine.tfd.rocks`)
+/// and bring it forward.
+///
+/// Before navigating it captures the current URL as the dashboard return-target
+/// (so the engine-page "Settings" control can come back) — but ONLY when the
+/// current URL is the LOCAL app, never an engine URL. That guarantee is what
+/// keeps "Settings" always pointing at the local app instead of dead-ending on
+/// a blank engine page (the black-window bug): combined with the startup seed in
+/// `setup`, `DashboardUrl` is always a valid local URL.
+pub(crate) fn navigate_engine(app: &AppHandle, path: &str) {
+    let Some(win) = app.get_webview_window("main") else {
+        log::error!("navigate_engine: main window missing");
+        return;
+    };
+    if let Ok(current) = win.url() {
+        if current.host_str() != Some("engine.tfd.rocks") {
+            log::info!("navigate_engine: captured dashboard URL {current}");
+            *app.state::<DashboardUrl>().0.lock().unwrap() = Some(current);
+        }
+    }
+    let target = format!("https://engine.tfd.rocks{path}");
+    match target.parse::<tauri::Url>() {
+        Ok(url) if url.host_str() == Some("engine.tfd.rocks") => {
+            if let Err(e) = win.navigate(url) {
+                log::error!("navigate_engine: navigate to {path} failed: {e}");
+            } else {
+                save_last_view(app, if path == "/monitor" { "monitor" } else { "dashboard" });
+            }
+        }
+        _ => log::error!("navigate_engine: refusing bad/non-engine path {path:?}"),
+    }
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+}
 
 /// Navigate the main window to the embedded Battle Monitor and bring it forward.
 pub(crate) fn open_monitor_window(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        // Capture the dashboard URL we are currently on (fully loaded) so the
-        // monitor's "← Dashboard" can navigate back to the exact same URL.
-        match win.url() {
-            Ok(current) => {
-                log::info!("open_monitor: captured dashboard URL {current}");
-                *app.state::<DashboardUrl>().0.lock().unwrap() = Some(current);
-            }
-            Err(e) => log::warn!("open_monitor: could not capture dashboard URL: {e}"),
-        }
-        match MONITOR_URL.parse::<tauri::Url>() {
-            Ok(url) => {
-                if let Err(e) = win.navigate(url) {
-                    log::error!("open_monitor: navigate to monitor failed: {e}");
-                } else {
-                    save_last_view(app, "monitor");
-                }
-            }
-            Err(e) => log::error!("open_monitor: bad monitor URL: {e}"),
-        }
-        let _ = win.unminimize();
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
+    navigate_engine(app, "/monitor");
 }
 
 /// Label prefix for profile-link windows (the `Window` link target) and tabs
@@ -866,7 +907,9 @@ pub fn run() {
             // top bar + new-tab→browser routing, and intercepts the same-origin
             // sentinel URLs. The remote page never gets Tauri IPC.
             tauri::plugin::Builder::<tauri::Wry>::new("monitor-embed")
-                .js_init_script(MONITOR_EMBED_JS.to_string())
+                .js_init_script(
+                    MONITOR_EMBED_JS.replace("__APP_VERSION__", env!("CARGO_PKG_VERSION")),
+                )
                 .on_navigation(|webview, url| {
                     log::info!("on_navigation: {url}");
                     if url.host_str() == Some("engine.tfd.rocks") {
@@ -1164,6 +1207,22 @@ pub fn run() {
                 apply_replays_path(app.handle(), replays_path);
             }
 
+            // ── Seed the dashboard return-URL with the LOCAL app URL ────────
+            // The engine-page "Settings" control returns the main webview to the
+            // captured DashboardUrl. Capture it NOW, while the window still shows
+            // the local app, so the target is valid even on an autostart run that
+            // restores straight to the monitor below — otherwise it stays None and
+            // Settings dead-ends on a blank page (the black-window bug). Only ever
+            // store a LOCAL (non-engine) URL.
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(url) = win.url() {
+                    if url.host_str() != Some("engine.tfd.rocks") {
+                        log::info!("seeded dashboard return-URL {url}");
+                        *app.state::<DashboardUrl>().0.lock().unwrap() = Some(url);
+                    }
+                }
+            }
+
             // ── Restore last-active view (monitor or dashboard) ─────────────
             // Only restore monitor when onboarding is complete — navigating to
             // the remote monitor before the replays path is configured is wrong.
@@ -1192,6 +1251,7 @@ pub fn run() {
             commands::pick_replays_folder,
             commands::set_launch_on_login,
             commands::open_monitor,
+            commands::open_engine_home,
             commands::get_donation_status,
             commands::set_donation_consent,
             commands::get_link_target,

@@ -57,13 +57,15 @@
       flex-shrink: 0;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 0.5rem;
       padding: 0 0.45rem 0 0.85rem;
       background: rgba(5, 7, 14, 0.72);
       border-bottom: 1px solid var(--border);
       -webkit-user-select: none;
       user-select: none;
     }
+    /* Flexible drag area between the nav and the window controls. */
+    .topbar-spacer { flex: 1; min-width: 8px; align-self: stretch; }
     /* Brand sits inside the drag region; pointer-events:none lets the mousedown
        fall through to the topbar so dragging works even over the logo/title. */
     .topbar-brand {
@@ -85,6 +87,32 @@
       color: var(--fg-muted);
       font-weight: 400;
       margin-left: 0.15rem;
+    }
+
+    /* ── Unified nav (mirrors the injected engine-page bar) ─────────────────── */
+    .topbar-nav { display: flex; align-items: center; gap: 4px; margin-left: 0.4rem; }
+    .nav-btn {
+      height: 24px;
+      padding: 0 9px;
+      display: flex;
+      align-items: center;
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: var(--fg-muted);
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .nav-btn.arrow { padding: 0 7px; font-size: 14px; }
+    .nav-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--fg); }
+    .nav-btn.is-active {
+      background: rgba(0, 209, 167, 0.14);
+      border-color: rgba(0, 209, 167, 0.55);
+      color: #eafffb;
+      cursor: default;
     }
 
     .win-controls { display: flex; align-items: center; gap: 2px; }
@@ -529,6 +557,17 @@
       </svg>
       <span class="topbar-title">TFD <span class="accent">Bridge</span> <span class="version" id="app-version"></span></span>
     </div>
+    <!-- Unified nav: same destinations as the injected engine-page bar. Back /
+         Forward use webview history; Dashboard + Battle Monitor route through Rust
+         (capture the dashboard URL first); Settings is the current (active) view. -->
+    <nav class="topbar-nav" aria-label="Views">
+      <button class="nav-btn arrow" id="nav-back" type="button" title="Back" aria-label="Back">‹</button>
+      <button class="nav-btn arrow" id="nav-forward" type="button" title="Forward" aria-label="Forward">›</button>
+      <button class="nav-btn" id="nav-dashboard" type="button" title="Go to the engine Dashboard">Dashboard</button>
+      <button class="nav-btn" id="nav-monitor" type="button" title="Go to the live Battle Monitor">Battle Monitor</button>
+      <button class="nav-btn is-active" id="nav-settings" type="button" title="TFD Bridge settings" aria-current="page">Settings</button>
+    </nav>
+    <span class="topbar-spacer" data-tauri-drag-region></span>
     <div class="win-controls">
       <button class="win-btn" id="win-minimize" type="button" title="Minimize" aria-label="Minimize">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
@@ -855,6 +894,28 @@
 
   // Open Battle Monitor button.
   document.getElementById('btn-open-monitor').addEventListener('click', async () => {
+    try {
+      await invoke('open_monitor');
+    } catch (err) {
+      console.error('open_monitor failed:', err);
+    }
+  });
+
+  // ── Unified top-bar navigation (mirrors the injected engine-page bar) ───────
+  // Back/Forward act on the webview history. Dashboard + Battle Monitor leave the
+  // local app for the engine, routed through Rust so the dashboard return-URL is
+  // captured first (keeps "Settings" able to come back). Settings is the current
+  // view here, so it is the active, no-op button.
+  document.getElementById('nav-back').addEventListener('click', () => history.back());
+  document.getElementById('nav-forward').addEventListener('click', () => history.forward());
+  document.getElementById('nav-dashboard').addEventListener('click', async () => {
+    try {
+      await invoke('open_engine_home');
+    } catch (err) {
+      console.error('open_engine_home failed:', err);
+    }
+  });
+  document.getElementById('nav-monitor').addEventListener('click', async () => {
     try {
       await invoke('open_monitor');
     } catch (err) {
