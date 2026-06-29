@@ -16,7 +16,7 @@
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -152,22 +152,16 @@ pub struct BattlePlayer {
     pub interactions: Vec<DamageInteraction>,
 
     // ── Schema 1.2 additions (result-data expansion) ────────────────────────
+    // Only fields validated as REAL per-player data against the replay reference
+    // set are kept. `ribbons` (RIBBON_* = score sentinels), `planes` (planes_lost
+    // = sentinel) and `capture` (never populated) were dropped — they emitted
+    // garbage; see [[bridge-decode-patch-resilience]] / td-64aaf8.
     /// Per-player damage DEALT, bucketed with the SAME buckets as `interactions`
     /// (so the per-player total reconciles with the matrix sum, modulo buildings
     /// / environment). Always present (zero-filled) for predictable reconcile.
     pub damage_dealt_by_type: DamageDealtByType,
-    /// Achievement ribbon counts — **non-zero entries only**, keyed by a stable
-    /// lowercased name (the `RIBBON_` prefix stripped): e.g. `"citadel"`,
-    /// `"main_caliber"`, `"base_capture"`, `"base_defense"`, `"building_kill"`.
-    /// Omitted entirely when the player earned no ribbons.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub ribbons: BTreeMap<String, i64>,
     /// First-spot (detection) counts, beyond the top-level `spotting_damage`.
     pub detection: Detection,
-    /// Objective capture play (per-player base points).
-    pub capture: Capture,
-    /// Air-group losses (kills are the top-level `planes_killed`).
-    pub planes: Planes,
     /// Module damage this player caused to enemies.
     pub modules: Modules,
 }
@@ -192,19 +186,6 @@ pub struct DamageDealtByType {
 pub struct Detection {
     pub first_ships_spotted: i64,
     pub first_planes_spotted: i64,
-}
-
-/// Schema 1.2: objective capture play.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
-pub struct Capture {
-    pub capture_points: i64,
-    pub dropped_capture_points: i64,
-}
-
-/// Schema 1.2: air-group losses (kills = top-level `planes_killed`).
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
-pub struct Planes {
-    pub lost: i64,
 }
 
 /// Schema 1.2: module damage caused to enemies.
@@ -1351,8 +1332,14 @@ pub(crate) fn resolve_player(
         .unwrap_or(0);
     let hits = Some(hits_ap + hits_cs + hits_he);
 
-    let ribbons_torpedo_hits = get_i64("RIBBON_TORPEDO");
-    let ribbons_hits = get_i64("RIBBON_MAIN_CALIBER");
+    // `ribbons_torpedo_hits` / `ribbons_hits` historically read `RIBBON_TORPEDO` /
+    // `RIBBON_MAIN_CALIBER`, which are score SENTINELS (only round values, and only
+    // for the recording client) — NOT per-player hit counts (td-64aaf8, confirmed
+    // across 36,889 reference player-rows). Repointed to the validated public
+    // hit-count fields: `hits_tpd` (real torpedo hits) and the main-caliber hit sum
+    // (= the `hits` value). Field names kept for back-compat; the data is now real.
+    let ribbons_torpedo_hits = get_i64("hits_tpd");
+    let ribbons_hits = hits;
 
     // Aircraft shot down — a public per-player count for ALL players. The
     // self-only `RIBBON_PLANE` ribbon is a `10000` sentinel (0 for everyone
@@ -1452,32 +1439,11 @@ pub(crate) fn resolve_player(
     // Damage to structures (was null in 1.1; now wired from buildingInteractions).
     let damage_to_buildings = Some(sum_building_damage(get_val("buildingInteractions"), tables));
 
-    // Ribbons — every non-zero RIBBON_* public field, keyed by the stripped,
-    // lowercased name. Map (not frozen list) so new WG ribbons appear for free.
-    let mut ribbons: BTreeMap<String, i64> = BTreeMap::new();
-    for name in pub_idx.keys() {
-        if let Some(stripped) = name.strip_prefix("RIBBON_") {
-            let count = get_i64(name).unwrap_or(0);
-            if count > 0 {
-                ribbons.insert(stripped.to_ascii_lowercase(), count);
-            }
-        }
-    }
-
     let detection = Detection {
         first_ships_spotted: get_i64("first_ships_spotted_by_ship").unwrap_or(0)
             + get_i64("first_ships_spotted_by_plane").unwrap_or(0),
         first_planes_spotted: get_i64("first_planes_spotted_by_ship").unwrap_or(0)
             + get_i64("first_planes_spotted_by_plane").unwrap_or(0),
-    };
-
-    let capture = Capture {
-        capture_points: get_i64("capture_points").unwrap_or(0),
-        dropped_capture_points: get_i64("dropped_capture_points").unwrap_or(0),
-    };
-
-    let planes = Planes {
-        lost: get_i64("planes_lost").unwrap_or(0),
     };
 
     let modules = Modules {
@@ -1522,10 +1488,7 @@ pub(crate) fn resolve_player(
         won,
         interactions,
         damage_dealt_by_type,
-        ribbons,
         detection,
-        capture,
-        planes,
         modules,
     }
 }
@@ -1718,8 +1681,9 @@ mod tests {
         set_i(&mut arr, 418, 0); // agro_air
         set_i(&mut arr, 419, 0); // agro_dbomb
         set_i(&mut arr, 426, 75898); // damage → damage_dealt
-        set_i(&mut arr, 446, 5); // RIBBON_MAIN_CALIBER → ribbons_hits
-        set_i(&mut arr, 447, 3); // RIBBON_TORPEDO → ribbons_torpedo_hits
+        // ribbons_torpedo_hits now reads hits_tpd (real torpedo hits), not the
+        // RIBBON_TORPEDO sentinel. ribbons_hits = the main-caliber hits sum (= hits).
+        set_i(&mut arr, tables.public_indices["hits_tpd"], 4); // → ribbons_torpedo_hits
         set_i(&mut arr, 280, 2); // planes_killed_by_ship
         set_i(&mut arr, 281, 1); // planes_killed_by_plane → planes_killed = 3
 
@@ -1756,10 +1720,10 @@ mod tests {
         assert_eq!(player.hits, Some(31));
         assert_eq!(player.frags, Some(2));
         assert_eq!(player.xp_contribution, None);
-        assert_eq!(player.ribbons_torpedo_hits, Some(3));
+        assert_eq!(player.ribbons_torpedo_hits, Some(4)); // = hits_tpd
         // planes_killed = planes_killed_by_ship(2) + planes_killed_by_plane(1)
         assert_eq!(player.planes_killed, Some(3));
-        assert_eq!(player.ribbons_hits, Some(5));
+        assert_eq!(player.ribbons_hits, Some(31)); // = main-caliber hits sum (= hits)
         assert_eq!(player.survived, Some(false));
         assert!(player.is_self);
         // won: winner_team(1) == team_id(1) → true
@@ -1786,19 +1750,10 @@ mod tests {
         arr[idx("damage_ram")] = serde_json::json!(50); // ram
         arr[idx("damage_dbomb_direct")] = serde_json::json!(80); // depth_charge
         arr[idx("damage_sea_mine")] = serde_json::json!(9); // other
-                                                            // ribbons — two non-zero, one explicit zero (must be omitted from the map)
-        arr[idx("RIBBON_CITADEL")] = serde_json::json!(4);
-        arr[idx("RIBBON_BASE_CAPTURE")] = serde_json::json!(7);
-        arr[idx("RIBBON_BURN")] = serde_json::json!(0);
         // detection (each = by_ship + by_plane)
         arr[idx("first_ships_spotted_by_ship")] = serde_json::json!(2);
         arr[idx("first_ships_spotted_by_plane")] = serde_json::json!(1);
         arr[idx("first_planes_spotted_by_ship")] = serde_json::json!(5);
-        // capture
-        arr[idx("capture_points")] = serde_json::json!(33);
-        arr[idx("dropped_capture_points")] = serde_json::json!(12);
-        // planes
-        arr[idx("planes_lost")] = serde_json::json!(6);
         // modules
         arr[idx("module_crits")] = serde_json::json!(9);
         arr[idx("module_major_crits")] = serde_json::json!(2);
@@ -1815,15 +1770,8 @@ mod tests {
         );
         assert_eq!((d.flood, d.ram, d.depth_charge, d.other), (400, 50, 80, 9));
 
-        assert_eq!(p.ribbons.get("citadel"), Some(&4));
-        assert_eq!(p.ribbons.get("base_capture"), Some(&7));
-        assert_eq!(p.ribbons.get("burn"), None, "zero ribbons must be omitted");
-
         assert_eq!(p.detection.first_ships_spotted, 3); // 2 + 1
         assert_eq!(p.detection.first_planes_spotted, 5); // 5 + 0
-        assert_eq!(p.capture.capture_points, 33);
-        assert_eq!(p.capture.dropped_capture_points, 12);
-        assert_eq!(p.planes.lost, 6);
         assert_eq!(
             (
                 p.modules.crits,
@@ -1868,8 +1816,6 @@ mod tests {
     /// then update this expected set.
     #[test]
     fn battle_player_wire_keys_are_stable() {
-        let mut ribbons = BTreeMap::new();
-        ribbons.insert("citadel".to_string(), 1);
         let p = BattlePlayer {
             account_db_id: 1,
             player_name: Some("x".into()),
@@ -1906,10 +1852,7 @@ mod tests {
                 ..Default::default()
             }],
             damage_dealt_by_type: Default::default(),
-            ribbons,
             detection: Default::default(),
-            capture: Default::default(),
-            planes: Default::default(),
             modules: Default::default(),
         };
         let v = serde_json::to_value(&p).unwrap();
@@ -1947,10 +1890,7 @@ mod tests {
             "won",
             "interactions",
             "damage_dealt_by_type",
-            "ribbons",
             "detection",
-            "capture",
-            "planes",
             "modules",
         ];
         expected.sort();
@@ -3039,32 +2979,31 @@ mod tests {
                     }
                 }
 
-                // ribbons_hits = RIBBON_MAIN_CALIBER
+                // ribbons_hits = real main-caliber hits (hits_main_ap+cs+he), NOT the
+                // RIBBON_MAIN_CALIBER sentinel (td-64aaf8). Equals the `hits` field.
                 {
                     total_field_checks += 1;
-                    let ref_val = ref_player["RIBBON_MAIN_CALIBER"].as_f64().map(|v| v as i64);
-                    // ref_val is None only if the field is absent in the oracle; in that
-                    // case skip rather than fail (the oracle should always have it).
-                    if let Some(rv) = ref_val {
-                        let expected = Some(rv);
-                        if got.ribbons_hits != expected {
-                            failures.push(format!(
-                                "{}: player {db_id_str} ribbons_hits (RIBBON_MAIN_CALIBER): got {:?} expected {:?}",
-                                fname, got.ribbons_hits, expected
-                            ));
-                        }
+                    let h = |k: &str| ref_player[k].as_f64().map(|v| v as i64).unwrap_or(0);
+                    let expected =
+                        Some(h("hits_main_ap") + h("hits_main_cs") + h("hits_main_he"));
+                    if got.ribbons_hits != expected {
+                        failures.push(format!(
+                            "{}: player {db_id_str} ribbons_hits (main-caliber hits): got {:?} expected {:?}",
+                            fname, got.ribbons_hits, expected
+                        ));
                     }
                 }
 
-                // ribbons_torpedo_hits = RIBBON_TORPEDO
+                // ribbons_torpedo_hits = real torpedo hits (hits_tpd), NOT the
+                // RIBBON_TORPEDO sentinel (td-64aaf8).
                 {
                     total_field_checks += 1;
-                    let ref_val = ref_player["RIBBON_TORPEDO"].as_f64().map(|v| v as i64);
+                    let ref_val = ref_player["hits_tpd"].as_f64().map(|v| v as i64);
                     if let Some(rv) = ref_val {
                         let expected = Some(rv);
                         if got.ribbons_torpedo_hits != expected {
                             failures.push(format!(
-                                "{}: player {db_id_str} ribbons_torpedo_hits (RIBBON_TORPEDO): got {:?} expected {:?}",
+                                "{}: player {db_id_str} ribbons_torpedo_hits (hits_tpd): got {:?} expected {:?}",
                                 fname, got.ribbons_torpedo_hits, expected
                             ));
                         }

@@ -1988,10 +1988,7 @@ mod tests {
                 won: Some(true),
                 interactions: Vec::new(),
                 damage_dealt_by_type: Default::default(),
-                ribbons: Default::default(),
                 detection: Default::default(),
-                capture: Default::default(),
-                planes: Default::default(),
                 modules: Default::default(),
             }],
         }
