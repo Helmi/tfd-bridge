@@ -18,9 +18,8 @@
 //! The three states are deliberate:
 //! - `Unset`    — undecided. The UI shows the one-time ask. Never uploads.
 //! - `OptedIn`  — opted in: a fresh install's seeded default, or an explicit
-//!                yes. Uploads allowed, subject to the engine `replay_donation`
-//!                feature flag — that AND-gating lives with the uploader
-//!                (td-c8973d), not here.
+//!   yes. Uploads allowed, subject to the engine `replay_donation` feature flag
+//!   — that AND-gating lives with the uploader (td-c8973d), not here.
 //! - `Declined` — explicit no. Never uploads, never asked again.
 
 use serde::{Deserialize, Serialize};

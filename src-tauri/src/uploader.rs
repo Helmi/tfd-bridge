@@ -1563,12 +1563,12 @@ mod tests {
 
     // ── Transport (against a local mock — no live calls) ─────────────────────
 
+    /// A captured request: lowercased (header, value) pairs + the raw body bytes.
+    type CapturedReq = (Vec<(String, String)>, Vec<u8>);
+
     /// Spawn a one-shot mock engine answering with `status` + `body`;
     /// captures the request headers (lowercased) and raw body bytes.
-    fn spawn_mock_intake(
-        status: u16,
-        body: &'static str,
-    ) -> (String, mpsc::Receiver<(Vec<(String, String)>, Vec<u8>)>) {
+    fn spawn_mock_intake(status: u16, body: &'static str) -> (String, mpsc::Receiver<CapturedReq>) {
         let server = tiny_http::Server::http("127.0.0.1:0").expect("bind mock intake");
         let port = server
             .server_addr()

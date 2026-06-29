@@ -12,12 +12,12 @@
 //!
 //! The three states map to the three behaviours:
 //! - `Browser`    — open the link in the system browser (the default; the
-//!                  behaviour every existing install has had, so an absent or
-//!                  garbled value MUST read as `Browser`).
+//!   behaviour every existing install has had, so an absent or garbled value
+//!   MUST read as `Browser`).
 //! - `Window`     — open the engine link in a new in-app top-level window.
 //! - `SameWindow` — navigate the main window in place to the engine link; the
-//!                  title bar gains a "Battle Monitor" return + history
-//!                  back/forward (the live monitor reloads when you go back).
+//!   title bar gains a "Battle Monitor" return + history back/forward (the live
+//!   monitor reloads when you go back).
 //!
 //! SECURITY: this pref is only ever consulted AFTER the caller has confirmed the
 //! target is `https`/`http` on `engine.tfd.rocks`. Any other host always goes to
