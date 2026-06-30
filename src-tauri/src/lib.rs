@@ -705,6 +705,12 @@ const MONITOR_EMBED_JS: &str = r##"
           'html{overflow:hidden!important;}'
         + 'body{position:fixed!important;top:34px!important;left:0!important;right:0!important;bottom:0!important;margin:0!important;overflow-x:hidden!important;overflow-y:auto!important;}'
         + '.h-screen,.h-dvh,.h-svh,.h-lvh{height:calc(100vh - 34px)!important;}'
+        // Plain min-h-screen (e.g. the engine (main) layout's OUTER wrapper
+        // `<div class="min-h-screen">`) is 100vh and otherwise 34px taller than the
+        // inset body box → exactly the title-bar height of phantom scroll on every
+        // such page. Subtract our 34px here too. (The engine's own
+        // min-h-[calc(100vh-var(--discord-bar-h))] inner main is handled below.)
+        + '.min-h-screen,.min-h-dvh,.min-h-svh,.min-h-lvh{min-height:calc(100vh - 34px)!important;}'
         + '[class^="h-[calc(100vh-var(--discord-bar-h"],[class*=" h-[calc(100vh-var(--discord-bar-h"]{height:calc(100vh - 34px - var(--discord-bar-h,0px))!important;}'
         + '[class*="min-h-[calc(100vh-var(--discord-bar-h"]{min-height:calc(100vh - 34px - var(--discord-bar-h,0px))!important;}'
         + '[class*="bg-indigo-500/10"]{top:34px!important;}'

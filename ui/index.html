@@ -44,15 +44,9 @@
       color: var(--fg);
       background:
         radial-gradient(120% 90% at 50% -10%, var(--bg-grad) 0%, var(--bg) 60%);
-      display: flex;
-      flex-direction: column;
       height: 100%;
-      overflow: hidden;
+      overflow: hidden;            /* body/html never scroll; .content is the one scroll box */
       -webkit-font-smoothing: antialiased;
-      /* Reserve space for the shared injected title bar (#tfd-embed-bar, fixed,
-         34px) — the one bar rendered on every view from src-tauri/src/lib.rs.
-         This 34px MUST match that bar's height. */
-      padding-top: var(--topbar-h);
     }
 
     /* The title bar (brand + nav + window controls) is NOT defined here. It is the
@@ -61,8 +55,16 @@
        (see body padding-top above). */
 
     /* ── Content ───────────────────────────────────────────────────────────── */
+    /* The ONE scroll box: a viewport-anchored inset from the bar's bottom edge to
+       the window bottom (exactly 100vh − bar height) — no flex/percentage ambiguity,
+       so a short page never gets a phantom scrollbar. The injected bar (fixed,
+       34px) sits above; --topbar-h must match its height. */
     .content {
-      flex: 1;
+      position: fixed;
+      top: var(--topbar-h);
+      left: 0;
+      right: 0;
+      bottom: 0;
       overflow-y: auto;
       padding: 1.5rem 1.75rem 1.75rem;
       display: flex;
