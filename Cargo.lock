@@ -4754,7 +4754,7 @@ dependencies = [
 
 [[package]]
 name = "tfd-bridge"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "bridge-core",
  "hex",
