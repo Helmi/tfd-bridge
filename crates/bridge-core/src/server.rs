@@ -1923,6 +1923,7 @@ mod tests {
             building_interaction_index: std::collections::HashMap::new(),
             private_results: Vec::new(),
             init_economics_indices: std::collections::HashMap::new(),
+            common_economics_indices: std::collections::HashMap::new(),
             ships: std::collections::HashMap::new(),
         }
     }
@@ -1990,6 +1991,8 @@ mod tests {
                 damage_dealt_by_type: Default::default(),
                 detection: Default::default(),
                 modules: Default::default(),
+                damage_main_by_shell: Default::default(),
+                economics: None,
             }],
         }
     }
