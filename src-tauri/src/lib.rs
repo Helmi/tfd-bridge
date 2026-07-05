@@ -914,7 +914,27 @@ fn show_main_window(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // ── Single-instance guard (MUST be the first plugin) ────────────────────
+    // Tauri requires single-instance to be registered before every other
+    // plugin. When a duplicate launch happens, THIS callback runs inside the
+    // already-running instance (the second process exits on its own) — so we
+    // just reveal the existing window instead of starting the app twice.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        // A login/autostart re-launch should stay silent in the tray, exactly
+        // like the primary autostart path in setup(). Any other second launch
+        // is an explicit user action → bring the existing window forward.
+        if argv.iter().any(|a| a == "--autostart") {
+            log::info!("Second (autostart) launch ignored; staying in tray");
+            return;
+        }
+        log::info!("Second launch detected; revealing the existing window");
+        show_main_window(app);
+    }));
+
+    let builder = builder
         .plugin(
             // Persist SIZE + POSITION + MAXIMIZED only.
             // VISIBLE is intentionally excluded: show/hide is managed by the
@@ -1302,8 +1322,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let RunEvent::Exit = event {
+        .run(|app, event| match event {
+            RunEvent::Exit => {
                 if let Some(ab) = app.state::<BridgeState>().0.lock().unwrap().take() {
                     ab.bridge.stop();
                 }
@@ -1311,6 +1331,15 @@ pub fn run() {
                     up.cancel();
                 }
             }
+            // macOS: clicking the Dock icon (or double-clicking the .app) to
+            // reopen an already-running app does NOT spawn a second process, so
+            // the single-instance callback never fires. LaunchServices instead
+            // sends applicationShouldHandleReopen, surfaced here as Reopen —
+            // reveal the (possibly tray-hidden) window so "reopen" matches the
+            // Windows/Linux second-launch behavior.
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => show_main_window(app),
+            _ => {}
         });
 }
 

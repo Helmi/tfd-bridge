@@ -52,3 +52,7 @@ tempfile = "3"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.1"
+# Single-instance guard: a second launch exits immediately and hands its argv
+# to the already-running instance, which reveals its window (see lib.rs). Keeps
+# the tray-resident app from ever spawning a duplicate process.
+tauri-plugin-single-instance = "2"
