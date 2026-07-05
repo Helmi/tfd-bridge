@@ -11,6 +11,14 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.8.0] — 2026-07-05
+
+### Added
+- Single-instance guard: launching TFD Bridge while it is already running now focuses the existing window instead of opening a second copy.
+- More post-battle data for the Battle Monitor (decode schema 1.3): main-battery damage split by shell type (HE/AP/SAP), and the owning player's battle economics — service, ammunition, and consumable credit costs plus the premium multipliers.
+
+---
+
 ## [0.7.2] — 2026-06-29
 
 ### Fixed
@@ -245,7 +253,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Helmi/tfd-bridge/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/Helmi/tfd-bridge/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/Helmi/tfd-bridge/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Helmi/tfd-bridge/compare/v0.6.2...v0.7.0
