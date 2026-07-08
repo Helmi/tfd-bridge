@@ -11,6 +11,16 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.9.0] — 2026-07-08
+
+### Added
+- Per-battle achievements in the post-battle data (decode schema 1.4): the medals each player earned that battle, so the Battle Monitor can show them.
+
+### Fixed
+- Corrected a damage double-count for aircraft carriers and airstrike ships: carrier-aircraft and airstrike bomb/depth-charge hits were each counted twice, inflating those players' damage totals and the per-weapon breakdown in the Battle Monitor. Per-player damage now reconciles with the game's own total.
+
+---
+
 ## [0.8.0] — 2026-07-05
 
 ### Added
@@ -253,7 +263,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Helmi/tfd-bridge/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Helmi/tfd-bridge/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/Helmi/tfd-bridge/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/Helmi/tfd-bridge/compare/v0.7.0...v0.7.1

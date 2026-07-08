@@ -4,7 +4,8 @@
 //! (no external process): parse the replay, load version-specific entity specs
 //! from the game directory (cached per build), walk the packet stream to the
 //! final `BattleResults` packet, and resolve the positional player arrays using
-//! `constants.json` + `ship_index.json` into a structured [`BattleData`].
+//! `constants.json` + `ship_index.json` + `achievement_index.json` into a
+//! structured [`BattleData`].
 //!
 //! # Design notes
 //! - Pure Tauri-free module; all path resolution happens in the caller.
