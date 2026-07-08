@@ -45,7 +45,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["resources/constants.json", "resources/ship_index.json"],
+    "resources": [
+      "resources/constants.json",
+      "resources/ship_index.json",
+      "resources/achievement_index.json"
+    ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     },

@@ -1925,6 +1925,7 @@ mod tests {
             init_economics_indices: std::collections::HashMap::new(),
             common_economics_indices: std::collections::HashMap::new(),
             ships: std::collections::HashMap::new(),
+            achievements: std::collections::HashMap::new(),
         }
     }
 
@@ -1935,6 +1936,7 @@ mod tests {
             game_dir: PathBuf::from("/stub/game"),
             constants_path: PathBuf::from("/stub/constants.json"),
             ship_index_path: PathBuf::from("/stub/ship_index.json"),
+            achievement_index_path: PathBuf::from("/stub/achievement_index.json"),
         }
     }
 
@@ -1993,6 +1995,7 @@ mod tests {
                 modules: Default::default(),
                 damage_main_by_shell: Default::default(),
                 economics: None,
+                achievements: Vec::new(),
             }],
         }
     }

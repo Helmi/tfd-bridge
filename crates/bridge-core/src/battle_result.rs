@@ -173,6 +173,14 @@ pub struct BattlePlayer {
     /// a replay contains only the recording player's economics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub economics: Option<Economics>,
+
+    // ── Schema 1.4 addition (per-battle WoWS medals) ────────────────────────
+    /// Achievements (WoWS medals) earned THIS battle, resolved id→name via
+    /// `achievement_index.json`. Public per-player field — present for ALL
+    /// players; empty `[]` when the player earned none. An id not in the
+    /// bundled index (an achievement added in a newer patch) falls back to
+    /// the stringified integer id so nothing is silently dropped.
+    pub achievements: Vec<Achievement>,
 }
 
 /// Schema 1.2: per-player damage dealt, bucketed to mirror [`DamageInteraction`]'s
@@ -253,6 +261,20 @@ pub struct Economics {
     pub wows_premium_credits_factor: f64,
     /// WoWS-premium XP multiplier (`wows_premium_exp_factor`).
     pub wows_premium_exp_factor: f64,
+}
+
+/// Schema 1.4: one achievement (WoWS medal) earned this battle, resolved from
+/// the public `achievements` field ([id, count] pairs) via the bundled
+/// `achievement_index.json`. `count` is almost always 1; a few achievements
+/// can stack within a battle (e.g. multiple Double Strikes).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Achievement {
+    /// WG's canonical achievement identifier (the GameParams entry's own
+    /// `name` field, e.g. `"PCH012_Arsonist"`) — or the stringified integer
+    /// id when it isn't in the bundled index. The bridge does not resolve to
+    /// a display label or asset slug; the engine owns that mapping.
+    pub name: String,
+    pub count: i64,
 }
 
 /// One attacker→victim damage record, resolved from a player's
@@ -537,6 +559,7 @@ pub struct DecodeConfig {
     pub game_dir: PathBuf,
     pub constants_path: PathBuf,
     pub ship_index_path: PathBuf,
+    pub achievement_index_path: PathBuf,
 }
 
 pub struct Tables {
@@ -556,6 +579,9 @@ pub struct Tables {
     /// array (schema 1.3 expenses + premium multipliers).
     pub common_economics_indices: HashMap<String, usize>,
     pub ships: HashMap<String, ShipInfo>,
+    /// achievement_id (as string) → WG name, from `achievement_index.json`.
+    /// Flat map — unlike `ships`, achievements carry no tier/class enrichment.
+    pub achievements: HashMap<String, String>,
 }
 
 pub struct ShipInfo {
@@ -565,7 +591,11 @@ pub struct ShipInfo {
 }
 
 impl Tables {
-    pub fn load(constants_path: &Path, ship_index_path: &Path) -> Result<Tables, DecodeError> {
+    pub fn load(
+        constants_path: &Path,
+        ship_index_path: &Path,
+        achievement_index_path: &Path,
+    ) -> Result<Tables, DecodeError> {
         // ── constants.json ────────────────────────────────────────────────────
         let constants_bytes = fs::read(constants_path)
             .map_err(|e| DecodeError::Resources(format!("cannot read constants.json: {e}")))?;
@@ -690,6 +720,26 @@ impl Tables {
             }
         }
 
+        // ── achievement_index.json (schema 1.4) ────────────────────────────────
+        // Flat {achievement_id → WG name} map — unlike ship_index.json there is
+        // no tier/class enrichment to carry, just the id→name resolution.
+        let achievement_bytes = fs::read(achievement_index_path).map_err(|e| {
+            DecodeError::Resources(format!("cannot read achievement_index.json: {e}"))
+        })?;
+        let achievement_json: serde_json::Value = serde_json::from_slice(&achievement_bytes)
+            .map_err(|e| {
+                DecodeError::Resources(format!("achievement_index.json parse error: {e}"))
+            })?;
+
+        let mut achievements = HashMap::new();
+        if let Some(obj) = achievement_json.as_object() {
+            for (id_str, name_val) in obj {
+                if let Some(name) = name_val.as_str() {
+                    achievements.insert(id_str.clone(), name.to_string());
+                }
+            }
+        }
+
         Ok(Tables {
             public_indices,
             common_results,
@@ -700,6 +750,7 @@ impl Tables {
             init_economics_indices,
             common_economics_indices,
             ships,
+            achievements,
         })
     }
 }
@@ -1297,7 +1348,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.3".into(),
+            schema_version: "1.4".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -1576,6 +1627,31 @@ pub(crate) fn resolve_player(
         None
     };
 
+    // ── Schema 1.4: per-battle achievements (WoWS medals) ───────────────────
+    // Public field: a list of [id, count] pairs, e.g. [[3911377840, 1]].
+    // Present for ALL players; empty/absent → []. Resolve each id via the
+    // achievement_index; an id the bundled index doesn't know (a newer-patch
+    // medal) falls back to the stringified id rather than being dropped.
+    let achievements: Vec<Achievement> = get_val("achievements")
+        .and_then(|v| v.as_array())
+        .map(|pairs| {
+            pairs
+                .iter()
+                .filter_map(|pair| {
+                    let pair = pair.as_array()?;
+                    let id = to_i64_tolerant(pair.first()?)?;
+                    let count = pair.get(1).and_then(to_i64_tolerant).unwrap_or(1).max(1);
+                    let name = tables
+                        .achievements
+                        .get(&id.to_string())
+                        .cloned()
+                        .unwrap_or_else(|| id.to_string());
+                    Some(Achievement { name, count })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     BattlePlayer {
         account_db_id,
         player_name,
@@ -1614,6 +1690,7 @@ pub(crate) fn resolve_player(
         modules,
         damage_main_by_shell,
         economics,
+        achievements,
     }
 }
 
@@ -1691,6 +1768,10 @@ mod tests {
         fixture_dir().join("ship_index_min.json")
     }
 
+    fn achievement_index_min_path() -> PathBuf {
+        fixture_dir().join("achievement_index_min.json")
+    }
+
     fn battle_results_fixture_path() -> PathBuf {
         fixture_dir().join("battle_results_min.json")
     }
@@ -1699,8 +1780,12 @@ mod tests {
 
     #[test]
     fn tables_load_succeeds() {
-        let tables =
-            Tables::load(&constants_path(), &ship_index_min_path()).expect("tables must load");
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .expect("tables must load");
         assert!(tables.public_indices.contains_key("account_db_id"));
         assert!(tables.public_indices.contains_key("exp"));
         assert!(tables.public_indices.contains_key("damage"));
@@ -1710,7 +1795,12 @@ mod tests {
 
     #[test]
     fn tables_common_results_is_array() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         // COMMON_RESULTS must be an ordered array starting with "arena_id"
         assert_eq!(tables.common_results[0], "arena_id");
         assert_eq!(tables.common_results[3], "winner_team_id");
@@ -1719,7 +1809,12 @@ mod tests {
 
     #[test]
     fn tables_client_veh_interaction_details_is_array() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         // Should parse as a Vec (may be empty or populated)
         // Just verify it loaded without error and is a vec
         let _ = tables.interaction_details;
@@ -1751,7 +1846,12 @@ mod tests {
     // ── resolve_player ────────────────────────────────────────────────────────
 
     fn make_tables_from_fixture() -> Tables {
-        Tables::load(&constants_path(), &ship_index_min_path()).unwrap()
+        Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap()
     }
 
     /// Build a sparse player array large enough to hold all needed indices.
@@ -2000,6 +2100,40 @@ mod tests {
         assert!(other.economics.is_none());
     }
 
+    /// Schema 1.4: the public `achievements` field ([id, count] pairs) resolves
+    /// known ids to their WG name via the achievement_index, falls back to the
+    /// stringified id for an unknown id (a newer-patch medal), and defaults to
+    /// an empty vec when the player earned none / the field is absent.
+    #[test]
+    fn resolve_player_achievements_resolves_known_id_and_defaults_empty() {
+        let tables = make_tables_from_fixture();
+        let max = *tables.public_indices.values().max().unwrap();
+        let idx = |name: &str| tables.public_indices[name];
+
+        // Known id (in achievement_index_min.json) + an unknown one, stacked once.
+        let mut arr = make_arr(max + 1);
+        arr[idx("achievements")] = serde_json::json!([[4281525168i64, 1], [999999999i64, 2]]);
+        let p = resolve_player(&arr, 42, &tables, 42, Some(1), None);
+        assert_eq!(
+            p.achievements,
+            vec![
+                Achievement {
+                    name: "PCH012_Arsonist".into(),
+                    count: 1,
+                },
+                Achievement {
+                    name: "999999999".into(), // unknown id -> stringified fallback
+                    count: 2,
+                },
+            ]
+        );
+
+        // Field absent (null slot) -> empty, not an error.
+        let empty_arr = make_arr(max + 1);
+        let p2 = resolve_player(&empty_arr, 42, &tables, 42, Some(1), None);
+        assert!(p2.achievements.is_empty());
+    }
+
     /// Drift guard: the serialized `BattlePlayer` key set IS the wire contract
     /// (notes/bridge-result-api-contract.md). If this breaks, a field was
     /// added/renamed/removed — update the contract doc, bump `schema_version`,
@@ -2047,6 +2181,10 @@ mod tests {
             damage_main_by_shell: Default::default(),
             // Some(_) so the optional owner-only key is locked by this guard.
             economics: Some(Default::default()),
+            achievements: vec![Achievement {
+                name: "PCH012_Arsonist".into(),
+                count: 1,
+            }],
         };
         let v = serde_json::to_value(&p).unwrap();
         let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
@@ -2087,6 +2225,7 @@ mod tests {
             "modules",
             "damage_main_by_shell",
             "economics",
+            "achievements",
         ];
         expected.sort();
         assert_eq!(
@@ -2177,7 +2316,12 @@ mod tests {
     /// players' won to None (spec §8: "-1/absent => unknown").
     #[test]
     fn parse_jsonl_winner_team_minus_one_maps_to_none() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let inner = serde_json::json!({
             "arenaUniqueID": 55555,
             "accountDBID": 100,
@@ -2442,7 +2586,12 @@ mod tests {
     /// Parse the real trimmed fixture and assert key fields.
     #[test]
     fn fixture_decode_resolves_owner_and_players() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let fixture_str =
             std::fs::read_to_string(battle_results_fixture_path()).expect("fixture must exist");
         let br: serde_json::Value = serde_json::from_str(&fixture_str).unwrap();
@@ -2539,7 +2688,12 @@ mod tests {
 
     #[test]
     fn fixture_winner_team_and_duration() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let fixture_str =
             std::fs::read_to_string(battle_results_fixture_path()).expect("fixture must exist");
         let br: serde_json::Value = serde_json::from_str(&fixture_str).unwrap();
@@ -2570,11 +2724,17 @@ mod tests {
     /// Missing replay file → Io error (read fails before any parsing).
     #[test]
     fn decode_error_missing_replay_file() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let cfg = DecodeConfig {
             game_dir: PathBuf::from("/nonexistent/game"),
             constants_path: constants_path(),
             ship_index_path: ship_index_min_path(),
+            achievement_index_path: achievement_index_min_path(),
         };
         let result = decode_battle_result(Path::new("/nonexistent.wowsreplay"), &cfg, &tables);
         assert!(matches!(result, Err(DecodeError::Io(_))));
@@ -2586,6 +2746,7 @@ mod tests {
         let result = Tables::load(
             Path::new("/nonexistent/constants.json"),
             &ship_index_min_path(),
+            &achievement_index_min_path(),
         );
         assert!(matches!(result, Err(DecodeError::Resources(_))));
     }
@@ -2593,7 +2754,12 @@ mod tests {
     /// JSONL with no BattleResults line → NoBattleResults.
     #[test]
     fn decode_no_battle_results_error() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let jsonl = r#"{"matchGroup":"pvp","clientVersionFromExe":"15,4,0,1"}"#.to_string();
         // Call parse_jsonl_and_build directly (no sidecar needed)
         let result = parse_jsonl_and_build(
@@ -2608,7 +2774,12 @@ mod tests {
     /// Malformed inner BattleResults JSON → Malformed error.
     #[test]
     fn decode_malformed_inner_json_error() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let jsonl =
             r#"{"packet_type":34,"clock":1.0,"payload":{"BattleResults":"{not valid json"}}"#
                 .to_string();
@@ -2624,7 +2795,12 @@ mod tests {
     /// JSONL with valid BattleResults but no players → empty players vec, no error.
     #[test]
     fn decode_empty_players_no_error() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let inner = serde_json::json!({
             "arenaUniqueID": 12345,
             "accountDBID": 999,
@@ -2644,7 +2820,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.3");
+        assert_eq!(data.meta.schema_version, "1.4");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────
@@ -2654,7 +2830,12 @@ mod tests {
     /// pushes a stale-version warning for versions not in KNOWN_GOOD.
     #[test]
     fn parse_jsonl_meta_fields_and_stale_version_warning() {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let inner = serde_json::json!({
             "arenaUniqueID": 99001,
             "accountDBID": 1111,
@@ -2718,7 +2899,12 @@ mod tests {
     }
 
     fn build_status_battle(players: serde_json::Value, winner: i64) -> BattleData {
-        let tables = Tables::load(&constants_path(), &ship_index_min_path()).unwrap();
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+        )
+        .unwrap();
         let inner = serde_json::json!({
             "arenaUniqueID": 7777, "accountDBID": 1,
             "commonList": [7777, 0, 0, winner, 0, 0, "regular", 0, 600, 0, "domination", 0, 7, "", {}, 0, 0, 0],
@@ -2815,20 +3001,22 @@ mod tests {
         assert_eq!(data.meta.decode_status, DecodeStatus::Unreliable);
     }
 
-    // ── 1.3 example-dump generator (for the engine agent) ─────────────────────
+    // ── 1.4 example-dump generator (for the engine agent) ─────────────────────
 
-    /// Generate a real `BattleData` (schema 1.3) JSON dump from a live replay, to
+    /// Generate a real `BattleData` (schema 1.4) JSON dump from a live replay, to
     /// hand the engine agent a concrete example of the wire format. Gated on
-    /// `TFD_DUMP_1_3=1`; decodes 15.5 replays (matching the installed client)
+    /// `TFD_DUMP_1_4=1`; decodes 15.5 replays (matching the installed client)
     /// newest-first and writes the first clean decode that has the owner economics
-    /// group populated.
+    /// group populated AND at least one player with a non-empty `achievements`
+    /// (so the new 1.4 field isn't just `[]` in the example), falling back to
+    /// the first clean owner-economics decode otherwise.
     ///
-    /// Run: `TFD_DUMP_1_3=1 cargo test -p bridge-core dump_1_3_example -- --ignored --nocapture`
+    /// Run: `TFD_DUMP_1_4=1 cargo test -p bridge-core dump_1_4_example -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn dump_1_3_example() {
-        if std::env::var("TFD_DUMP_1_3").as_deref() != Ok("1") {
-            eprintln!("Skipping dump: TFD_DUMP_1_3!=1");
+    fn dump_1_4_example() {
+        if std::env::var("TFD_DUMP_1_4").as_deref() != Ok("1") {
+            eprintln!("Skipping dump: TFD_DUMP_1_4!=1");
             return;
         }
 
@@ -2839,7 +3027,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap()
-            .join("private-sync/notes/result-data-1.3-example.json");
+            .join("private-sync/notes/result-data-1.4-example.json");
 
         let si_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -2847,11 +3035,18 @@ mod tests {
             .parent()
             .unwrap()
             .join("src-tauri/resources/ship_index.json");
-        let tables = Tables::load(&constants_path(), &si_path).expect("tables must load");
+        let ai_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("src-tauri/resources/achievement_index.json");
+        let tables = Tables::load(&constants_path(), &si_path, &ai_path).expect("tables must load");
         let cfg = DecodeConfig {
             game_dir,
             constants_path: constants_path(),
             ship_index_path: si_path,
+            achievement_index_path: ai_path,
         };
 
         // Collect 15.5 replays newest-first (by filename, which is timestamp-led).
@@ -2864,7 +3059,8 @@ mod tests {
         assert!(!replays.is_empty(), "no 15.5 replays in {archive_155:?}");
 
         // Prefer a richer example: an owner whose main-battery damage includes AP
-        // or SAP (a battleship/cruiser), so the he/ap/sap split is non-trivial.
+        // or SAP (a battleship/cruiser) AND at least one player with a non-empty
+        // achievements[] (so the 1.4 field shows real data, not just `[]`).
         // Fall back to the first clean owner-economics decode otherwise.
         let mut chosen: Option<(PathBuf, BattleData)> = None;
         let mut fallback: Option<(PathBuf, BattleData)> = None;
@@ -2883,7 +3079,8 @@ mod tests {
                 continue;
             }
             let s = &owner.damage_main_by_shell;
-            if s.ap > 0 || s.sap > 0 {
+            let has_achievement = data.players.iter().any(|p| !p.achievements.is_empty());
+            if (s.ap > 0 || s.sap > 0) && has_achievement {
                 chosen = Some((rp.clone(), data));
                 break;
             }
@@ -2973,12 +3170,20 @@ mod tests {
             .parent()
             .unwrap()
             .join("src-tauri/resources/ship_index.json");
-        let tables = Tables::load(&constants_path(), &si_path).expect("tables must load for e2e");
+        let ai_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("src-tauri/resources/achievement_index.json");
+        let tables =
+            Tables::load(&constants_path(), &si_path, &ai_path).expect("tables must load for e2e");
 
         let cfg = DecodeConfig {
             game_dir,
             constants_path: constants_path(),
             ship_index_path: si_path,
+            achievement_index_path: ai_path,
         };
 
         // Helper: locate source replay for a reference JSON entry.
