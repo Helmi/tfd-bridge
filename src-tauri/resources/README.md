@@ -23,15 +23,28 @@ game's `GameParams` via `wowsunpack game-params --full` (see
 class enrichment. Unknown ids (ships added in a newer patch) degrade gracefully to
 `null` tier/class.
 
+## achievement_index.json
+
+`achievement_id → WG name` (flat map, e.g. `"4281525168": "PCH012_Arsonist"`),
+distilled from the game's `GameParams` (`typeinfo.type == "Achievement"` entries)
+via `private-sync/notes/xp-analysis/build_achievement_index.py`. Resolves the
+per-player `achievements` public field (a list of `[id, count]` pairs) to a
+name for schema 1.4. `name` is the entry's own dict key / `name` field — WG's
+closest thing to a stable, human-decipherable achievement identifier (there is
+no short "index" code like ships have; the `PCH###` prefix alone is
+meaningless without the descriptive suffix). Unknown ids (achievements added in
+a newer patch) fall back to the stringified integer id — nothing is lost.
+
 ## Refreshing for a new game patch
 
 Re-copy `constants.json` from the upstream toolkit and regenerate
-`ship_index.json` from the current game build:
+`ship_index.json` / `achievement_index.json` from the current game build:
 
 ```sh
 cp <wows-toolkit>/embedded_resources/constants.json ./constants.json
-# regenerate ship_index.json from the current game build, then:
+# regenerate ship_index.json / achievement_index.json from the current game build, then:
 cp <new ship_index.json> ./ship_index.json
+cp <new achievement_index.json> ./achievement_index.json
 ```
 
 When bumping the `wows_replays` parser dependency for a new game version, update
