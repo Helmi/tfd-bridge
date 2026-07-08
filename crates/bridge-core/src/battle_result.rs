@@ -4,8 +4,11 @@
 //! (no external process): parse the replay, load version-specific entity specs
 //! from the game directory (cached per build), walk the packet stream to the
 //! final `BattleResults` packet, and resolve the positional player arrays using
-//! `constants.json` + `ship_index.json` + `achievement_index.json` into a
-//! structured [`BattleData`].
+//! `constants.json` + `ship_index.json` + `achievement_index.json` +
+//! `bonus_index.json` into a structured [`BattleData`]. `constants.json` MUST be
+//! current for the game build — a stale index map silently mis-reads the RIBBON_*
+//! block (see [[ribbon-fields-are-real-counts-stale-constants]]); refresh it from
+//! `landaire/wows-replay-data` per build.
 //!
 //! # Design notes
 //! - Pure Tauri-free module; all path resolution happens in the caller.
@@ -182,6 +185,35 @@ pub struct BattlePlayer {
     /// bundled index (an achievement added in a newer patch) falls back to
     /// the stringified integer id so nothing is silently dropped.
     pub achievements: Vec<Achievement>,
+
+    // ── Schema 1.5 additions (hit-quality sub-ribbons + owner detail) ────────
+    /// Main-battery hit-outcome sub-ribbons — real per-player counts read from
+    /// the `RIBBON_MAIN_CALIBER_*` result fields (present for ALL players,
+    /// zero-filled). These approximately sum to main-caliber hits (`hits`); WG
+    /// does not award an outcome sub-ribbon for every hit (HE / unclassified),
+    /// so the sum runs slightly under `hits`. `citadel` is a special penetration
+    /// counted separately. Correct decode depends on a current `constants.json`;
+    /// a stale index map reads these as zero (see [[ribbon-fields-are-real-counts-stale-constants]]).
+    pub main_hits_quality: MainHitsQuality,
+    /// Secondary-battery hits this player landed (`RIBBON_SECONDARY_CALIBER`) —
+    /// all players, zero-filled.
+    pub secondary_hits: i64,
+    /// Torpedo-protection (anti-torpedo bulge) hits absorbed *by* this player's
+    /// belt is NOT this — this is hits this player's shells/torps scored against
+    /// enemy bulges (`RIBBON_BULGE`). All players, zero-filled.
+    pub torpedo_protection_hits: i64,
+    /// OWNER-ONLY per-battle Ship Efficiency grade — `"expert"`, `"grade_1"`,
+    /// `"grade_2"` or `"grade_3"` (from the private `mastery_sign`; lower int =
+    /// higher grade). `None` on every non-owner row and when no grade was earned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ship_efficiency: Option<String>,
+    /// OWNER-ONLY list of the economic bonuses active this battle — consumable
+    /// boosters (`kind: "booster"`) and permanent ship/commander bonuses
+    /// (`kind: "permanent"`), resolved from the private `subtotal_economics`
+    /// modifier chains via `bonus_index.json`. `None` on non-owner rows;
+    /// `Some([])` on the owner row when none were active.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub economic_bonuses: Option<Vec<EconomicBonus>>,
 }
 
 /// Schema 1.2: per-player damage dealt, bucketed to mirror [`DamageInteraction`]'s
@@ -276,6 +308,41 @@ pub struct Achievement {
     /// a display label or asset slug; the engine owns that mapping.
     pub name: String,
     pub count: i64,
+}
+
+/// Schema 1.5: main-battery hit-outcome sub-ribbons — real per-player counts from
+/// the `RIBBON_MAIN_CALIBER_*` result fields. All fields always serialized
+/// (zero-filled). `citadel` is `RIBBON_CITADEL` (a special penetration, counted
+/// separately from `penetration`).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct MainHitsQuality {
+    pub penetration: i64,
+    pub over_penetration: i64,
+    pub no_penetration: i64,
+    pub ricochet: i64,
+    pub citadel: i64,
+}
+
+/// Schema 1.5: one economic bonus the OWNER had active this battle — a consumable
+/// booster or a permanent ship/commander bonus. Resolved from the private
+/// `subtotal_economics` modifier chains via the bundled `bonus_index.json`.
+/// The bridge emits raw GameParams facts; the engine maps `index` → icon asset
+/// and decides how to label the `modifiers`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct EconomicBonus {
+    /// GameParams index (e.g. `"PCEA021"`, `"PCEU010"`) — the engine's icon key.
+    pub index: String,
+    /// GameParams name (e.g. `"PCEA021_TotalXPboost_1"`).
+    pub name: String,
+    /// `"booster"` (consumable, `PCEA*`) or `"permanent"` (`PCEU*` ship/commander).
+    pub kind: String,
+    /// Rarity tier for consumable boosters (`"Common"`/`"Uncommon"`/`"Rare"`/
+    /// `"Epic"`); `None` for permanent bonuses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rarity: Option<String>,
+    /// Category → multiplier, e.g. `{"expFactor": 2.0}` (+100% ship XP) or
+    /// `{"creditsFactor": 1.2, "expFactor": 2.0, ...}` for a multi-bonus.
+    pub modifiers: std::collections::BTreeMap<String, f64>,
 }
 
 /// One attacker→victim damage record, resolved from a player's
@@ -554,6 +621,7 @@ pub struct DecodeConfig {
     pub constants_path: PathBuf,
     pub ship_index_path: PathBuf,
     pub achievement_index_path: PathBuf,
+    pub bonus_index_path: PathBuf,
 }
 
 pub struct Tables {
@@ -576,6 +644,18 @@ pub struct Tables {
     /// achievement_id (as string) → WG name, from `achievement_index.json`.
     /// Flat map — unlike `ships`, achievements carry no tier/class enrichment.
     pub achievements: HashMap<String, String>,
+    /// economic-bonus GameParams id → resolved bonus info, from `bonus_index.json`
+    /// (schema 1.5 owner economic bonuses).
+    pub bonus_index: HashMap<i64, BonusInfo>,
+}
+
+/// A resolved economic-bonus entry from `bonus_index.json` (schema 1.5).
+pub struct BonusInfo {
+    pub index: String,
+    pub name: String,
+    pub kind: String,
+    pub rarity: Option<String>,
+    pub modifiers: std::collections::BTreeMap<String, f64>,
 }
 
 pub struct ShipInfo {
@@ -589,6 +669,7 @@ impl Tables {
         constants_path: &Path,
         ship_index_path: &Path,
         achievement_index_path: &Path,
+        bonus_index_path: &Path,
     ) -> Result<Tables, DecodeError> {
         // ── constants.json ────────────────────────────────────────────────────
         let constants_bytes = fs::read(constants_path)
@@ -734,6 +815,56 @@ impl Tables {
             }
         }
 
+        // ── bonus_index.json (schema 1.5) ──────────────────────────────────────
+        // {id (as string) → {index, name, kind, rarity, modifiers}} — economic
+        // boosters + permanent ship/commander bonuses, resolved from GameParams.
+        let bonus_bytes = fs::read(bonus_index_path)
+            .map_err(|e| DecodeError::Resources(format!("cannot read bonus_index.json: {e}")))?;
+        let bonus_json: serde_json::Value = serde_json::from_slice(&bonus_bytes)
+            .map_err(|e| DecodeError::Resources(format!("bonus_index.json parse error: {e}")))?;
+        let mut bonus_index: HashMap<i64, BonusInfo> = HashMap::new();
+        if let Some(obj) = bonus_json.as_object() {
+            for (id_str, info) in obj {
+                let Ok(id) = id_str.parse::<i64>() else {
+                    continue;
+                };
+                let modifiers = info
+                    .get("modifiers")
+                    .and_then(|v| v.as_object())
+                    .map(|m| {
+                        m.iter()
+                            .filter_map(|(k, v)| v.as_f64().map(|f| (k.clone(), f)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                bonus_index.insert(
+                    id,
+                    BonusInfo {
+                        index: info
+                            .get("index")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        name: info
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        kind: info
+                            .get("kind")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        rarity: info
+                            .get("rarity")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        modifiers,
+                    },
+                );
+            }
+        }
+
         Ok(Tables {
             public_indices,
             common_results,
@@ -745,6 +876,7 @@ impl Tables {
             common_economics_indices,
             ships,
             achievements,
+            bonus_index,
         })
     }
 }
@@ -1342,7 +1474,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.4".into(),
+            schema_version: "1.5".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -1646,6 +1778,90 @@ pub(crate) fn resolve_player(
         })
         .unwrap_or_default();
 
+    // ── Schema 1.5: main-battery hit-outcome sub-ribbons (all players) ──────────
+    // Real per-player counts from the RIBBON_MAIN_CALIBER_* result fields. Correct
+    // only with a current constants.json (a stale index map reads these as 0 — the
+    // 0.7.1 mistake). Present for all players, zero-filled.
+    let main_hits_quality = MainHitsQuality {
+        penetration: get_i64("RIBBON_MAIN_CALIBER_PENETRATION").unwrap_or(0),
+        over_penetration: get_i64("RIBBON_MAIN_CALIBER_OVER_PENETRATION").unwrap_or(0),
+        no_penetration: get_i64("RIBBON_MAIN_CALIBER_NO_PENETRATION").unwrap_or(0),
+        ricochet: get_i64("RIBBON_MAIN_CALIBER_RICOCHET").unwrap_or(0),
+        citadel: get_i64("RIBBON_CITADEL").unwrap_or(0),
+    };
+    let secondary_hits = get_i64("RIBBON_SECONDARY_CALIBER").unwrap_or(0);
+    let torpedo_protection_hits = get_i64("RIBBON_BULGE").unwrap_or(0);
+
+    // ── Schema 1.5: owner-only per-battle Ship Efficiency grade ─────────────────
+    // Private `mastery_sign`: 0=Expert, 1=Grade I, 2=Grade II, 3=Grade III (lower
+    // int = higher grade); null / absent = none earned this battle.
+    let ship_efficiency: Option<String> = if is_self {
+        tables
+            .private_results
+            .iter()
+            .position(|name| name == "mastery_sign")
+            .and_then(|i| private_for_owner.and_then(|pd| pd.get(i)))
+            .and_then(to_i64_tolerant)
+            .and_then(|v| match v {
+                0 => Some("expert"),
+                1 => Some("grade_1"),
+                2 => Some("grade_2"),
+                3 => Some("grade_3"),
+                _ => None,
+            })
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+
+    // ── Schema 1.5: owner-only active economic bonuses ──────────────────────────
+    // The mounted boosters + permanent ship/commander bonuses appear as numeric
+    // GameParams ids in the `mod` lists of the private `subtotal_economics` chains
+    // (six {sse, base, mod} objects). Collect the distinct ids present in the
+    // bundled bonus_index; named base sources (FIRST_WIN, CLAN_SUPPLY_BONUS…) and
+    // unknown ids are skipped. Owner: `Some` (possibly empty); others: `None`.
+    let economic_bonuses: Option<Vec<EconomicBonus>> = if is_self {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut list: Vec<EconomicBonus> = Vec::new();
+        let chains = tables
+            .private_results
+            .iter()
+            .position(|name| name == "subtotal_economics")
+            .and_then(|i| private_for_owner.and_then(|pd| pd.get(i)))
+            .and_then(|v| v.as_array());
+        if let Some(chains) = chains {
+            for chain in chains {
+                let Some(mods) = chain.get("mod").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                for entry in mods {
+                    let Some(id) = entry
+                        .as_array()
+                        .and_then(|e| e.first())
+                        .and_then(to_i64_tolerant)
+                    else {
+                        continue;
+                    };
+                    if !seen.insert(id) {
+                        continue;
+                    }
+                    if let Some(info) = tables.bonus_index.get(&id) {
+                        list.push(EconomicBonus {
+                            index: info.index.clone(),
+                            name: info.name.clone(),
+                            kind: info.kind.clone(),
+                            rarity: info.rarity.clone(),
+                            modifiers: info.modifiers.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        Some(list)
+    } else {
+        None
+    };
+
     BattlePlayer {
         account_db_id,
         player_name,
@@ -1685,6 +1901,11 @@ pub(crate) fn resolve_player(
         damage_main_by_shell,
         economics,
         achievements,
+        main_hits_quality,
+        secondary_hits,
+        torpedo_protection_hits,
+        ship_efficiency,
+        economic_bonuses,
     }
 }
 
@@ -1766,6 +1987,23 @@ mod tests {
         fixture_dir().join("achievement_index_min.json")
     }
 
+    fn bonus_index_min_path() -> PathBuf {
+        fixture_dir().join("bonus_index_min.json")
+    }
+
+    /// The full staged bonus_index.json in src-tauri/resources/ (for e2e tests
+    /// that decode real replays).
+    fn bonus_index_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("src-tauri")
+            .join("resources")
+            .join("bonus_index.json")
+    }
+
     fn battle_results_fixture_path() -> PathBuf {
         fixture_dir().join("battle_results_min.json")
     }
@@ -1778,6 +2016,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .expect("tables must load");
         assert!(tables.public_indices.contains_key("account_db_id"));
@@ -1793,6 +2032,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         // COMMON_RESULTS must be an ordered array starting with "arena_id"
@@ -1807,6 +2047,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         // Should parse as a Vec (may be empty or populated)
@@ -1844,6 +2085,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap()
     }
@@ -1899,8 +2141,8 @@ mod tests {
         set_i(&mut arr, 418, 0); // agro_air
         set_i(&mut arr, 419, 0); // agro_dbomb
         set_i(&mut arr, 426, 75898); // damage → damage_dealt
-        // ribbons_torpedo_hits now reads hits_tpd (real torpedo hits), not the
-        // RIBBON_TORPEDO sentinel. ribbons_hits = the main-caliber hits sum (= hits).
+                                     // ribbons_torpedo_hits now reads hits_tpd (real torpedo hits), not the
+                                     // RIBBON_TORPEDO sentinel. ribbons_hits = the main-caliber hits sum (= hits).
         set_i(&mut arr, tables.public_indices["hits_tpd"], 4); // → ribbons_torpedo_hits
         set_i(&mut arr, 280, 2); // planes_killed_by_ship
         set_i(&mut arr, 281, 1); // planes_killed_by_plane → planes_killed = 3
@@ -1939,7 +2181,7 @@ mod tests {
         assert_eq!(player.frags, Some(2));
         assert_eq!(player.xp_contribution, None);
         assert_eq!(player.ribbons_torpedo_hits, Some(4)); // = hits_tpd
-        // planes_killed = planes_killed_by_ship(2) + planes_killed_by_plane(1)
+                                                          // planes_killed = planes_killed_by_ship(2) + planes_killed_by_plane(1)
         assert_eq!(player.planes_killed, Some(3));
         assert_eq!(player.ribbons_hits, Some(31)); // = main-caliber hits sum (= hits)
         assert_eq!(player.survived, Some(false));
@@ -1968,7 +2210,7 @@ mod tests {
         arr[idx("damage_ram")] = serde_json::json!(50); // ram
         arr[idx("damage_dbomb_direct")] = serde_json::json!(80); // depth_charge
         arr[idx("damage_sea_mine")] = serde_json::json!(9); // other
-        // detection (each = by_ship + by_plane)
+                                                            // detection (each = by_ship + by_plane)
         arr[idx("first_ships_spotted_by_ship")] = serde_json::json!(2);
         arr[idx("first_ships_spotted_by_plane")] = serde_json::json!(1);
         arr[idx("first_planes_spotted_by_ship")] = serde_json::json!(5);
@@ -2257,6 +2499,12 @@ mod tests {
                 name: "PCH012_Arsonist".into(),
                 count: 1,
             }],
+            main_hits_quality: Default::default(),
+            secondary_hits: 0,
+            torpedo_protection_hits: 0,
+            // Some(_) so the optional owner-only keys are locked by this guard.
+            ship_efficiency: Some("expert".into()),
+            economic_bonuses: Some(vec![]),
         };
         let v = serde_json::to_value(&p).unwrap();
         let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
@@ -2298,6 +2546,11 @@ mod tests {
             "damage_main_by_shell",
             "economics",
             "achievements",
+            "main_hits_quality",
+            "secondary_hits",
+            "torpedo_protection_hits",
+            "ship_efficiency",
+            "economic_bonuses",
         ];
         expected.sort();
         assert_eq!(
@@ -2392,6 +2645,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let inner = serde_json::json!({
@@ -2662,6 +2916,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let fixture_str =
@@ -2764,6 +3019,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let fixture_str =
@@ -2800,6 +3056,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let cfg = DecodeConfig {
@@ -2807,6 +3064,7 @@ mod tests {
             constants_path: constants_path(),
             ship_index_path: ship_index_min_path(),
             achievement_index_path: achievement_index_min_path(),
+            bonus_index_path: bonus_index_min_path(),
         };
         let result = decode_battle_result(Path::new("/nonexistent.wowsreplay"), &cfg, &tables);
         assert!(matches!(result, Err(DecodeError::Io(_))));
@@ -2819,6 +3077,7 @@ mod tests {
             Path::new("/nonexistent/constants.json"),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         );
         assert!(matches!(result, Err(DecodeError::Resources(_))));
     }
@@ -2830,6 +3089,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let jsonl = r#"{"matchGroup":"pvp","clientVersionFromExe":"15,4,0,1"}"#.to_string();
@@ -2850,6 +3110,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let jsonl =
@@ -2871,6 +3132,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let inner = serde_json::json!({
@@ -2892,7 +3154,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.4");
+        assert_eq!(data.meta.schema_version, "1.5");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────
@@ -2906,6 +3168,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let inner = serde_json::json!({
@@ -2960,9 +3223,9 @@ mod tests {
 
     // ── decode_status (extraction-failure detection) ──────────────────────────
 
-    /// A full-length player array (> max public index 502) with matching anchor.
+    /// A full-length player array (> max public index 537) with matching anchor.
     fn make_full_player(db_id: i64, team: i64, raw_exp: i64, exp: i64) -> Vec<serde_json::Value> {
-        let mut a = vec![serde_json::Value::Null; 505];
+        let mut a = vec![serde_json::Value::Null; 538];
         a[0] = serde_json::json!(db_id); // account_db_id (the anchor)
         a[6] = serde_json::json!(team); // team_id
         a[403] = serde_json::json!(raw_exp);
@@ -2975,6 +3238,7 @@ mod tests {
             &constants_path(),
             &ship_index_min_path(),
             &achievement_index_min_path(),
+            &bonus_index_min_path(),
         )
         .unwrap();
         let inner = serde_json::json!({
@@ -3083,12 +3347,12 @@ mod tests {
     /// (so the new 1.4 field isn't just `[]` in the example), falling back to
     /// the first clean owner-economics decode otherwise.
     ///
-    /// Run: `TFD_DUMP_1_4=1 cargo test -p bridge-core dump_1_4_example -- --ignored --nocapture`
+    /// Run: `TFD_DUMP_1_5=1 cargo test -p bridge-core dump_1_5_example -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn dump_1_4_example() {
-        if std::env::var("TFD_DUMP_1_4").as_deref() != Ok("1") {
-            eprintln!("Skipping dump: TFD_DUMP_1_4!=1");
+    fn dump_1_5_example() {
+        if std::env::var("TFD_DUMP_1_5").as_deref() != Ok("1") {
+            eprintln!("Skipping dump: TFD_DUMP_1_5!=1");
             return;
         }
 
@@ -3099,7 +3363,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap()
-            .join("private-sync/notes/result-data-1.4-example.json");
+            .join("private-sync/notes/result-data-1.5-example.json");
 
         let si_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -3113,12 +3377,14 @@ mod tests {
             .parent()
             .unwrap()
             .join("src-tauri/resources/achievement_index.json");
-        let tables = Tables::load(&constants_path(), &si_path, &ai_path).expect("tables must load");
+        let tables = Tables::load(&constants_path(), &si_path, &ai_path, &bonus_index_path())
+            .expect("tables must load");
         let cfg = DecodeConfig {
             game_dir,
             constants_path: constants_path(),
             ship_index_path: si_path,
             achievement_index_path: ai_path,
+            bonus_index_path: bonus_index_path(),
         };
 
         // Collect 15.5 replays newest-first (by filename, which is timestamp-led).
@@ -3150,9 +3416,17 @@ mod tests {
             if owner.economics.is_none() {
                 continue;
             }
+            // Prefer the richest 1.5 example: owner with a Ship Efficiency grade
+            // AND at least one active economic bonus AND some main-battery hits
+            // (so main_hits_quality shows real sub-ribbon counts).
             let s = &owner.damage_main_by_shell;
-            let has_achievement = data.players.iter().any(|p| !p.achievements.is_empty());
-            if (s.ap > 0 || s.sap > 0) && has_achievement {
+            let has_grade = owner.ship_efficiency.is_some();
+            let has_bonus = owner
+                .economic_bonuses
+                .as_ref()
+                .is_some_and(|b| !b.is_empty());
+            let has_hits = owner.hits.unwrap_or(0) > 0;
+            if has_grade && has_bonus && has_hits && (s.ap > 0 || s.sap > 0 || s.he > 0) {
                 chosen = Some((rp.clone(), data));
                 break;
             }
@@ -3168,15 +3442,17 @@ mod tests {
         std::fs::write(&out_path, &json).expect("write dump");
         eprintln!("DUMP wrote {} bytes to {}", json.len(), out_path.display());
         eprintln!("DUMP source replay: {}", rp.display());
+        let owner = data.players.iter().find(|p| p.is_self);
         eprintln!(
-            "DUMP schema={} players={} owner_econ={}",
+            "DUMP schema={} players={} owner_econ={} ship_efficiency={:?} economic_bonuses={} owner_main_quality={:?}",
             data.meta.schema_version,
             data.players.len(),
-            data.players
-                .iter()
-                .find(|p| p.is_self)
-                .map(|p| p.economics.is_some())
-                .unwrap_or(false)
+            owner.map(|p| p.economics.is_some()).unwrap_or(false),
+            owner.and_then(|p| p.ship_efficiency.clone()),
+            owner
+                .and_then(|p| p.economic_bonuses.as_ref().map(|b| b.len()))
+                .unwrap_or(0),
+            owner.map(|p| &p.main_hits_quality),
         );
     }
 
@@ -3248,14 +3524,15 @@ mod tests {
             .parent()
             .unwrap()
             .join("src-tauri/resources/achievement_index.json");
-        let tables =
-            Tables::load(&constants_path(), &si_path, &ai_path).expect("tables must load for e2e");
+        let tables = Tables::load(&constants_path(), &si_path, &ai_path, &bonus_index_path())
+            .expect("tables must load for e2e");
 
         let cfg = DecodeConfig {
             game_dir,
             constants_path: constants_path(),
             ship_index_path: si_path,
             achievement_index_path: ai_path,
+            bonus_index_path: bonus_index_path(),
         };
 
         // Helper: locate source replay for a reference JSON entry.
@@ -3572,8 +3849,7 @@ mod tests {
                 {
                     total_field_checks += 1;
                     let h = |k: &str| ref_player[k].as_f64().map(|v| v as i64).unwrap_or(0);
-                    let expected =
-                        Some(h("hits_main_ap") + h("hits_main_cs") + h("hits_main_he"));
+                    let expected = Some(h("hits_main_ap") + h("hits_main_cs") + h("hits_main_he"));
                     if got.ribbons_hits != expected {
                         failures.push(format!(
                             "{}: player {db_id_str} ribbons_hits (main-caliber hits): got {:?} expected {:?}",

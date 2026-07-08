@@ -256,6 +256,7 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
     let constants_path = resources_dir.join("constants.json");
     let ship_index_path = resources_dir.join("ship_index.json");
     let achievement_index_path = resources_dir.join("achievement_index.json");
+    let bonus_index_path = resources_dir.join("bonus_index.json");
 
     if !constants_path.exists() {
         log::warn!(
@@ -275,6 +276,13 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
         log::warn!(
             "achievement_index.json not found at {}; battle-result feature disabled",
             achievement_index_path.display()
+        );
+        return None;
+    }
+    if !bonus_index_path.exists() {
+        log::warn!(
+            "bonus_index.json not found at {}; battle-result feature disabled",
+            bonus_index_path.display()
         );
         return None;
     }
@@ -299,9 +307,15 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
         constants_path: constants_path.clone(),
         ship_index_path: ship_index_path.clone(),
         achievement_index_path: achievement_index_path.clone(),
+        bonus_index_path: bonus_index_path.clone(),
     };
 
-    match Tables::load(&constants_path, &ship_index_path, &achievement_index_path) {
+    match Tables::load(
+        &constants_path,
+        &ship_index_path,
+        &achievement_index_path,
+        &bonus_index_path,
+    ) {
         Ok(tables) => {
             log::info!("Tables loaded; battle-result feature active");
             Some(Arc::new(DecodeContext::new(cfg, tables)))

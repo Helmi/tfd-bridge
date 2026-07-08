@@ -11,6 +11,18 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.10.0] — 2026-07-08
+
+### Added
+- Main-battery hit quality in the post-battle data (decode schema 1.5): per-player penetration, over-penetration, non-penetration, ricochet and citadel counts, plus secondary-battery hits and torpedo-protection hits — for all players.
+- Per-battle Ship Efficiency grade for the recording player (Expert / Grade I / II / III), so the Battle Monitor can show the efficiency badge.
+- The recording player's active economic bonuses that battle — consumable boosters and permanent ship/commander bonuses — each with its category and multiplier, so the Battle Monitor can show which were in use.
+
+### Changed
+- Refreshed the bundled game-data index (`constants.json`) to the current WoWS build. The old index had drifted, which made the main-battery hit-quality ribbon fields read as zero; the refresh restores them and is why they can be exposed now.
+
+---
+
 ## [0.9.0] — 2026-07-08
 
 ### Added
@@ -263,7 +275,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Helmi/tfd-bridge/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Helmi/tfd-bridge/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Helmi/tfd-bridge/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/Helmi/tfd-bridge/compare/v0.7.1...v0.7.2

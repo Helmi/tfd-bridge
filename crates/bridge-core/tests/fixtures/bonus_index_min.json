@@ -1,0 +1,16 @@
+{
+ "999001": {
+  "index": "PCEA021",
+  "name": "PCEA021_TotalXPboost_1",
+  "kind": "booster",
+  "rarity": "Common",
+  "modifiers": { "expFactor": 2.0 }
+ },
+ "999002": {
+  "index": "PCEU010",
+  "name": "PCEU010_Multi_std10",
+  "kind": "permanent",
+  "rarity": null,
+  "modifiers": { "creditsFactor": 1.5, "expFactor": 2.0, "freeExpFactor": 2.0, "crewExpFactor": 2.0 }
+ }
+}

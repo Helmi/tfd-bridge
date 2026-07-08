@@ -1,0 +1,565 @@
+{
+ "4247121840": {
+  "index": "PCEU045",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.25,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 5.0
+  },
+  "name": "PCEU045_Multi_Suzuya_Admirable",
+  "rarity": "Uncommon"
+ },
+ "4248170416": {
+  "index": "PCEU044",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.15,
+   "crewExpFactor": 2.15,
+   "expFactor": 2.15,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU044_Multi_Gneisenau_Vulkans",
+  "rarity": null
+ },
+ "4248825776": {
+  "index": "PCEA044",
+  "kind": "booster",
+  "modifiers": {
+   "freeExpFactor": 73.0
+  },
+  "name": "PCEA044_FreeXPboost_4",
+  "rarity": "Epic"
+ },
+ "4249218992": {
+  "index": "PCEU043",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.15,
+   "crewExpFactor": 2.15,
+   "expFactor": 2.15,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU043_Multi_Starfleet_Enterprise",
+  "rarity": null
+ },
+ "4249874352": {
+  "index": "PCEA043",
+  "kind": "booster",
+  "modifiers": {
+   "freeExpFactor": 25.0
+  },
+  "name": "PCEA043_FreeXPboost_3",
+  "rarity": "Rare"
+ },
+ "4250267568": {
+  "index": "PCEU042",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.15,
+   "crewExpFactor": 2.15,
+   "expFactor": 2.15,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU042_Multi_Fiji_Klingons",
+  "rarity": null
+ },
+ "4250922928": {
+  "index": "PCEA042",
+  "kind": "booster",
+  "modifiers": {
+   "freeExpFactor": 7.0
+  },
+  "name": "PCEA042_FreeXPboost_2",
+  "rarity": "Uncommon"
+ },
+ "4251316144": {
+  "index": "PCEU041",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.15,
+   "crewExpFactor": 2.15,
+   "expFactor": 2.15,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU041_Multi_Akatsuki_Romulans",
+  "rarity": null
+ },
+ "4251971504": {
+  "index": "PCEA041",
+  "kind": "booster",
+  "modifiers": {
+   "freeExpFactor": 4.0
+  },
+  "name": "PCEA041_FreeXPboost_1",
+  "rarity": "Common"
+ },
+ "4252364720": {
+  "index": "PCEU040",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 2.0,
+   "expFactor": 1.5,
+   "freeExpFactor": 2.5
+  },
+  "name": "PCEU040_Multi_Harekaze_crew",
+  "rarity": null
+ },
+ "4253413296": {
+  "index": "PCEU039",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.45,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU039_Multi_Kobayashi_7",
+  "rarity": null
+ },
+ "4254461872": {
+  "index": "PCEU038",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.45,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU038_Multi_Kobayashi_8",
+  "rarity": null
+ },
+ "4255510448": {
+  "index": "PCEU037",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.4,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU037_Multi_Missouri",
+  "rarity": null
+ },
+ "4256559024": {
+  "index": "PCEU036",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.1,
+   "crewExpFactor": 2.5,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU036_Multi_Musashi",
+  "rarity": null
+ },
+ "4257607600": {
+  "index": "PCEU035",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 2.0,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU035_Multi_Harekaze_2",
+  "rarity": null
+ },
+ "4258656176": {
+  "index": "PCEU034",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 2.5
+  },
+  "name": "PCEU034_Multi_Graf_Spee",
+  "rarity": null
+ },
+ "4259311536": {
+  "index": "PCEA034",
+  "kind": "booster",
+  "modifiers": {
+   "crewExpFactor": 17.0
+  },
+  "name": "PCEA034_CrewXPboost_4",
+  "rarity": "Epic"
+ },
+ "4259704752": {
+  "index": "PCEU033",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 2.5
+  },
+  "name": "PCEU033_Multi_Harekaze",
+  "rarity": null
+ },
+ "4260360112": {
+  "index": "PCEA033",
+  "kind": "booster",
+  "modifiers": {
+   "crewExpFactor": 9.0
+  },
+  "name": "PCEA033_CrewXPboost_3",
+  "rarity": "Rare"
+ },
+ "4260753328": {
+  "index": "PCEU032",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 3.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 3.0
+  },
+  "name": "PCEU032_Multi_Flint",
+  "rarity": null
+ },
+ "4261408688": {
+  "index": "PCEA032",
+  "kind": "booster",
+  "modifiers": {
+   "crewExpFactor": 3.0
+  },
+  "name": "PCEA032_CrewXPboost_2",
+  "rarity": "Uncommon"
+ },
+ "4261801904": {
+  "index": "PCEU031",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 2.0,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU031_Multi_Scharnhorst",
+  "rarity": null
+ },
+ "4262457264": {
+  "index": "PCEA031",
+  "kind": "booster",
+  "modifiers": {
+   "crewExpFactor": 2.0
+  },
+  "name": "PCEA031_CrewXPboost_1",
+  "rarity": "Common"
+ },
+ "4262850480": {
+  "index": "PCEU030",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 2.0,
+   "expFactor": 1.5,
+   "freeExpFactor": 2.5
+  },
+  "name": "PCEU030_Multi_Tirpiz_2",
+  "rarity": null
+ },
+ "4263899056": {
+  "index": "PCEU029",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 2.0,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU029_Multi_Tirpiz",
+  "rarity": null
+ },
+ "4264947632": {
+  "index": "PCEU028",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.4,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU028_Multi_Warspite",
+  "rarity": null
+ },
+ "4265996208": {
+  "index": "PCEU027",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.25,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU027_Multi_Albany_Military",
+  "rarity": null
+ },
+ "4267044784": {
+  "index": "PCEU026",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 2.0,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU026_Multi_Prinz_Eugen",
+  "rarity": null
+ },
+ "4268093360": {
+  "index": "PCEU025",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.15,
+   "crewExpFactor": 2.0,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU025_Multi_Graf_Zeppelin",
+  "rarity": null
+ },
+ "4269141936": {
+  "index": "PCEU024",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.25,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 5.0
+  },
+  "name": "PCEU024_Multi_Alabama_Octopus",
+  "rarity": null
+ },
+ "4269797296": {
+  "index": "PCEA024",
+  "kind": "booster",
+  "modifiers": {
+   "expFactor": 17.0
+  },
+  "name": "PCEA024_TotalXPboost_4",
+  "rarity": "Epic"
+ },
+ "4270190512": {
+  "index": "PCEU023",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.15,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 5.0
+  },
+  "name": "PCEU023_Multi_Alabama",
+  "rarity": null
+ },
+ "4270845872": {
+  "index": "PCEA023",
+  "kind": "booster",
+  "modifiers": {
+   "expFactor": 9.0
+  },
+  "name": "PCEA023_TotalXPboost_3",
+  "rarity": "Rare"
+ },
+ "4271239088": {
+  "index": "PCEU022",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.25,
+   "crewExpFactor": 1.5,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU022_Multi_Kamikaze_R",
+  "rarity": null
+ },
+ "4271894448": {
+  "index": "PCEA022",
+  "kind": "booster",
+  "modifiers": {
+   "expFactor": 3.0
+  },
+  "name": "PCEA022_TotalXPboost_2",
+  "rarity": "Uncommon"
+ },
+ "4272287664": {
+  "index": "PCEU021",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.1,
+   "crewExpFactor": 4.0,
+   "expFactor": 2.5,
+   "freeExpFactor": 4.0
+  },
+  "name": "PCEU021_Multi_Black",
+  "rarity": null
+ },
+ "4272943024": {
+  "index": "PCEA021",
+  "kind": "booster",
+  "modifiers": {
+   "expFactor": 2.0
+  },
+  "name": "PCEA021_TotalXPboost_1",
+  "rarity": "Common"
+ },
+ "4280283056": {
+  "index": "PCEA014",
+  "kind": "booster",
+  "modifiers": {
+   "creditsFactor": 4.2
+  },
+  "name": "PCEA014_CRboost_4",
+  "rarity": "Epic"
+ },
+ "4281331632": {
+  "index": "PCEA013",
+  "kind": "booster",
+  "modifiers": {
+   "creditsFactor": 2.6
+  },
+  "name": "PCEA013_CRboost_3",
+  "rarity": "Rare"
+ },
+ "4282380208": {
+  "index": "PCEA012",
+  "kind": "booster",
+  "modifiers": {
+   "creditsFactor": 1.4
+  },
+  "name": "PCEA012_CRboost_2",
+  "rarity": "Uncommon"
+ },
+ "4282773424": {
+  "index": "PCEU011",
+  "kind": "permanent",
+  "modifiers": {
+   "crewExpFactor": 3.0,
+   "expFactor": 3.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU011_Multi_std11",
+  "rarity": null
+ },
+ "4283428784": {
+  "index": "PCEA011",
+  "kind": "booster",
+  "modifiers": {
+   "creditsFactor": 1.2
+  },
+  "name": "PCEA011_CRboost_1",
+  "rarity": "Common"
+ },
+ "4283822000": {
+  "index": "PCEU010",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.5,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU010_Multi_std10",
+  "rarity": null
+ },
+ "4284870576": {
+  "index": "PCEU009",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.1,
+   "crewExpFactor": 2.0,
+   "expFactor": 2.0,
+   "freeExpFactor": 2.0
+  },
+  "name": "PCEU009_Multi_std9",
+  "rarity": null
+ },
+ "4285919152": {
+  "index": "PCEU008",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU008_Multi_std8",
+  "rarity": null
+ },
+ "4286967728": {
+  "index": "PCEU007",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU007_Multi_std7",
+  "rarity": null
+ },
+ "4288016304": {
+  "index": "PCEU006",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU006_Multi_std6",
+  "rarity": null
+ },
+ "4289064880": {
+  "index": "PCEU005",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU005_Multi_std5",
+  "rarity": null
+ },
+ "4290113456": {
+  "index": "PCEU004",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU004_Multi_std4",
+  "rarity": null
+ },
+ "4291162032": {
+  "index": "PCEU003",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU003_Multi_std3",
+  "rarity": null
+ },
+ "4292210608": {
+  "index": "PCEU002",
+  "kind": "permanent",
+  "modifiers": {
+   "creditsFactor": 1.05,
+   "crewExpFactor": 1.5,
+   "expFactor": 1.5,
+   "freeExpFactor": 1.5
+  },
+  "name": "PCEU002_Multi_std2",
+  "rarity": null
+ }
+}

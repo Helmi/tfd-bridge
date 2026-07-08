@@ -1926,6 +1926,7 @@ mod tests {
             common_economics_indices: std::collections::HashMap::new(),
             ships: std::collections::HashMap::new(),
             achievements: std::collections::HashMap::new(),
+            bonus_index: std::collections::HashMap::new(),
         }
     }
 
@@ -1937,6 +1938,7 @@ mod tests {
             constants_path: PathBuf::from("/stub/constants.json"),
             ship_index_path: PathBuf::from("/stub/ship_index.json"),
             achievement_index_path: PathBuf::from("/stub/achievement_index.json"),
+            bonus_index_path: PathBuf::from("/stub/bonus_index.json"),
         }
     }
 
@@ -1996,6 +1998,11 @@ mod tests {
                 damage_main_by_shell: Default::default(),
                 economics: None,
                 achievements: Vec::new(),
+                main_hits_quality: Default::default(),
+                secondary_hits: 0,
+                torpedo_protection_hits: 0,
+                ship_efficiency: None,
+                economic_bonuses: None,
             }],
         }
     }
