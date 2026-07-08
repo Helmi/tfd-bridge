@@ -322,32 +322,25 @@ const DMG_SECONDARY: &[&str] = &[
     "damage_atba_he_manual",
 ];
 const DMG_TORPEDO: &[&str] = &["damage_tpd_normal", "damage_tpd_deep", "damage_tpd_alter"];
+// BASE fields only. WG republishes each aircraft weapon's damage on a
+// delivery-mode breakdown (_avia = carrier squadron, _alt, _airsupport =
+// airstrike consumable) alongside the base field — base == whichever mode
+// fired (or avia+alt when split), never additive. Summing base + variants
+// double-counts the same hits (proven against 45,574 corpus rows: bucket
+// sum only reconciles to WG's authoritative `damage` field when the
+// variants are excluded).
 const DMG_AIRCRAFT: &[&str] = &[
     "damage_bomb",
-    "damage_bomb_avia",
-    "damage_bomb_alt",
-    "damage_bomb_airsupport",
     "damage_tbomb",
-    "damage_tbomb_avia",
-    "damage_tbomb_alt",
-    "damage_tbomb_airsupport",
     "damage_rocket",
-    "damage_rocket_avia",
-    "damage_rocket_alt",
-    "damage_rocket_airsupport",
     "damage_skip",
-    "damage_skip_avia",
-    "damage_skip_alt",
-    "damage_skip_airsupport",
 ];
 const DMG_FIRE: &[&str] = &["damage_fire"];
 const DMG_FLOOD: &[&str] = &["damage_flood"];
 const DMG_RAM: &[&str] = &["damage_ram"];
-const DMG_DEPTH_CHARGE: &[&str] = &[
-    "damage_dbomb_direct",
-    "damage_dbomb_splash",
-    "damage_dbomb_airsupport",
-];
+// damage_dbomb_airsupport dropped: it duplicates damage_adbomb (in DMG_OTHER
+// below), the same airstrike depth-charge hits published twice by WG.
+const DMG_DEPTH_CHARGE: &[&str] = &["damage_dbomb_direct", "damage_dbomb_splash"];
 const DMG_OTHER: &[&str] = &[
     "damage_sea_mine",
     "damage_wave",
@@ -357,7 +350,7 @@ const DMG_OTHER: &[&str] = &[
     "damage_phaser_laser",
     "damage_event_1",
     "damage_event_2",
-    "damage_adbomb",
+    "damage_adbomb", // airstrike depth-charge damage; counted once here, not in DMG_DEPTH_CHARGE
     "damage_missile",
 ];
 
@@ -1906,6 +1899,84 @@ mod tests {
             ),
             (9, 2, 1, 3, 4)
         );
+    }
+
+    /// Regression: WG republishes each aircraft weapon's damage on a
+    /// delivery-mode variant (_avia/_alt/_airsupport) alongside the base
+    /// field, and republishes airstrike depth-charge damage as BOTH
+    /// damage_adbomb (DMG_OTHER) and damage_dbomb_airsupport (would-be
+    /// DMG_DEPTH_CHARGE). Summing base + variant double-counts the same
+    /// hits. The aircraft/depth_charge buckets must ignore the variants.
+    #[test]
+    fn resolve_player_aircraft_and_depth_charge_ignore_duplicate_variants() {
+        let tables = make_tables_from_fixture();
+        let max = *tables.public_indices.values().max().unwrap();
+        let mut arr = make_arr(max + 1);
+        let idx = |name: &str| tables.public_indices[name];
+
+        // Aircraft: base field + its _avia breakdown publish the SAME hits.
+        arr[idx("damage_bomb")] = serde_json::json!(5000);
+        arr[idx("damage_bomb_avia")] = serde_json::json!(5000);
+        // Depth charges: direct/splash are real (non-duplicated) hits...
+        arr[idx("damage_dbomb_direct")] = serde_json::json!(1000);
+        // ...but the airsupport variant duplicates damage_adbomb below.
+        arr[idx("damage_dbomb_airsupport")] = serde_json::json!(800);
+        arr[idx("damage_adbomb")] = serde_json::json!(800);
+
+        let p = resolve_player(&arr, 42, &tables, 42, Some(1), None);
+
+        let d = &p.damage_dealt_by_type;
+        assert_eq!(d.aircraft, 5000, "base only — _avia duplicate excluded");
+        assert_eq!(
+            d.depth_charge, 1000,
+            "direct+splash only — airsupport dup excluded"
+        );
+        assert_eq!(
+            d.other, 800,
+            "damage_adbomb counted once, here in DMG_OTHER"
+        );
+    }
+
+    /// Same double-publish scenario, but against the per-victim interaction
+    /// matrix (`build_interactions`, schema 1.1+) — it shares the DMG_*
+    /// bucket lists with the aggregate above, so must reconcile the same way.
+    #[test]
+    fn resolve_player_interaction_matrix_ignores_duplicate_variants() {
+        let tables = make_tables_from_fixture();
+        let ii = tables.interaction_index.clone();
+        let n = tables.interaction_details.len().max(1);
+        let set = |arr: &mut Vec<serde_json::Value>, name: &str, v: serde_json::Value| {
+            if let Some(&i) = ii.get(name) {
+                arr[i] = v;
+            }
+        };
+
+        let mut va = vec![serde_json::Value::Null; n];
+        set(&mut va, "damage_bomb", serde_json::json!(5000));
+        set(&mut va, "damage_bomb_avia", serde_json::json!(5000));
+        set(&mut va, "damage_dbomb_direct", serde_json::json!(1000));
+        set(&mut va, "damage_dbomb_airsupport", serde_json::json!(800));
+        set(&mut va, "damage_adbomb", serde_json::json!(800));
+
+        let mut arr = make_arr(540);
+        let interactions_idx = tables.public_indices["interactions"];
+        arr[interactions_idx] = serde_json::json!({ "222": va });
+
+        let player = resolve_player(&arr, 111, &tables, 111, Some(1), None);
+
+        assert_eq!(player.interactions.len(), 1);
+        let a = &player.interactions[0];
+        assert_eq!(
+            a.damage_aircraft, 5000,
+            "base only — _avia duplicate excluded"
+        );
+        assert_eq!(
+            a.damage_depth_charge, 1000,
+            "direct+splash only — airsupport dup excluded"
+        );
+        assert_eq!(a.damage_other, 800, "damage_adbomb counted once");
+        // total = aircraft(5000) + depth_charge(1000) + other(800), not 11600
+        assert_eq!(a.damage, 6800);
     }
 
     /// Schema 1.2: damage_to_buildings sums the `building_damage_*` fields across
