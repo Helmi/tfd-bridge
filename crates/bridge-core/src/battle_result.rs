@@ -214,6 +214,21 @@ pub struct BattlePlayer {
     /// `Some([])` on the owner row when none were active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub economic_bonuses: Option<Vec<EconomicBonus>>,
+
+    // ── Schema 1.6 addition (full ribbon set) ───────────────────────────────
+    /// Every ribbon this player earned this battle, keyed by the game's own
+    /// `RIBBON_*` constant (e.g. `{"RIBBON_BOMB": 42, "RIBBON_ASSIST": 5,
+    /// "RIBBON_BASE_CAPTURE": 2}`). Present for ALL players; only non-zero
+    /// ribbons are included, so a missing key means zero. This is the raw,
+    /// complete ribbon set — the curated fields above (`main_hits_quality`,
+    /// `secondary_hits`, `torpedo_protection_hits`, `planes_killed`, `frags`,
+    /// `ribbons_torpedo_hits`) are convenience derivations of a subset. The
+    /// engine maps each `RIBBON_*` key to its ribbon icon and renders anything
+    /// present (bomb hits, assists, captures, crits, fires, floods, rocket
+    /// hits, depth-charge hits, …). Correct decode depends on a current
+    /// `constants.json`; a stale index map yields wrong/zero counts (see
+    /// [[bridge-decode-patch-resilience]] / [[ribbon-fields-are-real-counts-stale-constants]]).
+    pub ribbons: std::collections::BTreeMap<String, i64>,
 }
 
 /// Schema 1.2: per-player damage dealt, bucketed to mirror [`DamageInteraction`]'s
@@ -1474,7 +1489,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.5".into(),
+            schema_version: "1.6".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -1862,6 +1877,21 @@ pub(crate) fn resolve_player(
         None
     };
 
+    // ── Schema 1.6: full ribbon set (all players) ───────────────────────────────
+    // Every RIBBON_* field the game records, emitted raw under its WG constant
+    // name. Only non-zero counts are included (a missing key means zero). All of
+    // these are validated real per-player counts on a current constants.json (a
+    // stale index map yields wrong/zero counts — the 0.7.1 mistake). BTreeMap for
+    // deterministic (name-sorted) output.
+    let ribbons: std::collections::BTreeMap<String, i64> = pub_idx
+        .iter()
+        .filter(|(name, _)| name.starts_with("RIBBON_"))
+        .filter_map(|(name, &i)| {
+            let v = arr.get(i).and_then(to_i64_tolerant)?;
+            (v != 0).then(|| (name.clone(), v))
+        })
+        .collect();
+
     BattlePlayer {
         account_db_id,
         player_name,
@@ -1906,6 +1936,7 @@ pub(crate) fn resolve_player(
         torpedo_protection_hits,
         ship_efficiency,
         economic_bonuses,
+        ribbons,
     }
 }
 
@@ -2505,6 +2536,7 @@ mod tests {
             // Some(_) so the optional owner-only keys are locked by this guard.
             ship_efficiency: Some("expert".into()),
             economic_bonuses: Some(vec![]),
+            ribbons: std::collections::BTreeMap::from([("RIBBON_BOMB".into(), 42)]),
         };
         let v = serde_json::to_value(&p).unwrap();
         let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
@@ -2551,6 +2583,7 @@ mod tests {
             "torpedo_protection_hits",
             "ship_efficiency",
             "economic_bonuses",
+            "ribbons",
         ];
         expected.sort();
         assert_eq!(
@@ -3154,7 +3187,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.5");
+        assert_eq!(data.meta.schema_version, "1.6");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────
@@ -3337,22 +3370,22 @@ mod tests {
         assert_eq!(data.meta.decode_status, DecodeStatus::Unreliable);
     }
 
-    // ── 1.4 example-dump generator (for the engine agent) ─────────────────────
+    // ── 1.6 example-dump generator (for the engine agent) ─────────────────────
 
-    /// Generate a real `BattleData` (schema 1.4) JSON dump from a live replay, to
+    /// Generate a real `BattleData` (schema 1.6) JSON dump from a live replay, to
     /// hand the engine agent a concrete example of the wire format. Gated on
-    /// `TFD_DUMP_1_4=1`; decodes 15.5 replays (matching the installed client)
+    /// `TFD_DUMP_1_6=1`; decodes 15.5 replays (matching the installed client)
     /// newest-first and writes the first clean decode that has the owner economics
     /// group populated AND at least one player with a non-empty `achievements`
-    /// (so the new 1.4 field isn't just `[]` in the example), falling back to
+    /// (so the new fields aren't just `[]`/`{}` in the example), falling back to
     /// the first clean owner-economics decode otherwise.
     ///
-    /// Run: `TFD_DUMP_1_5=1 cargo test -p bridge-core dump_1_5_example -- --ignored --nocapture`
+    /// Run: `TFD_DUMP_1_6=1 cargo test -p bridge-core dump_1_6_example -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn dump_1_5_example() {
-        if std::env::var("TFD_DUMP_1_5").as_deref() != Ok("1") {
-            eprintln!("Skipping dump: TFD_DUMP_1_5!=1");
+    fn dump_1_6_example() {
+        if std::env::var("TFD_DUMP_1_6").as_deref() != Ok("1") {
+            eprintln!("Skipping dump: TFD_DUMP_1_6!=1");
             return;
         }
 
@@ -3363,7 +3396,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap()
-            .join("private-sync/notes/result-data-1.5-example.json");
+            .join("private-sync/notes/result-data-1.6-example.json");
 
         let si_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()

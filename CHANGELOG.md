@@ -11,6 +11,13 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.10.1] — 2026-07-09
+
+### Fixed
+- Post-battle data now includes the full set of ribbons each player earned (decode schema 1.6): a per-player `ribbons` map keyed by the game's own ribbon names. Previously only a curated subset was exposed, so ribbons like bomb hits, assists, captures, crits, fires, floods, rocket hits and depth-charge hits were missing from the API — which is why the Battle Monitor's Discord share cards could not show them.
+
+---
+
 ## [0.10.0] — 2026-07-08
 
 ### Added
@@ -275,7 +282,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/Helmi/tfd-bridge/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/Helmi/tfd-bridge/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Helmi/tfd-bridge/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Helmi/tfd-bridge/compare/v0.7.2...v0.8.0

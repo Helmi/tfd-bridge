@@ -2003,6 +2003,7 @@ mod tests {
                 torpedo_protection_hits: 0,
                 ship_efficiency: None,
                 economic_bonuses: None,
+                ribbons: std::collections::BTreeMap::new(),
             }],
         }
     }
