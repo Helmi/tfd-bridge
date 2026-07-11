@@ -1927,6 +1927,7 @@ mod tests {
             ships: std::collections::HashMap::new(),
             achievements: std::collections::HashMap::new(),
             bonus_index: std::collections::HashMap::new(),
+            skill_costs: std::collections::HashMap::new(),
         }
     }
 
@@ -2004,6 +2005,8 @@ mod tests {
                 ship_efficiency: None,
                 economic_bonuses: None,
                 ribbons: std::collections::BTreeMap::new(),
+                victory_points: std::collections::BTreeMap::new(),
+                build: None,
             }],
         }
     }

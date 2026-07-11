@@ -11,6 +11,14 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.11.0] — 2026-07-11
+
+### Added
+- Objective points in the post-battle data (decode schema 1.7): a per-player `victory_points` map with WG's full objective-points breakdown — cap captures, cap holds, cap defense, blocking, kills by ship class, victory bonuses, arms-race pickups, convoy escort — including the negative entry for losing your ship. All players, raw game field names.
+- Ship and commander loadouts (decode schema 1.7): a per-player `build` object read from the battle-start packets — mounted modules, upgrades, consumables, signals/camouflage, ensigns, economic boosters, the commander's identity, the commander's learned skills for the ship's class, and the commander points spent. Present for every player in the battle, enemies included (a replay records all loadouts). All values are raw game ids; the web app translates them to names. Commander skills can be missing for an enemy ship the recording client never got close to — everything else is always populated.
+
+---
+
 ## [0.10.1] — 2026-07-09
 
 ### Fixed
@@ -282,7 +290,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Helmi/tfd-bridge/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/Helmi/tfd-bridge/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/Helmi/tfd-bridge/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Helmi/tfd-bridge/compare/v0.8.0...v0.9.0

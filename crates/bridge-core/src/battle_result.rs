@@ -229,6 +229,27 @@ pub struct BattlePlayer {
     /// `constants.json`; a stale index map yields wrong/zero counts (see
     /// [[bridge-decode-patch-resilience]] / [[ribbon-fields-are-real-counts-stale-constants]]).
     pub ribbons: std::collections::BTreeMap<String, i64>,
+
+    // ── Schema 1.7 additions (objective points + loadouts) ──────────────────
+    /// WG's per-player "objective points" breakdown — every `victory_points_*`
+    /// result field with a non-zero value, keyed by its WG constant name
+    /// (e.g. `{"victory_points_cp_neutral_capture": 7200.0,
+    /// "victory_points_kill_battleship": 6500.0,
+    /// "victory_points_own_ship_kill": -2500.0}`). Sources cover cap
+    /// capture/hold/block/drop, kills by victim class, victory bonuses,
+    /// arms-race pickups and convoy pull/protection. Values are signed —
+    /// `victory_points_own_ship_kill` is the (negative) penalty for dying.
+    /// Present for ALL players; only non-zero entries are included, so a
+    /// missing key means zero. Same raw-names contract as `ribbons`: the
+    /// engine owns display naming.
+    pub victory_points: std::collections::BTreeMap<String, f64>,
+    /// The player's ship + commander loadout ([`PlayerBuild`]), read from the
+    /// battle-START packet stream (arena state + vehicle-entity packets), not
+    /// the results blob. Present for ALL players — a replay records every
+    /// participant's loadout, enemies included. `None` when the build pass
+    /// could not run (results decode is unaffected).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build: Option<PlayerBuild>,
 }
 
 /// Schema 1.2: per-player damage dealt, bucketed to mirror [`DamageInteraction`]'s
@@ -358,6 +379,50 @@ pub struct EconomicBonus {
     /// Category → multiplier, e.g. `{"expFactor": 2.0}` (+100% ship XP) or
     /// `{"creditsFactor": 1.2, "expFactor": 2.0, ...}` for a multi-bonus.
     pub modifiers: std::collections::BTreeMap<String, f64>,
+}
+
+/// Schema 1.7: a player's ship + commander loadout from the battle-start
+/// packets. Every value is a raw GameParams id — the bridge does NO name
+/// resolution here; the engine owns id → name/icon translation (same contract
+/// as `ribbons`). The ship config comes from the arena state (present for
+/// every participant); the commander's learned skills travel on the vehicle
+/// entity, which only spawns client-side once the ship enters the recording
+/// client's awareness — so `commander_skills` can be empty for an enemy that
+/// was never observed, while the rest of the build is still populated.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+pub struct PlayerBuild {
+    /// The ship's own GameParams id (authoritative, from the config blob).
+    pub ship_id: i64,
+    /// Mounted module GameParams ids (the ship's unit slots — hull,
+    /// artillery, torpedoes, fire control, engine, …) in blob order; empty
+    /// slots omitted.
+    pub modules: Vec<i64>,
+    /// Equipped upgrade ("modernization") GameParams ids, slot order.
+    pub upgrades: Vec<i64>,
+    /// Mounted consumable GameParams ids.
+    pub consumables: Vec<i64>,
+    /// Exterior-slot GameParams ids — signal flags AND camouflage in one list,
+    /// as the game stores them; the engine splits by param type.
+    pub exteriors: Vec<i64>,
+    /// Mounted ensign GameParams ids.
+    pub ensigns: Vec<i64>,
+    /// Active economic-booster GameParams ids (resolvable through the same
+    /// `bonus_index.json` used for the owner's `economic_bonuses`).
+    pub eco_boosts: Vec<i64>,
+    /// The commander's GameParams id (identifies unique commanders). `None`
+    /// when no commander data was found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commander_id: Option<i64>,
+    /// Learned commander-skill type ids for THIS ship's class (a commander
+    /// keeps a separate skill set per class). Empty when the vehicle entity
+    /// was never observed (see struct docs).
+    pub commander_skills: Vec<i64>,
+    /// Commander points SPENT: Σ of each learned skill's row cost (1–4) from
+    /// the bundled `SKILLS_BY_SHIP_TYPE` grid. `None` when `commander_skills`
+    /// is empty or any id is unknown to the bundled constants — accurate or
+    /// absent, never guessed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commander_points: Option<i64>,
 }
 
 /// One attacker→victim damage record, resolved from a player's
@@ -662,6 +727,10 @@ pub struct Tables {
     /// economic-bonus GameParams id → resolved bonus info, from `bonus_index.json`
     /// (schema 1.5 owner economic bonuses).
     pub bonus_index: HashMap<i64, BonusInfo>,
+    /// species ("Battleship", …) → skill-type id → point cost (1–4), from
+    /// constants' `SKILLS_BY_SHIP_TYPE` (the commander grid: four rows costing
+    /// 1–4 points). Used for schema 1.7 `commander_points`.
+    pub skill_costs: HashMap<String, HashMap<i64, i64>>,
 }
 
 /// A resolved economic-bonus entry from `bonus_index.json` (schema 1.5).
@@ -880,6 +949,37 @@ impl Tables {
             }
         }
 
+        // ── SKILLS_BY_SHIP_TYPE (schema 1.7) ───────────────────────────────────
+        // {species → [row0..row3]}; each row is a {column → [skill ids]} group
+        // and row index + 1 is the skill's point cost (the commander grid has
+        // four rows costing 1–4 points). Missing/odd shapes → empty map, which
+        // makes `commander_points` resolve to None (accurate or absent).
+        let mut skill_costs: HashMap<String, HashMap<i64, i64>> = HashMap::new();
+        if let Some(obj) = constants
+            .get("SKILLS_BY_SHIP_TYPE")
+            .and_then(|v| v.as_object())
+        {
+            for (species, rows) in obj {
+                let Some(rows) = rows.as_array() else {
+                    continue;
+                };
+                let map = skill_costs.entry(species.clone()).or_default();
+                for (row_i, row) in rows.iter().enumerate() {
+                    let Some(groups) = row.as_object() else {
+                        continue;
+                    };
+                    for ids in groups.values() {
+                        let Some(ids) = ids.as_array() else { continue };
+                        for id in ids {
+                            if let Some(id) = id.as_i64() {
+                                map.insert(id, row_i as i64 + 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(Tables {
             public_indices,
             common_results,
@@ -892,6 +992,7 @@ impl Tables {
             ships,
             achievements,
             bonus_index,
+            skill_costs,
         })
     }
 }
@@ -948,7 +1049,32 @@ pub fn decode_battle_result(
     });
 
     let (meta_value, br) = extracted?;
-    build_battle_data(Some(meta_value), br, source_file_hash, replay_path, tables)
+
+    // Second pass — ship/commander loadouts from the battle-START packets
+    // (schema 1.7). Deliberately isolated: a panic or error here degrades to
+    // "no builds" (players serialize without `build`), never failing the
+    // results decode that the first pass already secured.
+    let builds = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        extract_builds(&replay_bytes, &game_dir)
+    }))
+    .unwrap_or_else(|_| {
+        Err(DecodeError::Malformed(
+            "build extraction panicked (incomplete or unsupported replay)".into(),
+        ))
+    })
+    .unwrap_or_else(|e| {
+        log::warn!("build extraction failed (serving results without builds): {e}");
+        HashMap::new()
+    });
+
+    build_battle_data(
+        Some(meta_value),
+        br,
+        source_file_hash,
+        replay_path,
+        tables,
+        &builds,
+    )
 }
 
 /// Parse a replay's bytes in-process and return `(meta JSON, BattleResults JSON)`.
@@ -1009,6 +1135,262 @@ fn load_specs(game_dir: &Path, version: &Version) -> Result<Arc<Vec<EntitySpec>>
     Ok(specs)
 }
 
+// ── Build extraction (schema 1.7) ──────────────────────────────────────────────
+
+/// A player's raw loadout from the battle-START packet stream — intermediate
+/// form, GameParams ids only. Resolved to the wire [`PlayerBuild`] (per-class
+/// skill selection + point costing) by [`make_player_build`].
+pub(crate) struct RawBuild {
+    pub ship_id: i64,
+    pub modules: Vec<i64>,
+    pub upgrades: Vec<i64>,
+    pub consumables: Vec<i64>,
+    pub exteriors: Vec<i64>,
+    pub ensigns: Vec<i64>,
+    pub eco_boosts: Vec<i64>,
+    /// 0 = unknown (no crew data seen for this player).
+    pub commander_id: i64,
+    /// species key ("Battleship", …) → learned skill-type ids. Empty when the
+    /// vehicle entity was never observed (skills travel on the entity, not the
+    /// arena state), or pre-populated species arrays were empty.
+    pub skills_by_species: HashMap<String, Vec<i64>>,
+}
+
+/// Walk the packet stream a second time and extract every player's ship +
+/// commander loadout, keyed by `account_db_id`.
+///
+/// Reuses the wows-toolkit building blocks end to end — no hand-rolled packet
+/// matching (see [[prefer-wows-toolkit]]): `fold_props_into` parses vehicle
+/// EntityCreate/CellPlayerCreate/BasePlayerCreate/EntityProperty packets into
+/// per-entity `VehicleFacts` (ship config + crew skills), and the decoded
+/// `onArenaStateReceived` supplies the entity_id → db_id join plus two
+/// all-players fallbacks the entity packets can't guarantee: `shipConfigDump`
+/// (config for never-observed enemies) and `crewParams` (commander id).
+///
+/// Callers run this under `catch_unwind` — like the results pass, the upstream
+/// parser can panic on malformed input; a failure here degrades to "no builds"
+/// and never blocks the results decode.
+fn extract_builds(
+    replay_bytes: &[u8],
+    game_dir: &Path,
+) -> Result<HashMap<i64, RawBuild>, DecodeError> {
+    use wows_replays::analyzer::battle_controller::merged::{fold_props_into, VehicleFacts};
+    use wows_replays::analyzer::battle_controller::EntityType;
+    use wows_replays::analyzer::decoder::{DecodedPacketPayload, PacketDecoder};
+    use wows_replays::game_constants::DEFAULT_GAME_CONSTANTS;
+    use wows_replays::packet2::{PacketType, Parser};
+    use wows_replays::types::EntityId;
+    use wows_replays::ReplayFile;
+    use wowsunpack::data::ship_config::{parse_ship_config, ShipConfig};
+    use wowsunpack::game_types::GameParamId;
+
+    let replay = ReplayFile::from_bytes(replay_bytes)
+        .map_err(|e| DecodeError::Malformed(format!("replay parse failed: {e:?}")))?;
+    let version = Version::from_client_exe(replay.meta.clientVersionFromExe.as_str());
+    let specs = load_specs(game_dir, &version)?;
+    let constants = &*DEFAULT_GAME_CONSTANTS;
+    let decoder = PacketDecoder::builder().version(version).build();
+
+    // Per-vehicle facts (ship config + crew skills), keyed by entity id.
+    let mut facts: HashMap<EntityId, VehicleFacts> = HashMap::new();
+    // Arena-state roster: db_id → (entity id, config fallback, commander id).
+    struct ArenaSeed {
+        entity_id: EntityId,
+        config_dump: Option<Vec<u8>>,
+        commander_id: i64,
+    }
+    let mut seeds: HashMap<i64, ArenaSeed> = HashMap::new();
+
+    let mut parser = Parser::with_version(specs.as_slice(), version);
+    let mut remaining = replay.packet_data.as_slice();
+    while !remaining.is_empty() {
+        let Ok(packet) = parser.parse_packet(&mut remaining) else {
+            break; // truncated stream — use what we have
+        };
+        match &packet.payload {
+            PacketType::EntityCreate(ec) => {
+                if matches!(
+                    ec.entity_type.parse::<EntityType>(),
+                    Ok(EntityType::Vehicle)
+                ) {
+                    fold_props_into(&mut facts, ec.entity_id, &ec.props, version, constants);
+                }
+            }
+            PacketType::CellPlayerCreate(cell) => {
+                if matches!(
+                    cell.entity_type.parse::<EntityType>(),
+                    Ok(EntityType::Vehicle)
+                ) {
+                    fold_props_into(&mut facts, cell.entity_id, &cell.props, version, constants);
+                }
+            }
+            PacketType::BasePlayerCreate(base) => {
+                if matches!(
+                    base.entity_type.parse::<EntityType>(),
+                    Ok(EntityType::Vehicle)
+                ) {
+                    fold_props_into(&mut facts, base.entity_id, &base.props, version, constants);
+                }
+            }
+            PacketType::EntityProperty(ep) => {
+                // Fold single-property updates too: shipConfig (and crew) can
+                // arrive as a later property update instead of on the create
+                // packet. Same first-wins semantics as the create packets.
+                let mut single = HashMap::new();
+                single.insert(ep.property, ep.value.clone());
+                fold_props_into(&mut facts, ep.entity_id, &single, version, constants);
+            }
+            PacketType::EntityMethod(em) if em.method == "onArenaStateReceived" => {
+                let decoded = decoder.decode(&packet);
+                if let DecodedPacketPayload::OnArenaStateReceived {
+                    player_states,
+                    bot_states,
+                    ..
+                } = decoded.payload
+                {
+                    for st in player_states.iter().chain(bot_states.iter()) {
+                        // crewParams = [commander GameParams id, [flags]] —
+                        // present for every participant in the arena state.
+                        let commander_id = st
+                            .raw_with_names()
+                            .get("crewParams")
+                            .and_then(|v| v.as_array())
+                            .and_then(|a| a.first())
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+                        seeds.insert(
+                            st.db_id().raw(),
+                            ArenaSeed {
+                                entity_id: st.entity_id(),
+                                config_dump: st.ship_config_dump(),
+                                commander_id,
+                            },
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if seeds.is_empty() {
+        return Err(DecodeError::Malformed(
+            "no onArenaStateReceived packet (cannot map builds to players)".into(),
+        ));
+    }
+
+    // Join: arena roster ← vehicle facts, with arena-state fallbacks.
+    let to_ids = |v: &[GameParamId]| -> Vec<i64> {
+        v.iter()
+            .map(|id| id.raw() as i64)
+            .filter(|&x| x != 0)
+            .collect()
+    };
+    let mut out: HashMap<i64, RawBuild> = HashMap::with_capacity(seeds.len());
+    for (db_id, seed) in seeds {
+        let f = facts.get(&seed.entity_id);
+        // Ship config: prefer the vehicle-entity copy; fall back to the arena
+        // state's shipConfigDump (present even for never-observed enemies).
+        let cfg: Option<ShipConfig> = f
+            .map(|f| f.ship_config.clone())
+            .filter(|c| c.ship_params_id().raw() != 0)
+            .or_else(|| {
+                seed.config_dump
+                    .as_deref()
+                    .and_then(|blob| parse_ship_config(blob, &version).ok())
+            });
+        let Some(cfg) = cfg else { continue };
+
+        let crew = f.map(|f| &f.crew);
+        let commander_id = crew
+            .map(|c| c.params_id().raw() as i64)
+            .filter(|&x| x != 0)
+            .unwrap_or(seed.commander_id);
+
+        let mut skills_by_species: HashMap<String, Vec<i64>> = HashMap::new();
+        if let Some(crew) = crew {
+            let sk = crew.learned_skills();
+            for (key, arr) in [
+                ("AirCarrier", sk.aircraft_carrier()),
+                ("Battleship", sk.battleship()),
+                ("Cruiser", sk.cruiser()),
+                ("Destroyer", sk.destroyer()),
+                ("Auxiliary", sk.auxiliary()),
+                ("Submarine", sk.submarine()),
+            ] {
+                if !arr.is_empty() {
+                    skills_by_species
+                        .insert(key.to_string(), arr.iter().map(|&x| x as i64).collect());
+                }
+            }
+        }
+
+        out.insert(
+            db_id,
+            RawBuild {
+                ship_id: cfg.ship_params_id().raw() as i64,
+                modules: to_ids(cfg.units()),
+                upgrades: to_ids(cfg.modernization()),
+                consumables: to_ids(cfg.abilities()),
+                exteriors: to_ids(cfg.exteriors()),
+                ensigns: to_ids(cfg.ensigns()),
+                eco_boosts: to_ids(cfg.ecoboosts()),
+                commander_id,
+                skills_by_species,
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// Resolve a [`RawBuild`] to the wire [`PlayerBuild`]: pick the learned-skill
+/// set matching the ship's class and cost it via the `SKILLS_BY_SHIP_TYPE`
+/// grid. Tolerant: unknown class / unknown skill id → `commander_points: None`.
+pub(crate) fn make_player_build(
+    raw: &RawBuild,
+    ship_class: Option<ShipClass>,
+    skill_costs: &HashMap<String, HashMap<i64, i64>>,
+) -> PlayerBuild {
+    let species_key = ship_class.map(|c| match c {
+        ShipClass::AirCarrier => "AirCarrier",
+        ShipClass::Battleship => "Battleship",
+        ShipClass::Cruiser => "Cruiser",
+        ShipClass::Destroyer => "Destroyer",
+        ShipClass::Submarine => "Submarine",
+        ShipClass::Auxiliary => "Auxiliary",
+    });
+    let commander_skills: Vec<i64> = species_key
+        .and_then(|k| raw.skills_by_species.get(k))
+        .cloned()
+        .unwrap_or_default();
+    // Points SPENT = Σ row cost of each learned skill. None unless every id
+    // resolves through the bundled grid — accurate or absent, never guessed.
+    let commander_points: Option<i64> = if commander_skills.is_empty() {
+        None
+    } else {
+        species_key
+            .and_then(|k| skill_costs.get(k))
+            .and_then(|costs| {
+                commander_skills
+                    .iter()
+                    .map(|id| costs.get(id).copied())
+                    .sum::<Option<i64>>()
+            })
+    };
+    PlayerBuild {
+        ship_id: raw.ship_id,
+        modules: raw.modules.clone(),
+        upgrades: raw.upgrades.clone(),
+        consumables: raw.consumables.clone(),
+        exteriors: raw.exteriors.clone(),
+        ensigns: raw.ensigns.clone(),
+        eco_boosts: raw.eco_boosts.clone(),
+        commander_id: (raw.commander_id != 0).then_some(raw.commander_id),
+        commander_skills,
+        commander_points,
+    }
+}
+
 /// Test-only helper: parse a JSONL dump (sidecar-style) into the `(meta, br)`
 /// pair, then delegate to [`build_battle_data`]. Production decoding uses the
 /// in-process [`extract_battle_results`]; this preserves the JSONL-based unit
@@ -1062,7 +1444,15 @@ fn parse_jsonl_and_build(
     }
 
     let br = battle_results.ok_or(DecodeError::NoBattleResults)?;
-    build_battle_data(meta_obj, br, source_file_hash, replay_path, tables)
+    // JSONL dumps exercise the results path only — no packet stream, no builds.
+    build_battle_data(
+        meta_obj,
+        br,
+        source_file_hash,
+        replay_path,
+        tables,
+        &HashMap::new(),
+    )
 }
 
 /// Structural counters gathered while resolving players, fed to the self-check.
@@ -1323,6 +1713,7 @@ fn build_battle_data(
     source_file_hash: String,
     replay_path: &Path,
     tables: &Tables,
+    builds: &HashMap<i64, RawBuild>,
 ) -> Result<BattleData, DecodeError> {
     // ── Extract common fields ─────────────────────────────────────────────────
 
@@ -1430,7 +1821,7 @@ fn build_battle_data(
         let is_owner = db_id == owner_db_id;
         let private_for_owner = if is_owner { private_list } else { None };
 
-        let player = resolve_player(
+        let mut player = resolve_player(
             arr,
             db_id,
             tables,
@@ -1438,6 +1829,17 @@ fn build_battle_data(
             winner_team,
             private_for_owner.map(|v| v.as_slice()),
         );
+
+        // Schema 1.7: attach the loadout from the battle-start packet pass.
+        // Done here (not in resolve_player) because the skill selection needs
+        // the resolved ship_class and the build map is keyed by db_id.
+        if let Some(raw) = builds.get(&db_id) {
+            player.build = Some(make_player_build(
+                raw,
+                player.ship_class,
+                &tables.skill_costs,
+            ));
+        }
 
         players.push(player);
     }
@@ -1489,7 +1891,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.6".into(),
+            schema_version: "1.7".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -1892,6 +2294,20 @@ pub(crate) fn resolve_player(
         })
         .collect();
 
+    // ── Schema 1.7: objective ("victory") points split (all players) ────────────
+    // WG's per-player objective-points breakdown — every `victory_points_*`
+    // result field with a non-zero value, keyed by its WG constant name. Same
+    // raw-names + non-zero-only contract as `ribbons`. f64 because the game
+    // stores these as floats and `victory_points_own_ship_kill` is negative.
+    let victory_points: std::collections::BTreeMap<String, f64> = pub_idx
+        .iter()
+        .filter(|(name, _)| name.starts_with("victory_points"))
+        .filter_map(|(name, &i)| {
+            let v = arr.get(i).and_then(to_f64_tolerant)?;
+            (v != 0.0).then(|| (name.clone(), v))
+        })
+        .collect();
+
     BattlePlayer {
         account_db_id,
         player_name,
@@ -1937,10 +2353,19 @@ pub(crate) fn resolve_player(
         ship_efficiency,
         economic_bonuses,
         ribbons,
+        victory_points,
+        // build needs the cross-pass loadout map (keyed by db_id) → attached
+        // by build_battle_data after resolution.
+        build: None,
     }
 }
 
 // ── Tolerant type coercion helpers ─────────────────────────────────────────────
+
+/// Coerce a JSON value to f64: accepts int or float; null / non-number → None.
+fn to_f64_tolerant(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64()
+}
 
 /// Coerce a JSON value to i64: accepts int, float (truncated), null → None.
 fn to_i64_tolerant(v: &serde_json::Value) -> Option<i64> {
@@ -2537,6 +2962,18 @@ mod tests {
             ship_efficiency: Some("expert".into()),
             economic_bonuses: Some(vec![]),
             ribbons: std::collections::BTreeMap::from([("RIBBON_BOMB".into(), 42)]),
+            victory_points: std::collections::BTreeMap::from([(
+                "victory_points_kill_battleship".into(),
+                6500.0,
+            )]),
+            // Some(_) so the optional key is locked by this guard.
+            build: Some(PlayerBuild {
+                ship_id: 4_293_001_168,
+                commander_id: Some(4_293_043_664),
+                commander_skills: vec![12, 17],
+                commander_points: Some(3),
+                ..Default::default()
+            }),
         };
         let v = serde_json::to_value(&p).unwrap();
         let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
@@ -2584,12 +3021,143 @@ mod tests {
             "ship_efficiency",
             "economic_bonuses",
             "ribbons",
+            "victory_points",
+            "build",
         ];
         expected.sort();
         assert_eq!(
             keys, expected,
             "BattlePlayer wire keys changed — update the contract doc + schema_version + this test"
         );
+    }
+
+    /// Schema 1.7: victory_points map mirrors the ribbons contract — non-zero
+    /// `victory_points_*` fields only, raw WG names, signed values.
+    #[test]
+    fn resolve_player_victory_points_nonzero_only_and_signed() {
+        let tables = make_tables_from_fixture();
+        let vp_kill_bb = *tables
+            .public_indices
+            .get("victory_points_kill_battleship")
+            .expect("constants must map victory_points_kill_battleship");
+        let vp_death = *tables
+            .public_indices
+            .get("victory_points_own_ship_kill")
+            .expect("constants must map victory_points_own_ship_kill");
+        let vp_hold = *tables
+            .public_indices
+            .get("victory_points_cp_hold")
+            .expect("constants must map victory_points_cp_hold");
+
+        let mut arr = make_arr(540);
+        arr[vp_kill_bb] = serde_json::json!(6500.0);
+        arr[vp_death] = serde_json::json!(-2500.0);
+        arr[vp_hold] = serde_json::json!(0.0); // zero → omitted
+
+        let p = resolve_player(&arr, 42, &tables, 42, Some(1), None);
+        assert_eq!(
+            p.victory_points.get("victory_points_kill_battleship"),
+            Some(&6500.0)
+        );
+        assert_eq!(
+            p.victory_points.get("victory_points_own_ship_kill"),
+            Some(&-2500.0),
+            "negative (death penalty) values must survive"
+        );
+        assert!(
+            !p.victory_points.contains_key("victory_points_cp_hold"),
+            "zero values must be omitted"
+        );
+        assert_eq!(p.victory_points.len(), 2);
+    }
+
+    /// Schema 1.7: SKILLS_BY_SHIP_TYPE parses into per-species id→cost maps with
+    /// costs in the commander grid's 1–4 range for every species.
+    #[test]
+    fn tables_skill_costs_parsed_from_constants() {
+        let tables = make_tables_from_fixture();
+        for species in [
+            "AirCarrier",
+            "Battleship",
+            "Cruiser",
+            "Destroyer",
+            "Submarine",
+            "Auxiliary",
+        ] {
+            let map = tables
+                .skill_costs
+                .get(species)
+                .unwrap_or_else(|| panic!("skill_costs missing species {species}"));
+            assert!(!map.is_empty(), "{species} skill map empty");
+            assert!(
+                map.values().all(|&c| (1..=4).contains(&c)),
+                "{species} has a cost outside 1..=4"
+            );
+        }
+    }
+
+    /// Schema 1.7: make_player_build picks the skill set matching the ship's
+    /// class and costs it; unknown ids or a missing class degrade to None.
+    #[test]
+    fn make_player_build_class_selection_and_points() {
+        let mut skills_by_species = HashMap::new();
+        skills_by_species.insert("Destroyer".to_string(), vec![10, 20]);
+        skills_by_species.insert("Battleship".to_string(), vec![30]);
+        let raw = RawBuild {
+            ship_id: 111,
+            modules: vec![1, 2],
+            upgrades: vec![3],
+            consumables: vec![4],
+            exteriors: vec![5],
+            ensigns: vec![],
+            eco_boosts: vec![6],
+            commander_id: 777,
+            skills_by_species,
+        };
+        let mut costs: HashMap<String, HashMap<i64, i64>> = HashMap::new();
+        costs.insert("Destroyer".into(), HashMap::from([(10, 1), (20, 4)]));
+
+        // Right class → right skill set, points = 1 + 4.
+        let b = make_player_build(&raw, Some(ShipClass::Destroyer), &costs);
+        assert_eq!(b.ship_id, 111);
+        assert_eq!(b.commander_id, Some(777));
+        assert_eq!(b.commander_skills, vec![10, 20]);
+        assert_eq!(b.commander_points, Some(5));
+
+        // Class whose skills aren't costed in the grid → skills kept, points None.
+        let b = make_player_build(&raw, Some(ShipClass::Battleship), &costs);
+        assert_eq!(b.commander_skills, vec![30]);
+        assert_eq!(b.commander_points, None);
+
+        // Unknown class → empty skills, points None (never guessed).
+        let b = make_player_build(&raw, None, &costs);
+        assert!(b.commander_skills.is_empty());
+        assert_eq!(b.commander_points, None);
+
+        // Unknown skill id inside a costed class → points None, not partial.
+        let mut partial = costs.clone();
+        partial.get_mut("Destroyer").unwrap().remove(&20);
+        let b = make_player_build(&raw, Some(ShipClass::Destroyer), &partial);
+        assert_eq!(b.commander_skills, vec![10, 20]);
+        assert_eq!(b.commander_points, None);
+
+        // commander_id 0 → None on the wire.
+        let raw_no_cdr = RawBuild {
+            commander_id: 0,
+            ..RawBuild {
+                ship_id: 1,
+                modules: vec![],
+                upgrades: vec![],
+                consumables: vec![],
+                exteriors: vec![],
+                ensigns: vec![],
+                eco_boosts: vec![],
+                commander_id: 0,
+                skills_by_species: HashMap::new(),
+            }
+        };
+        let b = make_player_build(&raw_no_cdr, Some(ShipClass::Destroyer), &costs);
+        assert_eq!(b.commander_id, None);
     }
 
     /// Lock the planes_killed aggregation edge cases (td-4b4c1a): both source
@@ -3187,7 +3755,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.6");
+        assert_eq!(data.meta.schema_version, "1.7");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────
@@ -3370,22 +3938,22 @@ mod tests {
         assert_eq!(data.meta.decode_status, DecodeStatus::Unreliable);
     }
 
-    // ── 1.6 example-dump generator (for the engine agent) ─────────────────────
+    // ── 1.7 example-dump generator (for the engine agent) ─────────────────────
 
-    /// Generate a real `BattleData` (schema 1.6) JSON dump from a live replay, to
+    /// Generate a real `BattleData` (schema 1.7) JSON dump from a live replay, to
     /// hand the engine agent a concrete example of the wire format. Gated on
-    /// `TFD_DUMP_1_6=1`; decodes 15.5 replays (matching the installed client)
+    /// `TFD_DUMP_1_7=1`; decodes 15.5 replays (matching the installed client)
     /// newest-first and writes the first clean decode that has the owner economics
     /// group populated AND at least one player with a non-empty `achievements`
     /// (so the new fields aren't just `[]`/`{}` in the example), falling back to
     /// the first clean owner-economics decode otherwise.
     ///
-    /// Run: `TFD_DUMP_1_6=1 cargo test -p bridge-core dump_1_6_example -- --ignored --nocapture`
+    /// Run: `TFD_DUMP_1_7=1 cargo test -p bridge-core dump_1_7_example -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn dump_1_6_example() {
-        if std::env::var("TFD_DUMP_1_6").as_deref() != Ok("1") {
-            eprintln!("Skipping dump: TFD_DUMP_1_6!=1");
+    fn dump_1_7_example() {
+        if std::env::var("TFD_DUMP_1_7").as_deref() != Ok("1") {
+            eprintln!("Skipping dump: TFD_DUMP_1_7!=1");
             return;
         }
 
@@ -3396,7 +3964,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap()
-            .join("private-sync/notes/result-data-1.6-example.json");
+            .join("private-sync/notes/result-data-1.7-example.json");
 
         let si_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -3459,7 +4027,20 @@ mod tests {
                 .as_ref()
                 .is_some_and(|b| !b.is_empty());
             let has_hits = owner.hits.unwrap_or(0) > 0;
-            if has_grade && has_bonus && has_hits && (s.ap > 0 || s.sap > 0 || s.he > 0) {
+            // 1.7: the example must show a populated owner build (with skills +
+            // points) and at least one player with a victory_points entry.
+            let has_build = owner
+                .build
+                .as_ref()
+                .is_some_and(|b| b.commander_points.is_some() && !b.upgrades.is_empty());
+            let has_vp = data.players.iter().any(|p| !p.victory_points.is_empty());
+            if has_grade
+                && has_bonus
+                && has_hits
+                && has_build
+                && has_vp
+                && (s.ap > 0 || s.sap > 0 || s.he > 0)
+            {
                 chosen = Some((rp.clone(), data));
                 break;
             }
@@ -3486,6 +4067,141 @@ mod tests {
                 .and_then(|p| p.economic_bonuses.as_ref().map(|b| b.len()))
                 .unwrap_or(0),
             owner.map(|p| &p.main_hits_quality),
+        );
+        eprintln!(
+            "DUMP 1.7: builds={}/{} with_skills={} owner_cdr_points={:?} vp_players={}",
+            data.players.iter().filter(|p| p.build.is_some()).count(),
+            data.players.len(),
+            data.players
+                .iter()
+                .filter(|p| p
+                    .build
+                    .as_ref()
+                    .is_some_and(|b| !b.commander_skills.is_empty()))
+                .count(),
+            owner.and_then(|p| p.build.as_ref().and_then(|b| b.commander_points)),
+            data.players
+                .iter()
+                .filter(|p| !p.victory_points.is_empty())
+                .count(),
+        );
+    }
+
+    /// Schema 1.7 corpus sweep: decode the newest N archive replays and check
+    /// the build extraction's invariants across real battles — coverage (every
+    /// roster player gets a build), plausibility (commander points ≤ 21, ≤ 6
+    /// upgrades, ≤ 14 modules) and victory-points population. Prints a summary;
+    /// fails only on hard invariant violations. Gated like the dump generator.
+    ///
+    /// Run: `TFD_VALIDATE_1_7=1 cargo test -p bridge-core --release validate_1_7_sweep -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn validate_1_7_sweep() {
+        if std::env::var("TFD_VALIDATE_1_7").as_deref() != Ok("1") {
+            eprintln!("Skipping sweep: TFD_VALIDATE_1_7!=1");
+            return;
+        }
+
+        let game_dir = PathBuf::from(r"C:\Games\World_of_Warships");
+        let archive_155 = PathBuf::from(r"T:\wows-replay-archive\15.5");
+        let si_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("src-tauri/resources/ship_index.json");
+        let ai_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("src-tauri/resources/achievement_index.json");
+        let tables = Tables::load(&constants_path(), &si_path, &ai_path, &bonus_index_path())
+            .expect("tables must load");
+        let cfg = DecodeConfig {
+            game_dir,
+            constants_path: constants_path(),
+            ship_index_path: si_path,
+            achievement_index_path: ai_path,
+            bonus_index_path: bonus_index_path(),
+        };
+
+        let mut replays: Vec<PathBuf> = walkdir(&archive_155)
+            .into_iter()
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("wowsreplay"))
+            .collect();
+        replays.sort();
+        replays.reverse();
+
+        let (mut battles, mut players, mut with_build, mut with_skills, mut with_points) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut with_vp = 0usize;
+        let mut points_hist: HashMap<i64, usize> = HashMap::new();
+        let mut violations: Vec<String> = Vec::new();
+        for rp in replays.iter().take(40) {
+            let Ok(data) = decode_battle_result(rp, &cfg, &tables) else {
+                continue;
+            };
+            if data.meta.decode_status != DecodeStatus::Ok {
+                continue;
+            }
+            battles += 1;
+            for p in &data.players {
+                players += 1;
+                if !p.victory_points.is_empty() {
+                    with_vp += 1;
+                }
+                let Some(b) = &p.build else { continue };
+                with_build += 1;
+                if b.ship_id == 0 {
+                    violations.push(format!("{rp:?}: build with ship_id 0"));
+                }
+                if Some(b.ship_id) != p.ship_id && p.ship_id.is_some() {
+                    violations.push(format!(
+                        "{rp:?}: build.ship_id {} != results ship_id {:?}",
+                        b.ship_id, p.ship_id
+                    ));
+                }
+                if b.upgrades.len() > 6 {
+                    violations.push(format!("{rp:?}: {} upgrades", b.upgrades.len()));
+                }
+                if b.modules.len() > 14 {
+                    violations.push(format!("{rp:?}: {} modules", b.modules.len()));
+                }
+                if !b.commander_skills.is_empty() {
+                    with_skills += 1;
+                }
+                if let Some(pts) = b.commander_points {
+                    with_points += 1;
+                    *points_hist.entry(pts).or_insert(0) += 1;
+                    if !(1..=21).contains(&pts) {
+                        violations.push(format!("{rp:?}: commander_points {pts}"));
+                    }
+                }
+            }
+        }
+
+        let mut hist: Vec<(i64, usize)> = points_hist.into_iter().collect();
+        hist.sort();
+        eprintln!(
+            "SWEEP battles={battles} players={players} with_build={with_build} \
+             with_skills={with_skills} with_points={with_points} with_vp={with_vp}"
+        );
+        eprintln!("SWEEP commander_points histogram: {hist:?}");
+        eprintln!("SWEEP violations: {}", violations.len());
+        for v in violations.iter().take(10) {
+            eprintln!("  {v}");
+        }
+        assert!(battles >= 10, "too few clean decodes to validate");
+        assert!(
+            violations.is_empty(),
+            "build invariant violations: {violations:?}"
+        );
+        // Coverage floor: the arena state carries a config for every player, so
+        // builds should be near-universal (bots in non-pvp modes may lack one).
+        assert!(
+            with_build * 100 >= players * 95,
+            "build coverage below 95%: {with_build}/{players}"
         );
     }
 
