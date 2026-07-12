@@ -11,6 +11,13 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.12.0] — 2026-07-12
+
+### Added
+- A hidden test feature.
+
+---
+
 ## [0.11.0] — 2026-07-11
 
 ### Added
