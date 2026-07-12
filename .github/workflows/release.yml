@@ -21,7 +21,39 @@ jobs:
       - name: Rust build cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: '. -> target'
+          # The main workspace plus the standalone scene-exporter workspace
+          # (its own [workspace], separate target dir) so repeat CI is fast.
+          workspaces: |
+            . -> target
+            experiments/replay-web-player/exporter -> target
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Build the bundled replay-player web UI (base=/player/, bridge API mode)
+      # and stage it where the release overlay config expects it. src-tauri/player
+      # is a build artifact (gitignored) served over loopback by the bridge.
+      - name: Build replay-player web UI
+        shell: bash
+        run: |
+          cd experiments/replay-web-player/web
+          npm ci || npm install
+          npm run build:bridge
+          cd "$GITHUB_WORKSPACE"
+          rm -rf src-tauri/player
+          mkdir -p src-tauri/player
+          cp -r experiments/replay-web-player/web/dist/. src-tauri/player/
+
+      # Build the scene-exporter sidecar from its git-pinned wows-toolkit deps
+      # and stage the binary for the overlay config to bundle as a resource.
+      - name: Build scene-exporter sidecar
+        shell: bash
+        run: |
+          cargo build --release --manifest-path experiments/replay-web-player/exporter/Cargo.toml
+          mkdir -p src-tauri/binaries
+          cp experiments/replay-web-player/exporter/target/release/tfd-replay-scene-exporter.exe src-tauri/binaries/tfd-replay-scene-exporter.exe
 
       - name: Extract release notes from CHANGELOG
         id: notes
@@ -55,7 +87,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: '.'
-          args: '--bundles nsis'
+          # Overlay config (-c) adds the bundled scene-exporter + player UI
+          # resources on top of the base config. Base builds stay unaffected.
+          args: '--bundles nsis -c src-tauri/tauri.player.json'
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: 'TFD Bridge ${{ github.ref_name }}'
           releaseBody: ${{ steps.notes.outputs.body }}

@@ -2,3 +2,9 @@
 # will have compiled files and executables
 /target/
 /gen/schemas
+
+# Hidden replay-player overlay build (tauri.player.json) staging dirs: the
+# scene-exporter sidecar exe and the player web dist. Built artifacts, staged
+# by CI immediately before `tauri build -c tauri.player.json`; never committed.
+/binaries/
+/player/
