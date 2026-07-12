@@ -7,7 +7,7 @@ pub mod uploader;
 use bridge_core::battle_result::{DecodeConfig, Tables};
 use bridge_core::detection::derive_game_dir;
 use bridge_core::finalize::{FinalizeOptions, FinalizedCallback};
-use bridge_core::server::{self, Bridge, DecodeContext};
+use bridge_core::server::{self, Bridge, DecodeContext, PlayerConfig};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -327,6 +327,31 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
     }
 }
 
+/// Resolve the bundled hidden-replay-player resources (scene-exporter sidecar
+/// and player web dist) from the app's resource directory. Both are staged
+/// only by the separate `tauri.player.json` overlay build (`src-tauri/binaries/`
+/// and `src-tauri/player/`) — a default build's resource dir has neither, so
+/// this quietly returns `None` and the bridge serves `/player/*` and the
+/// `/scene` route as 404 (see `PlayerConfig` in bridge-core's `server.rs`).
+fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let exporter_name = if cfg!(windows) {
+        "tfd-replay-scene-exporter.exe"
+    } else {
+        "tfd-replay-scene-exporter"
+    };
+    let exporter_bin = resource_dir.join("binaries").join(exporter_name);
+    let player_dist = resource_dir.join("player");
+    if exporter_bin.exists() && player_dist.exists() {
+        Some(PlayerConfig {
+            exporter_bin,
+            player_dist,
+        })
+    } else {
+        None
+    }
+}
+
 // ── Bridge management ────────────────────────────────────────────────────────
 
 /// Apply a new replays path: start, restart, or leave the bridge unchanged.
@@ -386,7 +411,12 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             // path.  `None` when the sidecar or resources are missing — the
             // bridge still starts and the /result endpoints return 501 instead.
             let decode_ctx = build_decode_context(app, &path);
-            match server::start_full(path.clone(), dev_origin, Some(finalize), decode_ctx) {
+            // Hidden replay-player wiring: only active when the overlay build
+            // staged both the exporter sidecar and the player dist (see
+            // `resolve_player_config`). `None` on a default build — the
+            // player routes then quietly 404.
+            let player_cfg = resolve_player_config(app);
+            match server::start_full(path.clone(), dev_origin, Some(finalize), decode_ctx, player_cfg) {
                 Ok(bridge) => {
                     log::info!("Bridge started on port {}", bridge.port());
                     *guard = Some(ActiveBridge { path, bridge });
@@ -591,6 +621,13 @@ const MONITOR_EMBED_JS: &str = r##"
     return (w && typeof w.label === 'string') ? w.label : '';
   }
   function injectBar() {
+    // The hidden replay-player window (opened via double-right-click on the
+    // brand below) is a bare loopback page with no bar of its own — it is
+    // reached by loading http://127.0.0.1:<port>/player/ directly, which is
+    // neither the local dashboard nor an engine origin. Bail before any
+    // Tauri API use so the player's own UI is untouched.
+    var isPlayer = location.host.indexOf('127.0.0.1') === 0 || location.pathname === '/player' || location.pathname.indexOf('/player/') === 0;
+    if (isPlayer) return;
     if (document.getElementById('tfd-embed-bar') || !document.body) return;
     // The bar shows in two contexts (read synchronously off the global Tauri
     // window API — no IPC, no permission):
@@ -613,7 +650,10 @@ const MONITOR_EMBED_JS: &str = r##"
     // The version is baked in at compile time (__APP_VERSION__ → CARGO_PKG_VERSION).
     var brand = document.createElement('span');
     brand.setAttribute('data-tauri-drag-region', '');
-    brand.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 6px 0 2px;pointer-events:none;white-space:nowrap;flex:none;';
+    // pointer-events:auto (not the drag bar's default none) so the brand can
+    // receive the hidden double-right-click gesture below; the bar still
+    // drags fine via its other regions.
+    brand.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 6px 0 2px;pointer-events:auto;white-space:nowrap;flex:none;';
     brand.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#00d1a7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 10.189V14"/><path d="M12 2v3"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76"/><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg>';
     var brandName = document.createElement('span');
     brandName.textContent = 'TFD Bridge';
@@ -623,6 +663,15 @@ const MONITOR_EMBED_JS: &str = r##"
     brandVer.style.cssText = 'opacity:0.55;font-weight:500;';
     brand.appendChild(brandName);
     brand.appendChild(brandVer);
+    // Hidden gesture: double-right-click the brand opens the replay player.
+    // No visible affordance — this is intentionally undiscoverable chrome.
+    var lastCtx = -1e9;
+    brand.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      var now = e.timeStamp || 0;
+      if (now - lastCtx < 600) { lastCtx = -1e9; invokeCmd('open_replay_player'); }
+      else { lastCtx = now; }
+    });
 
     var navControls = [];
     var settingsBtn = null;
@@ -920,6 +969,66 @@ pub(crate) fn open_profile_window(app: &AppHandle, url: &str) {
     });
 }
 
+/// Window label for the hidden in-app WoWS replay player. Fixed (not a
+/// per-invocation counter like the profile windows): only one player window
+/// should ever exist at a time.
+const REPLAY_PLAYER_LABEL: &str = "replay-player";
+
+/// Open (or focus) the hidden replay-player window, pointed at the bridge's
+/// own `/player/` route on the given loopback `port`. Reached only through the
+/// double-right-click gesture on the title-bar brand (`MONITOR_EMBED_JS`) — no
+/// visible UI affordance triggers this. The caller (`commands::open_replay_player`)
+/// already checked the bridge is running before resolving `port`.
+///
+/// Singleton: a second invocation while the window is already open just
+/// refocuses it instead of spawning another.
+///
+/// The actual `WebviewWindowBuilder::build` is deferred onto
+/// `async_runtime::spawn`, same as `open_profile_window` above and for the
+/// same reason: on Windows it deadlocks when called synchronously from a
+/// Tauri command handler (Webview2 / wry #583).
+///
+/// The window is native-decorated (`decorations(true)`): the player has no
+/// in-app titlebar of its own, and `MONITOR_EMBED_JS`'s `injectBar()`
+/// self-suppresses on this origin/path (see the `isPlayer` guard), so the OS
+/// chrome is the only chrome — correct here, unlike the frameless profile
+/// windows.
+///
+/// SECURITY — `on_navigation` pins the window to `127.0.0.1` for its whole
+/// lifetime, mirroring the `engine.tfd.rocks` pin on profile windows: the
+/// player is served same-origin by the bridge itself, so nothing should ever
+/// navigate this window off loopback.
+pub(crate) fn open_replay_player_window(app: &AppHandle, port: u16) {
+    if let Some(win) = app.get_webview_window(REPLAY_PLAYER_LABEL) {
+        let _ = win.set_focus();
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let url = format!("http://127.0.0.1:{port}/player/");
+        let Ok(parsed) = tauri::Url::parse(&url) else {
+            log::error!("open_replay_player_window: URL failed to parse: {url}");
+            return;
+        };
+        match tauri::WebviewWindowBuilder::new(
+            &app,
+            REPLAY_PLAYER_LABEL,
+            tauri::WebviewUrl::External(parsed),
+        )
+        .title("TFD Bridge — Replay Player")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(900.0, 600.0)
+        .decorations(true)
+        .focused(true)
+        .on_navigation(|u| u.host_str() == Some("127.0.0.1"))
+        .build()
+        {
+            Ok(_win) => log::info!("Opened replay-player window"),
+            Err(e) => log::error!("open_replay_player_window failed: {e}"),
+        }
+    });
+}
+
 /// Label for the disabled tray version item, e.g. "TFD Bridge v0.2.4".
 /// The version comes from the bundle version (`tauri.conf.json`) via
 /// `app.package_info().version` — never a hardcoded literal.
@@ -993,7 +1102,14 @@ pub fn run() {
                     // window has loaded (url = about:blank), and engine pages must
                     // never become the return-target. (Fixes Settings → black window
                     // after a restart that restores straight to the monitor.)
-                    if url.scheme() != "about" && url.host_str() != Some("engine.tfd.rocks") {
+                    // 127.0.0.1 excluded too: the hidden replay-player window
+                    // navigates this same init script's plugin, and its
+                    // loopback URL must never clobber the Settings
+                    // return-target (it is not a dashboard/engine page).
+                    if url.scheme() != "about"
+                        && url.host_str() != Some("engine.tfd.rocks")
+                        && url.host_str() != Some("127.0.0.1")
+                    {
                         *webview.app_handle().state::<DashboardUrl>().0.lock().unwrap() =
                             Some(url.clone());
                     }
@@ -1339,6 +1455,7 @@ pub fn run() {
             commands::set_launch_on_login,
             commands::open_monitor,
             commands::open_engine_home,
+            commands::open_replay_player,
             commands::get_donation_status,
             commands::set_donation_consent,
             commands::get_link_target,

@@ -11,7 +11,7 @@ use bridge_core::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_store::StoreExt;
 
@@ -99,6 +99,28 @@ pub fn set_launch_on_login(app: AppHandle, enabled: bool) {
 #[tauri::command]
 pub fn open_monitor(app: AppHandle) {
     crate::open_monitor_window(&app);
+}
+
+/// Open (or focus) the hidden in-app WoWS replay player. Reached only via the
+/// double-right-click gesture on the title-bar brand (`MONITOR_EMBED_JS`) —
+/// there is no visible menu item or button for this. No-op (logged) if the
+/// bridge is not running, since the player window loads its `/player/` route
+/// off the bridge's own loopback port.
+#[tauri::command]
+pub fn open_replay_player(app: AppHandle) {
+    use crate::BridgeState;
+
+    let port = app
+        .state::<BridgeState>()
+        .0
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|ab| ab.bridge.port());
+    match port {
+        Some(port) => crate::open_replay_player_window(&app, port),
+        None => log::info!("player: no bridge"),
+    }
 }
 
 /// Navigate the main window to the engine home ("Dashboard" in the unified bar).

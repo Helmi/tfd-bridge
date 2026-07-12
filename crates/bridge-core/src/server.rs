@@ -11,6 +11,13 @@
 ///   GET /v1/replays/{name}                  → file bytes
 ///   GET /v1/replays/latest/result           → JSON BattleData or 404/501/504/500
 ///   GET /v1/replays/{name}/result           → JSON BattleData or 404/501/504/500
+///   GET /v1/replays/{name}/scene            → JSON scene (self-contained, inline assets) or 404/500
+///   GET /player/  and  GET /player/{path}   → static files from the bundled player dist
+///
+/// The `/player/*` and `/v1/replays/{name}/scene` routes are only active when
+/// the bridge was started with a `PlayerConfig` (see [`PlayerConfig`]); when
+/// not provided, both return 404. This mirrors how the `/result` routes are
+/// gated on an optional `DecodeContext`.
 ///
 /// The `tempArenaInfo.json` file is the live battle roster written by WoWS at
 /// battle start and deleted at battle end.  It is included in the replays list
@@ -165,6 +172,94 @@ impl DecodeContext {
     }
 }
 
+// ── Hidden replay-player: config + scene cache ─────────────────────────────────
+
+/// Configuration for the (normally dormant) in-app replay-player routes.
+/// Passed to the bridge as `Option<PlayerConfig>`; when `None` the
+/// `/player/*` and `/v1/replays/{name}/scene` routes both return 404.
+#[derive(Clone)]
+pub struct PlayerConfig {
+    /// Absolute path to the bundled scene-exporter executable.
+    pub exporter_bin: PathBuf,
+    /// Absolute path to the bundled player web dist (contains index.html).
+    pub player_dist: PathBuf,
+}
+
+/// Bounded (≤16 entries) FIFO cache mapping a replay's `FileKey` directly to
+/// its exported scene JSON body. Unlike `ResultCache` there is no
+/// content-addressed hash to dedupe on (the exporter output has no analog to
+/// `source_file_hash`), so this is a simpler `FileKey → body` map with the
+/// same FIFO-eviction shape.
+struct SceneCache {
+    order: VecDeque<FileKey>,
+    by_file: std::collections::HashMap<FileKey, String>,
+    cap: usize,
+}
+
+impl SceneCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            order: VecDeque::new(),
+            by_file: std::collections::HashMap::new(),
+            cap,
+        }
+    }
+
+    fn get(&self, key: &FileKey) -> Option<&str> {
+        self.by_file.get(key).map(|s| s.as_str())
+    }
+
+    /// Insert a decoded scene; evicts the oldest entry if at capacity.
+    fn insert(&mut self, key: FileKey, body: String) {
+        if self.by_file.contains_key(&key) {
+            return;
+        }
+        if self.order.len() >= self.cap {
+            if let Some(old_key) = self.order.pop_front() {
+                self.by_file.remove(&old_key);
+            }
+        }
+        self.order.push_back(key.clone());
+        self.by_file.insert(key, body);
+    }
+}
+
+/// Runtime state backing the player routes: the caller's `PlayerConfig` plus
+/// the mutable scene cache and a decode-serialization lock. Built once from
+/// `Option<PlayerConfig>` at startup, mirroring how `Option<Arc<DecodeContext>>`
+/// is threaded for the `/result` routes.
+struct PlayerState {
+    config: PlayerConfig,
+    cache: Mutex<SceneCache>,
+    /// Held across spawn+read of the exporter so two concurrent requests for
+    /// the same (slow) replay decode don't both spawn the sidecar. The cache
+    /// is re-checked after acquiring this lock.
+    decode_lock: Mutex<()>,
+}
+
+impl PlayerState {
+    fn new(config: PlayerConfig) -> Self {
+        Self {
+            config,
+            cache: Mutex::new(SceneCache::new(16)),
+            decode_lock: Mutex::new(()),
+        }
+    }
+}
+
+/// Errors from running the scene-exporter sidecar and reading its output.
+#[derive(Debug, thiserror::Error)]
+enum SceneError {
+    #[error("replays dir has no parent (cannot determine game dir)")]
+    GameDirUnknown,
+    #[error("exporter exited with status {0}")]
+    ExporterFailed(std::process::ExitStatus),
+    #[error("exporter timed out")]
+    ExporterTimeout,
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
 // ── Public types ───────────────────────────────────────────────────────────────
 
 /// A running bridge instance.  Drop or call [`Bridge::stop`] to shut it down.
@@ -235,7 +330,7 @@ pub fn start_with_finalize(
     dev_origin: Option<String>,
     finalize: Option<FinalizeOptions>,
 ) -> Result<Bridge, BridgeError> {
-    start_full(replays_dir, dev_origin, finalize, None)
+    start_full(replays_dir, dev_origin, finalize, None, None)
 }
 
 /// Start the bridge server with all optional components.
@@ -245,16 +340,19 @@ pub fn start_with_finalize(
 /// - `finalize`    — optional replay-finalized detection.
 /// - `decode`      — optional battle-result decode context; when `Some` the
 ///   `/result` endpoints are active and health advertises `"battle-result-v1"`.
+/// - `player`      — optional replay-player config; when `Some` the
+///   `/player/*` and `/v1/replays/{name}/scene` routes are active.
 pub fn start_full(
     replays_dir: PathBuf,
     dev_origin: Option<String>,
     finalize: Option<FinalizeOptions>,
     decode: Option<Arc<DecodeContext>>,
+    player: Option<PlayerConfig>,
 ) -> Result<Bridge, BridgeError> {
     let candidates: Vec<u16> = std::iter::once(CANONICAL_PORT)
         .chain(FALLBACK_PORTS)
         .collect();
-    start_on_ports_full(replays_dir, dev_origin, &candidates, finalize, decode)
+    start_on_ports_full(replays_dir, dev_origin, &candidates, finalize, decode, player)
 }
 
 /// Internal start that accepts an explicit list of ports to try in order.
@@ -266,16 +364,17 @@ pub(crate) fn start_on_ports(
     ports: &[u16],
     finalize: Option<FinalizeOptions>,
 ) -> Result<Bridge, BridgeError> {
-    start_on_ports_full(replays_dir, dev_origin, ports, finalize, None)
+    start_on_ports_full(replays_dir, dev_origin, ports, finalize, None, None)
 }
 
-/// Internal start with all options including decode context.
+/// Internal start with all options including decode context and player config.
 pub(crate) fn start_on_ports_full(
     replays_dir: PathBuf,
     dev_origin: Option<String>,
     ports: &[u16],
     finalize: Option<FinalizeOptions>,
     decode: Option<Arc<DecodeContext>>,
+    player: Option<PlayerConfig>,
 ) -> Result<Bridge, BridgeError> {
     let (server, port) = bind_server(ports)?;
 
@@ -336,6 +435,9 @@ pub(crate) fn start_on_ports_full(
         }
         v
     };
+    // Wrap the caller's PlayerConfig into the runtime state (cache + decode
+    // lock) once at startup, same shape as decode's Option<Arc<DecodeContext>>.
+    let player_state: Option<Arc<PlayerState>> = player.map(|cfg| Arc::new(PlayerState::new(cfg)));
 
     thread::spawn(move || {
         handle_requests(
@@ -345,6 +447,7 @@ pub(crate) fn start_on_ports_full(
             &gen_clone2,
             port,
             decode.as_ref(),
+            player_state.as_ref(),
         );
     });
 
@@ -388,6 +491,7 @@ fn handle_requests(
     generation: &AtomicU64,
     port: u16,
     decode_ctx: Option<&Arc<DecodeContext>>,
+    player: Option<&Arc<PlayerState>>,
 ) {
     loop {
         let request = match server.recv() {
@@ -454,9 +558,23 @@ fn handle_requests(
                     }
                 }
                 "/v1/replays/latest" => handle_latest(replays_dir),
+                // /scene MUST also be matched before the generic /v1/replays/{name}
+                // fetch arm below, same reasoning as /result above.
+                p if p.starts_with("/v1/replays/") && p.ends_with("/scene") => {
+                    match p
+                        .strip_prefix("/v1/replays/")
+                        .and_then(|r| r.strip_suffix("/scene"))
+                    {
+                        Some(mid) if !mid.is_empty() => handle_scene(replays_dir, mid, player),
+                        _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+                    }
+                }
                 p if p.starts_with("/v1/replays/") => {
                     let name = &p["/v1/replays/".len()..];
                     handle_fetch(replays_dir, name)
+                }
+                p if p == "/player" || p.starts_with("/player/") => {
+                    handle_player_static(player, p)
                 }
                 _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
             },
@@ -750,6 +868,251 @@ fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<
             let header = Header::from_bytes(b"Content-Type", b"application/octet-stream").unwrap();
             response.with_header(header)
         }
+    }
+}
+
+// ── Hidden replay-player: scene + static routes ─────────────────────────────────
+
+/// GET /v1/replays/{name}/scene — decode a replay into a self-contained scene
+/// JSON (via the bundled exporter sidecar, `--inline-assets`) and return it.
+/// 404 when `player` is `None`, missing, or not a `.wowsreplay` file; 500 on
+/// exporter/decode failure.
+fn handle_scene(
+    replays_dir: &Path,
+    name: &str,
+    player: Option<&Arc<PlayerState>>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let state = match player {
+        Some(s) => s,
+        None => return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+    };
+
+    // Percent-decode + safe-path validation (reuses the same logic as
+    // handle_fetch / handle_result).
+    let decoded = match percent_decode_str(name).decode_utf8() {
+        Ok(s) => s.into_owned(),
+        Err(_) => {
+            return make_json_response(
+                StatusCode(400),
+                r#"{"error":"invalid UTF-8 in path"}"#,
+                None,
+            );
+        }
+    };
+    let path = match resolve_safe_path(replays_dir, &decoded) {
+        Ok(p) => p,
+        Err(e) => {
+            return make_json_response(StatusCode(400), &format!(r#"{{"error":"{}"}}"#, e), None);
+        }
+    };
+
+    // Must exist and be a .wowsreplay file.
+    if !path.exists() {
+        return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None);
+    }
+    if !path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("wowsreplay"))
+        .unwrap_or(false)
+    {
+        return make_json_response(StatusCode(404), r#"{"error":"not a replay file"}"#, None);
+    }
+
+    match scene_cached(&path, replays_dir, state) {
+        Ok(body) => make_json_response(StatusCode(200), &body, None),
+        Err(e) => {
+            // Log detail but don't leak sidecar stderr / paths to the client.
+            log::error!("Scene decode failed for {}: {e}", path.display());
+            make_json_response(StatusCode(500), r#"{"error":"decode failed"}"#, None)
+        }
+    }
+}
+
+/// Decode `path` into a scene JSON body, with caching (check → release lock →
+/// spawn exporter → insert) keyed by `FileKey`. A single `decode_lock` is held
+/// across the spawn+read so two concurrent requests for the same slow replay
+/// don't both invoke the exporter; the cache is re-checked after acquiring it.
+fn scene_cached(path: &Path, replays_dir: &Path, state: &PlayerState) -> Result<String, SceneError> {
+    let file_key = std::fs::metadata(path).ok().map(|m| FileKey {
+        path: path.to_path_buf(),
+        mtime_ms: m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        size: m.len(),
+    });
+
+    if let Some(ref fk) = file_key {
+        let guard = state.cache.lock().unwrap();
+        if let Some(cached) = guard.get(fk) {
+            return Ok(cached.to_string());
+        }
+    }
+    // Lock released before acquiring the decode lock below.
+
+    // Serialize the (slow) exporter spawn+read across concurrent requests.
+    // The serial tiny_http loop already serializes requests in practice, but
+    // holding this lock keeps the invariant correct if that ever changes.
+    let _decode_guard = state.decode_lock.lock().unwrap();
+
+    // Re-check the cache now that we hold the decode lock: another request
+    // may have just finished decoding this exact file while we were waiting.
+    if let Some(ref fk) = file_key {
+        let guard = state.cache.lock().unwrap();
+        if let Some(cached) = guard.get(fk) {
+            return Ok(cached.to_string());
+        }
+    }
+
+    // The WoWS install dir is the parent of the replays dir.
+    let game_dir = replays_dir.parent().ok_or(SceneError::GameDirUnknown)?;
+
+    // Output dir: temp/tfd-bridge-scene/<hash of resolved path + mtime + size>,
+    // matching the FileKey idea already used by ResultCache above.
+    let hash_input = format!(
+        "{}|{}|{}",
+        path.display(),
+        file_key.as_ref().map(|k| k.mtime_ms).unwrap_or(0),
+        file_key.as_ref().map(|k| k.size).unwrap_or(0),
+    );
+    let output_dir = std::env::temp_dir()
+        .join("tfd-bridge-scene")
+        .join(crate::battle_result::sha256_hex(hash_input.as_bytes()));
+    std::fs::create_dir_all(&output_dir)?;
+
+    // Bound the (slow) sidecar so a hung or pathological decode can't wedge the
+    // single-threaded server loop forever. The exporter writes scene.json to a
+    // FILE, so its stdout is unused; stderr stays piped for diagnostics but is
+    // tiny in practice — and if a pathological run ever filled the pipe, the
+    // deadline below kills the child regardless.
+    const EXPORTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+    let mut child = std::process::Command::new(&state.config.exporter_bin)
+        .arg("--game")
+        .arg(game_dir)
+        .arg("--replay")
+        .arg(path)
+        .arg("--output")
+        .arg(&output_dir)
+        .arg("--inline-assets")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    let deadline = std::time::Instant::now() + EXPORTER_TIMEOUT;
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    log::error!("scene exporter timed out for {}", path.display());
+                    return Err(SceneError::ExporterTimeout);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    };
+
+    if !status.success() {
+        let mut stderr = String::new();
+        if let Some(mut s) = child.stderr.take() {
+            let _ = s.read_to_string(&mut stderr);
+        }
+        log::error!(
+            "scene exporter failed ({}) for {}: {}",
+            status,
+            path.display(),
+            stderr
+        );
+        return Err(SceneError::ExporterFailed(status));
+    }
+
+    let body = std::fs::read_to_string(output_dir.join("scene.json"))?;
+
+    if let Some(fk) = file_key {
+        let mut guard = state.cache.lock().unwrap();
+        guard.insert(fk, body.clone());
+    }
+
+    Ok(body)
+}
+
+/// GET /player/  and  GET /player/{path} — serve static files from the
+/// bundled player web dist. 404 when `player` is `None`, the path escapes
+/// `player_dist`, or the file is missing. `/player` and `/player/` both map
+/// to `index.html` (no other missing-file fallback — the SPA has no routing
+/// that needs one).
+fn handle_player_static(
+    player: Option<&Arc<PlayerState>>,
+    path: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let state = match player {
+        Some(s) => s,
+        None => return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+    };
+
+    // Strip the "/player" prefix; whatever remains (possibly empty) is the
+    // relative path under player_dist. Empty → index.html.
+    let rel = path.strip_prefix("/player").unwrap_or(path);
+    let rel = rel.strip_prefix('/').unwrap_or(rel);
+
+    let decoded = match percent_decode_str(rel).decode_utf8() {
+        Ok(s) => s.into_owned(),
+        Err(_) => {
+            return make_json_response(
+                StatusCode(400),
+                r#"{"error":"invalid UTF-8 in path"}"#,
+                None,
+            );
+        }
+    };
+    let decoded = if decoded.is_empty() {
+        "index.html".to_string()
+    } else {
+        decoded
+    };
+
+    // Reuses resolve_safe_path's component validation / traversal / symlink
+    // checks against player_dist instead of the replays dir.
+    let file_path = match resolve_safe_path(&state.config.player_dist, &decoded) {
+        Ok(p) => p,
+        Err(_) => return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+    };
+
+    let mut file = match std::fs::File::open(&file_path) {
+        Ok(f) => f,
+        Err(_) => return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+    };
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).is_err() {
+        return make_json_response(StatusCode(500), r#"{"error":"read error"}"#, None);
+    }
+
+    let content_type = mime_for_extension(file_path.extension().and_then(|e| e.to_str()));
+    let header = Header::from_bytes(b"Content-Type", content_type.as_bytes()).unwrap();
+    Response::from_data(buf)
+        .with_status_code(StatusCode(200))
+        .with_header(header)
+}
+
+/// Extension → MIME map for the player's static bundle. Hand-rolled (no
+/// `mime_guess` dependency) — the bundle only ever ships these types.
+fn mime_for_extension(ext: Option<&str>) -> &'static str {
+    match ext.map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("woff2") => "font/woff2",
+        Some("wasm") => "application/wasm",
+        Some("map") => "application/json",
+        Some("ico") => "image/x-icon",
+        _ => "application/octet-stream",
     }
 }
 
@@ -2027,7 +2390,7 @@ mod tests {
             stub_tables(),
             decode_fn,
         ));
-        start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, Some(ctx))
+        start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, Some(ctx), None)
             .expect("bridge start failed")
     }
 
@@ -2377,6 +2740,207 @@ mod tests {
             status, 404,
             "non-.wowsreplay file must return 404 via /result"
         );
+        bridge.stop();
+    }
+
+    // ── Hidden replay-player: /player/* + /v1/replays/{name}/scene ───────────
+
+    /// Start a bridge with a `PlayerConfig` pointing at `player_dist`. The
+    /// exporter binary need not exist for the static-file / 404-shape tests
+    /// below (only the scene route would try to spawn it).
+    fn start_bridge_with_player(tmp: &TempDir, player_dist: &Path) -> Bridge {
+        let config = PlayerConfig {
+            exporter_bin: PathBuf::from("tfd-replay-scene-exporter-does-not-exist"),
+            player_dist: player_dist.to_path_buf(),
+        };
+        start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, None, Some(config))
+            .expect("bridge start failed")
+    }
+
+    /// /v1/replays/{name}/scene must return 404 when `player` is `None`
+    /// (default `start_test_bridge`), regardless of whether the replay exists.
+    #[test]
+    fn scene_404_when_player_none() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("game.wowsreplay"), b"data").unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/game.wowsreplay/scene",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "scene route must 404 when player is None");
+        bridge.stop();
+    }
+
+    /// /player/ must also 404 when `player` is `None`.
+    #[test]
+    fn player_static_404_when_player_none() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let url = format!("http://127.0.0.1:{}/player/", bridge.port());
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "player static route must 404 when player is None");
+        bridge.stop();
+    }
+
+    /// GET /player/ (and /player, no trailing slash) must serve index.html
+    /// from player_dist.
+    #[test]
+    fn player_static_serves_index_html() {
+        let tmp = TempDir::new().unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html>player</html>").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let url = format!("http://127.0.0.1:{}/player/", bridge.port());
+        let (status, body, headers) = get(&url);
+        assert_eq!(status, 200);
+        assert_eq!(body, "<html>player</html>");
+        let ct = find_header(&headers, "content-type");
+        assert_eq!(ct.as_deref(), Some("text/html; charset=utf-8"));
+
+        // No trailing slash must resolve the same way.
+        let url_no_slash = format!("http://127.0.0.1:{}/player", bridge.port());
+        let (status2, body2, _) = get(&url_no_slash);
+        assert_eq!(status2, 200);
+        assert_eq!(body2, "<html>player</html>");
+
+        bridge.stop();
+    }
+
+    /// A nested static asset under /player/ must be served with the correct
+    /// MIME type derived from its extension.
+    #[test]
+    fn player_static_serves_nested_asset() {
+        let tmp = TempDir::new().unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html></html>").unwrap();
+        let assets = dist.path().join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("app.js"), b"console.log(1);").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let url = format!("http://127.0.0.1:{}/player/assets/app.js", bridge.port());
+        let (status, body, headers) = get(&url);
+        assert_eq!(status, 200);
+        assert_eq!(body, "console.log(1);");
+        let ct = find_header(&headers, "content-type");
+        assert_eq!(ct.as_deref(), Some("text/javascript; charset=utf-8"));
+
+        bridge.stop();
+    }
+
+    /// Missing files under /player/ must 404 (no index.html fallback for
+    /// anything other than the bare "/player" / "/player/" paths).
+    #[test]
+    fn player_static_missing_file_returns_404() {
+        let tmp = TempDir::new().unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html></html>").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let url = format!("http://127.0.0.1:{}/player/missing.js", bridge.port());
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "missing static file must 404, not fall back to index.html");
+
+        bridge.stop();
+    }
+
+    /// Path traversal under /player/ must be rejected (never escape player_dist).
+    #[test]
+    fn player_static_rejects_traversal() {
+        let tmp = TempDir::new().unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html></html>").unwrap();
+        // A secret file that lives next to (not inside) player_dist.
+        let secret = dist.path().parent().unwrap().join("secret.txt");
+        fs::write(&secret, b"top secret").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let url = format!(
+            "http://127.0.0.1:{}/player/..%2Fsecret.txt",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_ne!(status, 200, "traversal under /player/ must not return 200");
+
+        bridge.stop();
+    }
+
+    /// /v1/replays/{name}/scene must resolve the name exactly like the
+    /// existing fetch/result routes: missing file → 404.
+    #[test]
+    fn scene_404_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html></html>").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/nonexistent.wowsreplay/scene",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "scene route must 404 for a missing replay");
+
+        bridge.stop();
+    }
+
+    /// /v1/replays/{name}/scene must 404 for a file that exists but is not a
+    /// `.wowsreplay` (same allowlist behaviour as /result).
+    #[test]
+    fn scene_404_non_replay_extension() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("notes.txt"), b"text").unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html></html>").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let url = format!("http://127.0.0.1:{}/v1/replays/notes.txt/scene", bridge.port());
+        let (status, _, _) = get(&url);
+        assert_eq!(status, 404, "non-.wowsreplay file must 404 via /scene");
+
+        bridge.stop();
+    }
+
+    /// Path traversal via /v1/replays/{name}/scene must not return 200.
+    #[test]
+    fn scene_traversal_not_200() {
+        let tmp = TempDir::new().unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html></html>").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let url = format!(
+            "http://127.0.0.1:{}/v1/replays/..%2Fsecret.wowsreplay/scene",
+            bridge.port()
+        );
+        let (status, _, _) = get(&url);
+        assert_ne!(status, 200, "traversal via /scene must not return 200");
+
+        bridge.stop();
+    }
+
+    /// Regression: /v1/replays/scene (no name segment — prefix and suffix
+    /// overlap) must not panic and must return a non-200 status.
+    #[test]
+    fn scene_no_name_segment_returns_non_200_and_bridge_survives() {
+        let tmp = TempDir::new().unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html></html>").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+        let port = bridge.port();
+
+        let (status, _, _) = get(&format!("http://127.0.0.1:{port}/v1/replays/scene"));
+        assert_ne!(status, 200, "ambiguous /v1/replays/scene must not return 200");
+
+        let (health_status, _, _) = get(&format!("http://127.0.0.1:{port}/v1/health"));
+        assert_eq!(
+            health_status, 200,
+            "bridge must still serve /v1/health after the crafted request"
+        );
+
         bridge.stop();
     }
 }
