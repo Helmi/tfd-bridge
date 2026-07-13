@@ -179,8 +179,6 @@ impl DecodeContext {
 /// `/player/*` and `/v1/replays/{name}/scene` routes both return 404.
 #[derive(Clone)]
 pub struct PlayerConfig {
-    /// Absolute path to the bundled scene-exporter executable.
-    pub exporter_bin: PathBuf,
     /// Absolute path to the bundled player web dist (contains index.html).
     pub player_dist: PathBuf,
 }
@@ -231,10 +229,14 @@ impl SceneCache {
 struct PlayerState {
     config: PlayerConfig,
     cache: Mutex<SceneCache>,
-    /// Held across spawn+read of the exporter so two concurrent requests for
-    /// the same (slow) replay decode don't both spawn the sidecar. The cache
-    /// is re-checked after acquiring this lock.
+    /// Held across the (slow) in-process decode so two concurrent requests for
+    /// the same replay don't both decode it. The cache is re-checked after
+    /// acquiring this lock.
     decode_lock: Mutex<()>,
+    /// Lightweight per-replay header metadata (battle type + client version),
+    /// keyed by `FileKey`, used to enrich the player's replay picker. Populated
+    /// lazily from the plaintext replay header — no game files, no packet decode.
+    meta_cache: Mutex<std::collections::HashMap<FileKey, scene_export::ReplayMeta>>,
 }
 
 impl PlayerState {
@@ -243,21 +245,50 @@ impl PlayerState {
             config,
             cache: Mutex::new(SceneCache::new(16)),
             decode_lock: Mutex::new(()),
+            meta_cache: Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// Best-effort lightweight metadata for one replay by list `name`, cached by
+    /// `FileKey`. Returns `None` for a non-existent/unreadable file or a name
+    /// that fails safe-path validation (e.g. the live `tempArenaInfo.json`).
+    fn meta_for(&self, replays_dir: &Path, name: &str) -> Option<scene_export::ReplayMeta> {
+        let path = resolve_safe_path(replays_dir, name).ok()?;
+        let key = file_key(&path)?;
+        if let Some(meta) = self.meta_cache.lock().unwrap().get(&key) {
+            return Some(meta.clone());
+        }
+        let meta = scene_export::read_replay_meta(&path).ok()?;
+        self.meta_cache.lock().unwrap().insert(key, meta.clone());
+        Some(meta)
     }
 }
 
-/// Errors from running the scene-exporter sidecar and reading its output.
+/// `(path, mtime_ms, size)` cache key for a file, or `None` if it can't be
+/// stat'd. Shared by the scene cache and the picker metadata cache.
+fn file_key(path: &Path) -> Option<FileKey> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(FileKey {
+        path: path.to_path_buf(),
+        mtime_ms: meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        size: meta.len(),
+    })
+}
+
+/// Errors from the in-process replay → scene decode.
 #[derive(Debug, thiserror::Error)]
 enum SceneError {
     #[error("replays dir has no parent (cannot determine game dir)")]
     GameDirUnknown,
-    #[error("exporter exited with status {0}")]
-    ExporterFailed(std::process::ExitStatus),
-    #[error("exporter timed out")]
-    ExporterTimeout,
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("decode failed: {0}")]
+    DecodeFailed(String),
+    #[error("decode timed out")]
+    Timeout,
 }
 
 // ── Public types ───────────────────────────────────────────────────────────────
@@ -573,6 +604,8 @@ fn handle_requests(
                     let name = &p["/v1/replays/".len()..];
                     handle_fetch(replays_dir, name)
                 }
+                // Enriched picker list — matched before the static catch-all.
+                "/player/api/replays" => handle_player_replays(replays_dir, generation, player),
                 p if p == "/player" || p.starts_with("/player/") => {
                     handle_player_static(player, p)
                 }
@@ -874,9 +907,9 @@ fn handle_fetch(replays_dir: &Path, name: &str) -> Response<std::io::Cursor<Vec<
 // ── Hidden replay-player: scene + static routes ─────────────────────────────────
 
 /// GET /v1/replays/{name}/scene — decode a replay into a self-contained scene
-/// JSON (via the bundled exporter sidecar, `--inline-assets`) and return it.
-/// 404 when `player` is `None`, missing, or not a `.wowsreplay` file; 500 on
-/// exporter/decode failure.
+/// JSON (in-process, map + powerup icons inlined) and return it. 404 when
+/// `player` is `None`, missing, or not a `.wowsreplay` file; 500 on decode
+/// failure.
 fn handle_scene(
     replays_dir: &Path,
     name: &str,
@@ -929,20 +962,11 @@ fn handle_scene(
 }
 
 /// Decode `path` into a scene JSON body, with caching (check → release lock →
-/// spawn exporter → insert) keyed by `FileKey`. A single `decode_lock` is held
-/// across the spawn+read so two concurrent requests for the same slow replay
-/// don't both invoke the exporter; the cache is re-checked after acquiring it.
+/// in-process decode → insert) keyed by `FileKey`. A single `decode_lock` is
+/// held across the decode so two concurrent requests for the same slow replay
+/// don't both decode it; the cache is re-checked after acquiring it.
 fn scene_cached(path: &Path, replays_dir: &Path, state: &PlayerState) -> Result<String, SceneError> {
-    let file_key = std::fs::metadata(path).ok().map(|m| FileKey {
-        path: path.to_path_buf(),
-        mtime_ms: m
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
-        size: m.len(),
-    });
+    let file_key = file_key(path);
 
     if let Some(ref fk) = file_key {
         let guard = state.cache.lock().unwrap();
@@ -952,9 +976,9 @@ fn scene_cached(path: &Path, replays_dir: &Path, state: &PlayerState) -> Result<
     }
     // Lock released before acquiring the decode lock below.
 
-    // Serialize the (slow) exporter spawn+read across concurrent requests.
-    // The serial tiny_http loop already serializes requests in practice, but
-    // holding this lock keeps the invariant correct if that ever changes.
+    // Serialize the (slow) in-process decode across concurrent requests. The
+    // serial tiny_http loop already serializes requests in practice, but holding
+    // this lock keeps the invariant correct if that ever changes.
     let _decode_guard = state.decode_lock.lock().unwrap();
 
     // Re-check the cache now that we hold the decode lock: another request
@@ -967,70 +991,32 @@ fn scene_cached(path: &Path, replays_dir: &Path, state: &PlayerState) -> Result<
     }
 
     // The WoWS install dir is the parent of the replays dir.
-    let game_dir = replays_dir.parent().ok_or(SceneError::GameDirUnknown)?;
+    let game_dir = replays_dir
+        .parent()
+        .ok_or(SceneError::GameDirUnknown)?
+        .to_path_buf();
+    let replay_path = path.to_path_buf();
 
-    // Output dir: temp/tfd-bridge-scene/<hash of resolved path + mtime + size>,
-    // matching the FileKey idea already used by ResultCache above.
-    let hash_input = format!(
-        "{}|{}|{}",
-        path.display(),
-        file_key.as_ref().map(|k| k.mtime_ms).unwrap_or(0),
-        file_key.as_ref().map(|k| k.size).unwrap_or(0),
-    );
-    let output_dir = std::env::temp_dir()
-        .join("tfd-bridge-scene")
-        .join(crate::battle_result::sha256_hex(hash_input.as_bytes()));
-    std::fs::create_dir_all(&output_dir)?;
-
-    // Bound the (slow) sidecar so a hung or pathological decode can't wedge the
-    // single-threaded server loop forever. The exporter writes scene.json to a
-    // FILE, so its stdout is unused; stderr stays piped for diagnostics but is
-    // tiny in practice — and if a pathological run ever filled the pipe, the
-    // deadline below kills the child regardless.
-    const EXPORTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-    let mut child = std::process::Command::new(&state.config.exporter_bin)
-        .arg("--game")
-        .arg(game_dir)
-        .arg("--replay")
-        .arg(path)
-        .arg("--output")
-        .arg(&output_dir)
-        .arg("--inline-assets")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-
-    let deadline = std::time::Instant::now() + EXPORTER_TIMEOUT;
-    let status = loop {
-        match child.try_wait()? {
-            Some(status) => break status,
-            None => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    log::error!("scene exporter timed out for {}", path.display());
-                    return Err(SceneError::ExporterTimeout);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
+    // Decode in-process on a worker thread, bounded by a deadline: a hung or
+    // pathological decode returns an error instead of wedging the serial server
+    // loop. The orphaned worker finishes on its own; `decode_lock` (held by the
+    // caller) keeps at most one decode running at a time.
+    const DECODE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(scene_export::export_scene_json(&game_dir, &replay_path));
+    });
+    let body = match rx.recv_timeout(DECODE_TIMEOUT) {
+        Ok(Ok(json)) => json,
+        Ok(Err(e)) => return Err(SceneError::DecodeFailed(format!("{e:#}"))),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            log::error!("scene decode timed out for {}", path.display());
+            return Err(SceneError::Timeout);
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            return Err(SceneError::DecodeFailed("decode worker panicked".to_string()));
         }
     };
-
-    if !status.success() {
-        let mut stderr = String::new();
-        if let Some(mut s) = child.stderr.take() {
-            let _ = s.read_to_string(&mut stderr);
-        }
-        log::error!(
-            "scene exporter failed ({}) for {}: {}",
-            status,
-            path.display(),
-            stderr
-        );
-        return Err(SceneError::ExporterFailed(status));
-    }
-
-    let body = std::fs::read_to_string(output_dir.join("scene.json"))?;
 
     if let Some(fk) = file_key {
         let mut guard = state.cache.lock().unwrap();
@@ -1038,6 +1024,57 @@ fn scene_cached(path: &Path, replays_dir: &Path, state: &PlayerState) -> Result<
     }
 
     Ok(body)
+}
+
+/// `GET /player/api/replays` — the enriched replay list backing the player's
+/// picker: the same entries as `/v1/replays` (engine-facing, unchanged) plus a
+/// per-replay `battleType` + `gameVersionShort` read cheaply from each replay's
+/// plaintext header. 404 when the player is disabled.
+fn handle_player_replays(
+    replays_dir: &Path,
+    generation: &AtomicU64,
+    player: Option<&Arc<PlayerState>>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let state = match player {
+        Some(s) => s,
+        None => return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+    };
+    let entries = list_replays(replays_dir).unwrap_or_default();
+    let gen = generation.load(Ordering::SeqCst);
+    let enriched: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|entry| {
+            let mut value = serde_json::json!({
+                "name": entry.name,
+                "size": entry.size,
+                "modified_ms": entry.modified_ms,
+            });
+            // Only real replays carry decodable metadata (skip the live
+            // tempArenaInfo.json). Failures degrade gracefully to no meta.
+            let meta = entry
+                .name
+                .to_ascii_lowercase()
+                .ends_with(".wowsreplay")
+                .then(|| state.meta_for(replays_dir, &entry.name))
+                .flatten();
+            if let Some(meta) = meta {
+                let object = value.as_object_mut().expect("json object");
+                if let Some(battle_type) = meta.battle_type {
+                    object.insert("battleType".to_string(), battle_type.into());
+                }
+                if let Some(version) = meta.game_version_short {
+                    object.insert("gameVersionShort".to_string(), version.into());
+                }
+                if !meta.date_time.is_empty() {
+                    object.insert("dateTime".to_string(), meta.date_time.into());
+                }
+                object.insert("complete".to_string(), meta.complete.into());
+            }
+            value
+        })
+        .collect();
+    let body = serde_json::json!({ "generation": gen, "replays": enriched }).to_string();
+    make_json_response(StatusCode(200), &body, None)
 }
 
 /// GET /player/  and  GET /player/{path} — serve static files from the
@@ -2746,11 +2783,10 @@ mod tests {
     // ── Hidden replay-player: /player/* + /v1/replays/{name}/scene ───────────
 
     /// Start a bridge with a `PlayerConfig` pointing at `player_dist`. The
-    /// exporter binary need not exist for the static-file / 404-shape tests
-    /// below (only the scene route would try to spawn it).
+    /// static-file / 404-shape tests below don't decode any replay (only the
+    /// scene route runs the in-process decoder).
     fn start_bridge_with_player(tmp: &TempDir, player_dist: &Path) -> Bridge {
         let config = PlayerConfig {
-            exporter_bin: PathBuf::from("tfd-replay-scene-exporter-does-not-exist"),
             player_dist: player_dist.to_path_buf(),
         };
         start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, None, Some(config))

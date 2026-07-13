@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { battleTypeLabel } from '../battleMeta';
 import { shipClassIconUrl, shipClassNames, type ShipClass } from '../shipClassIcons';
 
 export interface LocalReplaySummary {
@@ -10,6 +11,12 @@ export interface LocalReplaySummary {
   playedAt: string;
   modifiedAt: string;
   size: number;
+  /** Raw WoWS `matchGroup` (mapped to a label for display), when the bridge provides it. */
+  battleType?: string;
+  /** Short "major.minor" client version, e.g. "15.5". */
+  gameVersion?: string;
+  /** False when the recording ended before the battle did (early exit). */
+  complete?: boolean;
 }
 
 interface Props {
@@ -59,10 +66,12 @@ export function ReplayPicker({ replays, currentFilename, loadingId, error, onCho
           {filtered.map((replay) => {
             const active = replay.filename === currentFilename;
             const loading = replay.id === loadingId;
+            const typeLabel = battleTypeLabel(replay.battleType);
+            const incomplete = replay.complete === false;
             return (
               <button
                 key={replay.id}
-                className={`replay-option ${active ? 'active' : ''}`}
+                className={`replay-option ${active ? 'active' : ''} ${incomplete ? 'incomplete' : ''}`}
                 onClick={() => onChoose(replay)}
                 disabled={Boolean(loadingId)}
               >
@@ -70,6 +79,13 @@ export function ReplayPicker({ replays, currentFilename, loadingId, error, onCho
                 <span className="replay-option-copy">
                   <strong>{replay.shipName}</strong>
                   <small>{shipClassNames[replay.shipClass]} · {replay.mapName}</small>
+                  {(typeLabel || replay.gameVersion || incomplete) && (
+                    <small className="replay-tags">
+                      {typeLabel && <span className="replay-tag">{typeLabel}</span>}
+                      {replay.gameVersion && <span className="replay-tag">v{replay.gameVersion}</span>}
+                      {incomplete && <span className="replay-tag incomplete-tag" title="The player left before the battle ended — this recording is missing the end of the battle.">Incomplete</span>}
+                    </small>
+                  )}
                 </span>
                 <span className="replay-option-meta">
                   <time>{dateFormatter.format(new Date(replay.playedAt))}</time>

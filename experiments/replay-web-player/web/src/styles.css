@@ -50,7 +50,7 @@ button { color: inherit; }
 }
 
 .brand-lockup { gap: 13px; min-width: 0; }
-.brand-mark {
+.brand-mark, .brand-logo {
   display: grid;
   place-items: center;
   width: 40px;
@@ -64,8 +64,14 @@ button { color: inherit; }
   font-weight: 850;
   letter-spacing: 0.11em;
 }
+/* The brand mark is now the bridge/engine ship-wheel SVG; pad it inside the box. */
+.brand-logo { flex: none; box-sizing: border-box; padding: 8px; }
 
 .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   color: #7c88a2;
   font-size: 13px;
   font-weight: 800;
@@ -73,6 +79,33 @@ button { color: inherit; }
   line-height: 1.25;
   text-transform: uppercase;
 }
+
+/* Incomplete-recording badge (title bar + replay picker). */
+.incomplete-badge {
+  padding: 2px 7px;
+  border: 1px solid rgba(255, 120, 90, 0.42);
+  border-radius: 999px;
+  color: #ff9d7a;
+  background: rgba(255, 120, 90, 0.14);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+/* No-scene landing (bridge opens here until a replay is chosen). */
+.app-empty { grid-template-rows: 76px minmax(0, 1fr); }
+.empty-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #7c88a2;
+  text-align: center;
+}
+.empty-hero p { font-size: 16px; }
+.empty-hero .brand-logo { width: 64px; height: 64px; padding: 13px; }
+.empty-hero .choose-replay-button { min-height: 40px; padding: 0 16px; }
 
 h1 {
   margin: 3px 0 0;
@@ -300,6 +333,10 @@ h1 span { color: #93a0b4; font-weight: 520; }
 .replay-option-meta time { color: #9ea9bf; font-size: 13px; }
 .replay-option-meta small { margin-top: 5px; color: #6b7892; font-size: 12px; }
 .replay-option.active .replay-option-meta small { color: #4ecfae; }
+/* Battle-type / version / incomplete tags on each picker row. */
+.replay-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; overflow: visible; white-space: normal; }
+.replay-tag { padding: 1px 7px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: #9aa6bd; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.replay-tag.incomplete-tag { border: 1px solid rgba(255, 120, 90, 0.4); background: rgba(255, 120, 90, 0.13); color: #ff9d7a; }
 .empty-replays { padding: 40px 20px; color: #7c88a0; font-size: 16px; text-align: center; }
 .replay-picker > footer { padding: 11px 14px; border-top: 1px solid var(--line); color: #717e97; background: rgba(6, 9, 18, 0.35); font-size: 13px; text-align: center; }
 

@@ -21,11 +21,7 @@ jobs:
       - name: Rust build cache
         uses: swatinem/rust-cache@v2
         with:
-          # The main workspace plus the standalone scene-exporter workspace
-          # (its own [workspace], separate target dir) so repeat CI is fast.
-          workspaces: |
-            . -> target
-            experiments/replay-web-player/exporter -> target
+          workspaces: '. -> target'
 
       - name: Setup Node
         uses: actions/setup-node@v4

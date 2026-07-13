@@ -75,8 +75,11 @@ function shipScale(ship: EvaluatedShip, viewport: Viewport): number {
       : ship.definition.shipClass === 'carrier' ? 1.24
         : ship.definition.shipClass === 'submarine' ? 0.82
           : 1;
-  // Overall ship-marker footprint trimmed ~20% so markers sit better on the map.
-  return 0.8 * Math.max(0.72, base * size);
+  // Clamp the screen factor so markers stay legible on small windows and don't
+  // balloon on large ones — the base marker icon is 16*scale px, so this holds
+  // it to roughly 13–26px across viewport sizes while keeping class proportions.
+  // Overall footprint trimmed ~20% (the 0.8) so markers sit better on the map.
+  return 0.8 * Math.min(2.0, Math.max(1.05, base * size));
 }
 
 function transformedHull(center: WorldPoint, yaw: number, scale: number): number[] {

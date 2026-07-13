@@ -1,0 +1,32 @@
+[package]
+name = "scene-export"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "In-process WoWS replay → TFD battle-scene decoder (used by the bridge's replay player)"
+
+[lib]
+name = "scene_export"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+gettext = "0.4"
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+# wows-toolkit crates: the SAME git source + rev bridge-core uses
+# (Helmi/wows-toolkit @ 36c4e41) so the whole workspace resolves ONE copy of
+# wows-toolkit and its transitive deps. Both the scene decoder (here) and the
+# battle-result decoder (bridge-core) were unified onto this rev — bump BOTH
+# crates together and re-validate BOTH decodes. See docs/wows-toolkit-rev.md.
+wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", features = ["arc", "parsing", "vfs"] }
+# default-features=false avoids wowsunpack's heavy `bin`/`models` default; the
+# `json` path the decoder pulls in transitively (via wows_replays/parsing) builds
+# cleanly at this rev. vfs-mmap pulls vfs→parsing→arc (GameParams reading).
+wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", default-features = false, features = ["arc", "parsing", "vfs-mmap"] }
+wows-battle-world = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", features = ["vfs"] }
+wows_minimap_renderer = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", default-features = false, features = ["rendering", "arc"] }

@@ -189,6 +189,14 @@ export interface ReplayScene {
     id: string;
     title: string;
     gameVersion: string;
+    /** Short "major.minor" client version, e.g. "15.5". */
+    gameVersionShort?: string;
+    /** Raw WoWS `matchGroup` (e.g. "pvp", "ranked"); map to a label for display. */
+    battleType?: string;
+    /** Raw WoWS wall-clock string, e.g. "16.02.2026 19:05:19". */
+    dateTime?: string;
+    /** False when the recording ended before the battle did (early exit). */
+    complete?: boolean;
     duration: Seconds;
     perspectiveTeamId: TeamId;
     perspectiveEntityId?: EntityId;
@@ -312,6 +320,10 @@ export interface ReplaySceneV1 {
     id: string;
     name: string;
     gameBuild: string;
+    gameVersionShort?: string;
+    battleType?: string;
+    dateTime?: string;
+    complete?: boolean;
     durationMs: number;
     battleStartMs: number;
     perspective: string | { playerName?: string; teamId: TeamId; entityId?: EntityId };

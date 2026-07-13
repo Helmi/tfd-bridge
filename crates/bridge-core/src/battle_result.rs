@@ -1122,7 +1122,9 @@ fn extract_battle_results(
 fn load_specs(game_dir: &Path, version: &Version) -> Result<Arc<Vec<EntitySpec>>, DecodeError> {
     static CACHE: OnceLock<Mutex<HashMap<u32, Arc<Vec<EntitySpec>>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = version.build;
+    // `Version::build` became `Option<NonZero<u32>>` in a newer wows-toolkit;
+    // flatten it back to the plain build-number cache key (0 when unknown).
+    let key = version.build.map(|build| build.get()).unwrap_or(0);
 
     if let Some(specs) = cache.lock().unwrap().get(&key) {
         return Ok(Arc::clone(specs));

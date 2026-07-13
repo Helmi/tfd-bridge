@@ -16,10 +16,16 @@ walkdir = "2"
 percent-encoding = "2"
 sha2 = "0.10"
 hex = "0.4"
-# In-process WoWS replay parsing (no bundled executable). Pinned to a fork of
-# landaire/wows-toolkit (MIT) under our control.
-wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "50301ee54630f38d7e8014d98e50e833e15fbea6" }
-wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "50301ee54630f38d7e8014d98e50e833e15fbea6", default-features = false, features = ["vfs-mmap"] }
+# In-process WoWS replay parsing. Pinned to Helmi/wows-toolkit (a fork of
+# landaire/wows-toolkit, MIT, under our control). Bumped 50301ee → 36c4e41 to
+# share ONE rev with the scene-export decoder (the replay player needs an API
+# only present from 36c4e41). Re-validated the battle-result decode against this
+# rev — see docs/wows-toolkit-rev.md. Bump both crates together.
+wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c" }
+wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", default-features = false, features = ["vfs-mmap"] }
+# In-process replay → battle-scene decoder for the hidden replay player. Runs
+# the decode in this process (no bundled sidecar / subprocess).
+scene-export = { path = "../scene-export" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ReplayPicker, type LocalReplaySummary } from './components/ReplayPicker';
 import { TacticalMap } from './components/TacticalMap';
 import { sampleScene } from './data/sampleScene';
+import { battleTypeLabel, formatWowsDateTime } from './battleMeta';
 import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
 import { evaluateScene } from './engine/timeline';
@@ -11,9 +12,9 @@ import type { DamageEvent, EvaluatedCaptureZone, ReplayScene, ShipKnowledge, Tea
 const speeds = [1, 2, 5, 10, 20, 40];
 
 // Set by vite.config.ts only for the `build:bridge` mode: talk to the
-// bridge's /v1/replays routes instead of the vite-dev experiment's /api/*
-// middleware (see src/engine/bridgeApi.ts). The vite-dev path below is
-// otherwise unchanged.
+// bridge's /player/api/replays + /v1/replays routes instead of the vite-dev
+// experiment's /api/* middleware (see src/engine/bridgeApi.ts). The vite-dev
+// path below is otherwise unchanged.
 const isBridge = import.meta.env.VITE_BRIDGE === '1';
 
 function formatClock(seconds: number): string {
@@ -82,33 +83,34 @@ async function fetchGeneratedScene(cacheKey = ''): Promise<ReplayScene> {
   return loadReplayScene(await response.json(), { baseUrl: sceneUrl });
 }
 
+// The bridge/engine brand mark (teal ship-wheel), matching the app title bar.
+function BrandLogo({ size = 26 }: { size?: number }) {
+  return (
+    <svg className="brand-logo" viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="#00d1a7" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 10.189V14" />
+      <path d="M12 2v3" />
+      <path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6" />
+      <path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76" />
+      <path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1" />
+    </svg>
+  );
+}
+
 export function App() {
-  const [scene, setScene] = useState<ReplayScene>(sampleScene);
-  const [time, setTime] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(10);
-  const [selectedShipId, setSelectedShipId] = useState('a-01');
+  // The bridge opens on NO scene and shows the picker straight away (no
+  // synthetic/dummy battle). The vite-dev experiment keeps its sample scene.
+  const [scene, setScene] = useState<ReplayScene | null>(isBridge ? null : sampleScene);
   const [localReplays, setLocalReplays] = useState<LocalReplaySummary[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(isBridge);
   const [loadingReplayId, setLoadingReplayId] = useState<string>();
   const [replayError, setReplayError] = useState<string>();
-  const previousFrame = useRef<number | undefined>(undefined);
-  const state = useMemo(() => evaluateScene(scene, time), [scene, time]);
-
-  const applyScene = (decoded: ReplayScene) => {
-    setScene(decoded);
-    setSelectedShipId(decoded.replay.perspectiveEntityId ?? decoded.ships.find((ship) => ship.relation === 'self')?.id ?? decoded.ships[0].id);
-    setTime(0);
-    setPlaying(false);
-  };
 
   useEffect(() => {
     const controller = new AbortController();
     // The bridge has no generated/scene.json (that's a vite-dev-experiment
-    // artifact) — it starts on the synthetic sample scene until a replay is
-    // chosen from the picker.
+    // artifact) and starts on NO scene — a replay is chosen from the picker.
     if (!isBridge) {
-      void fetchGeneratedScene().then(applyScene).catch((reason) => {
+      void fetchGeneratedScene().then(setScene).catch((reason) => {
         if (!controller.signal.aborted) console.info('Generated scene unavailable; using the synthetic replay.', reason);
       });
     }
@@ -128,6 +130,91 @@ export function App() {
   // Initial local-scene discovery only.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const chooseReplay = async (replay: LocalReplaySummary) => {
+    if (loadingReplayId) return;
+    setLoadingReplayId(replay.id);
+    setReplayError(undefined);
+    try {
+      if (isBridge) {
+        // The bridge decodes and returns the scene JSON directly from one GET.
+        setScene(await fetchBridgeScene(replay.id));
+      } else {
+        const response = await fetch('/api/replays/load', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: replay.id }),
+        });
+        const payload = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(payload.error ?? `Replay preparation failed (HTTP ${response.status}).`);
+        setScene(await fetchGeneratedScene(Date.now().toString()));
+      }
+      setPickerOpen(false);
+    } catch (reason) {
+      setReplayError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoadingReplayId(undefined);
+    }
+  };
+
+  return (
+    <>
+      {scene ? (
+        // Remount per replay so playback state resets cleanly on a new battle.
+        <PlayerView
+          key={scene.replay.id}
+          scene={scene}
+          replayCount={localReplays.length}
+          onOpenPicker={() => setPickerOpen(true)}
+        />
+      ) : (
+        <main className="app-shell app-empty">
+          <header className="topbar">
+            <div className="brand-lockup">
+              <BrandLogo />
+              <div>
+                <div className="eyebrow">TFD Replay Lab</div>
+                <h1>Replay player</h1>
+              </div>
+            </div>
+            <button className="choose-replay-button" onClick={() => setPickerOpen(true)}>
+              <span>Choose replay</span>
+              <small>{localReplays.length || 'Local'}</small>
+            </button>
+          </header>
+          <div className="empty-hero">
+            <BrandLogo size={44} />
+            <p>Choose a replay from your folder to begin.</p>
+            <button className="choose-replay-button" onClick={() => setPickerOpen(true)}>Choose replay</button>
+          </div>
+        </main>
+      )}
+
+      {pickerOpen && (
+        <ReplayPicker
+          replays={localReplays}
+          currentFilename={scene?.replay.title ?? ''}
+          loadingId={loadingReplayId}
+          error={replayError}
+          onChoose={chooseReplay}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; replayCount: number; onOpenPicker: () => void }) {
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(10);
+  const [selectedShipId, setSelectedShipId] = useState(
+    scene.replay.perspectiveEntityId
+      ?? scene.ships.find((ship) => ship.relation === 'self')?.id
+      ?? scene.ships[0].id,
+  );
+  const previousFrame = useRef<number | undefined>(undefined);
+  const state = useMemo(() => evaluateScene(scene, time), [scene, time]);
 
   useEffect(() => {
     if (!playing) {
@@ -150,33 +237,6 @@ export function App() {
     if (time >= scene.replay.duration) setPlaying(false);
   }, [scene.replay.duration, time]);
 
-  const chooseReplay = async (replay: LocalReplaySummary) => {
-    if (loadingReplayId) return;
-    setLoadingReplayId(replay.id);
-    setReplayError(undefined);
-    try {
-      if (isBridge) {
-        // The bridge decodes and returns the scene JSON directly from one
-        // GET — no POST-then-refetch-generated-scene dance.
-        applyScene(await fetchBridgeScene(replay.id));
-      } else {
-        const response = await fetch('/api/replays/load', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: replay.id }),
-        });
-        const payload = await response.json() as { error?: string };
-        if (!response.ok) throw new Error(payload.error ?? `Replay preparation failed (HTTP ${response.status}).`);
-        applyScene(await fetchGeneratedScene(Date.now().toString()));
-      }
-      setPickerOpen(false);
-    } catch (reason) {
-      setReplayError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setLoadingReplayId(undefined);
-    }
-  };
-
   const selected = state.ships.find((ship) => ship.definition.id === selectedShipId) ?? state.ships[0];
   const perspectiveShip = scene.ships.find((ship) => ship.id === scene.replay.perspectiveEntityId)
     ?? scene.ships.find((ship) => ship.relation === 'self');
@@ -195,19 +255,28 @@ export function App() {
     setPlaying((current) => !current);
   };
 
+  // #5: title eyebrow shows the battle type + date/time, and flags an
+  // incomplete recording (player left before the battle ended).
+  const typeLabel = battleTypeLabel(scene.replay.battleType);
+  const playedAt = formatWowsDateTime(scene.replay.dateTime);
+  const eyebrow = [typeLabel, playedAt].filter(Boolean).join(' · ') || 'Battle replay';
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-lockup">
-          <div className="brand-mark">TFD</div>
+          <BrandLogo />
           <div>
-            <div className="eyebrow">Battle replay</div>
+            <div className="eyebrow">
+              <span>{eyebrow}</span>
+              {scene.replay.complete === false && <span className="incomplete-badge" title="The player left before the battle ended — this recording is missing the end of the battle.">Incomplete</span>}
+            </div>
             <h1>{perspectiveShip?.shipName ?? 'Replay'} <span>· {readableName(scene.map.name)}</span></h1>
           </div>
         </div>
-        <button className="choose-replay-button" onClick={() => setPickerOpen(true)}>
+        <button className="choose-replay-button" onClick={onOpenPicker}>
           <span>Choose replay</span>
-          <small>{localReplays.length || 'Local'}</small>
+          <small>{replayCount || 'Local'}</small>
         </button>
       </header>
 
@@ -361,17 +430,6 @@ export function App() {
           </div>
         </aside>
       </section>
-
-      {pickerOpen && (
-        <ReplayPicker
-          replays={localReplays}
-          currentFilename={scene.replay.title}
-          loadingId={loadingReplayId}
-          error={replayError}
-          onChoose={chooseReplay}
-          onClose={() => setPickerOpen(false)}
-        />
-      )}
     </main>
   );
 }

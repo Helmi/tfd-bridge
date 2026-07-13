@@ -5,7 +5,6 @@
       "resources/ship_index.json",
       "resources/achievement_index.json",
       "resources/bonus_index.json",
-      "binaries/tfd-replay-scene-exporter.exe",
       "player/**/*"
     ]
   }

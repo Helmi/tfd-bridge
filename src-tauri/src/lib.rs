@@ -327,29 +327,16 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
     }
 }
 
-/// Resolve the bundled hidden-replay-player resources (scene-exporter sidecar
-/// and player web dist) from the app's resource directory. Both are staged
-/// only by the separate `tauri.player.json` overlay build (`src-tauri/binaries/`
-/// and `src-tauri/player/`) — a default build's resource dir has neither, so
+/// Resolve the bundled hidden-replay-player web dist from the app's resource
+/// directory. It is staged only by the separate `tauri.player.json` overlay
+/// build (`src-tauri/player/`) — a default build's resource dir has none, so
 /// this quietly returns `None` and the bridge serves `/player/*` and the
-/// `/scene` route as 404 (see `PlayerConfig` in bridge-core's `server.rs`).
+/// `/scene` route as 404 (see `PlayerConfig` in bridge-core's `server.rs`). The
+/// replay decode itself is in-process (no bundled sidecar).
 fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
     let resource_dir = app.path().resource_dir().ok()?;
-    let exporter_name = if cfg!(windows) {
-        "tfd-replay-scene-exporter.exe"
-    } else {
-        "tfd-replay-scene-exporter"
-    };
-    let exporter_bin = resource_dir.join("binaries").join(exporter_name);
     let player_dist = resource_dir.join("player");
-    if exporter_bin.exists() && player_dist.exists() {
-        Some(PlayerConfig {
-            exporter_bin,
-            player_dist,
-        })
-    } else {
-        None
-    }
+    player_dist.exists().then_some(PlayerConfig { player_dist })
 }
 
 // ── Bridge management ────────────────────────────────────────────────────────
@@ -576,6 +563,11 @@ const MONITOR_URL: &str = "https://engine.tfd.rocks/monitor";
 /// goes out, then performs the real action (open browser / go to dashboard).
 const SENTINEL_EXTERNAL: &str = "/__tfd_open_external";
 const SENTINEL_DASHBOARD: &str = "/__tfd_dashboard";
+// The hidden replay-player gesture (double-right-click the brand) reaches this
+// from ENGINE pages, where the remote origin has no Tauri IPC: navigating to the
+// sentinel is intercepted below and opens the player window. The LOCAL dashboard
+// invokes `open_replay_player` directly (IPC works there).
+const SENTINEL_PLAYER: &str = "/__tfd_replay_player";
 
 /// JS injected into every page (via the `monitor-embed` plugin). On the remote
 /// Battle Monitor origin it adds a slim top bar with a Back-to-Dashboard control
@@ -669,8 +661,14 @@ const MONITOR_EMBED_JS: &str = r##"
     brand.addEventListener('contextmenu', function (e) {
       e.preventDefault();
       var now = e.timeStamp || 0;
-      if (now - lastCtx < 600) { lastCtx = -1e9; invokeCmd('open_replay_player'); }
-      else { lastCtx = now; }
+      if (now - lastCtx < 600) {
+        lastCtx = -1e9;
+        // Local dashboard: IPC works, invoke directly. Engine pages: the remote
+        // origin has no Tauri IPC, so route through the same-origin sentinel that
+        // on_navigation intercepts (same bridge the nav buttons use).
+        if (isEngine) location.assign(ORIGIN + '/__tfd_replay_player');
+        else invokeCmd('open_replay_player');
+      } else { lastCtx = now; }
     });
 
     var navControls = [];
@@ -1150,6 +1148,14 @@ pub fn run() {
                                         ),
                                     }
                                 });
+                                return false;
+                            }
+                            SENTINEL_PLAYER => {
+                                // Open the hidden replay player from an engine page
+                                // (no remote IPC). Same logic the local dashboard's
+                                // direct invoke uses; cancel the sentinel navigation
+                                // so the monitor page stays mounted.
+                                commands::open_replay_player(webview.app_handle().clone());
                                 return false;
                             }
                             _ => {}

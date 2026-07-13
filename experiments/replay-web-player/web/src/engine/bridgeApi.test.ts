@@ -42,20 +42,23 @@ describe('listBridgeReplays', () => {
     vi.unstubAllGlobals();
   });
 
-  it('fetches /v1/replays, excludes tempArenaInfo.json, and sorts newest first', async () => {
+  it('fetches /player/api/replays, excludes tempArenaInfo.json, sorts newest first, and carries meta', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       generation: 1,
       replays: [
         { name: 'tempArenaInfo.json', size: 1, modified_ms: 0 },
-        { name: '20260101_100000_PBSC110-Cruiser_10_north.wowsreplay', size: 100, modified_ms: 1 },
-        { name: '20260601_100000_PBSA110-Carrier_10_south.wowsreplay', size: 200, modified_ms: 2 },
+        { name: '20260101_100000_PBSC110-Cruiser_10_north.wowsreplay', size: 100, modified_ms: 1, battleType: 'ranked', gameVersionShort: '15.5', complete: false },
+        { name: '20260601_100000_PBSA110-Carrier_10_south.wowsreplay', size: 200, modified_ms: 2, battleType: 'pvp', gameVersionShort: '15.5', complete: true },
       ],
     }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const replays = await listBridgeReplays();
-    expect(fetchMock).toHaveBeenCalledWith('/v1/replays', expect.objectContaining({ cache: 'no-store' }));
+    expect(fetchMock).toHaveBeenCalledWith('/player/api/replays', expect.objectContaining({ cache: 'no-store' }));
     expect(replays.map((replay) => replay.shipClass)).toEqual(['carrier', 'cruiser']);
+    // Newest first: the carrier (June) leads; battle-type/version/complete carried through.
+    expect(replays[0]).toMatchObject({ battleType: 'pvp', gameVersion: '15.5', complete: true });
+    expect(replays[1]).toMatchObject({ battleType: 'ranked', gameVersion: '15.5', complete: false });
   });
 
   it('throws on a non-OK response', async () => {

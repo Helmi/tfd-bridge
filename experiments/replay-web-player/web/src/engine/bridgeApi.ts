@@ -2,11 +2,23 @@ import type { LocalReplaySummary } from '../components/ReplayPicker';
 import type { ReplayScene } from '../types';
 import { loadReplayScene } from './importScene';
 
-/** Raw entry from `GET /v1/replays`: bridge-core's `ReplayEntry` JSON shape. */
+/**
+ * Raw entry from `GET /player/api/replays`: bridge-core's `ReplayEntry` shape
+ * (`name`, `size`, `modified_ms`) plus the optional per-replay header metadata
+ * the bridge reads cheaply from each file (absent for the live tempArenaInfo).
+ */
 export interface BridgeReplayEntry {
   name: string;
   size: number;
   modified_ms: number;
+  /** Raw WoWS `matchGroup`, e.g. "pvp", "ranked". */
+  battleType?: string;
+  /** Short "major.minor" client version, e.g. "15.5". */
+  gameVersionShort?: string;
+  /** Raw WoWS `dateTime`, e.g. "16.02.2026 19:05:19". */
+  dateTime?: string;
+  /** False when the recording ended before the battle did (early exit). */
+  complete?: boolean;
 }
 
 interface BridgeReplayListResponse {
@@ -56,16 +68,22 @@ export function replayEntryToSummary(entry: BridgeReplayEntry): LocalReplaySumma
     playedAt,
     modifiedAt: modified.toISOString(),
     size: entry.size,
+    // Bridge-provided header metadata (undefined for the vite-dev fallback).
+    battleType: entry.battleType,
+    gameVersion: entry.gameVersionShort,
+    complete: entry.complete,
   };
 }
 
 /**
- * `GET /v1/replays`, filtered to `*.wowsreplay` (the bridge's list also
- * includes `tempArenaInfo.json`, the live in-progress battle) and mapped to
- * the picker's summary shape, newest battle first.
+ * `GET /player/api/replays` (the player-scoped enriched list: the same entries
+ * as `/v1/replays` plus per-replay battle type, short version and a
+ * complete/incomplete flag), filtered to `*.wowsreplay` (the list also includes
+ * `tempArenaInfo.json`, the live in-progress battle) and mapped to the picker's
+ * summary shape, newest battle first.
  */
 export async function listBridgeReplays(signal?: AbortSignal): Promise<LocalReplaySummary[]> {
-  const response = await fetch('/v1/replays', { cache: 'no-store', signal });
+  const response = await fetch('/player/api/replays', { cache: 'no-store', signal });
   if (!response.ok) throw new Error(`Bridge replay list failed (HTTP ${response.status}).`);
   const payload = await response.json() as BridgeReplayListResponse;
   return payload.replays
@@ -82,10 +100,9 @@ function currentOrigin(): string {
 }
 
 /**
- * `GET /v1/replays/{encodeURIComponent(name)}/scene` — the bridge decodes
- * the replay server-side (the bundled exporter sidecar, run with
- * `--inline-assets`) and returns the scene JSON directly; unlike the vite-dev
- * experiment there is no POST-then-refetch-generated-scene dance.
+ * `GET /v1/replays/{encodeURIComponent(name)}/scene` — the bridge decodes the
+ * replay in-process (map + powerup icons inlined) and returns the scene JSON
+ * directly; unlike the vite-dev experiment there is no POST-then-refetch dance.
  */
 export async function fetchBridgeScene(id: string): Promise<ReplayScene> {
   const path = `/v1/replays/${encodeURIComponent(id)}/scene`;
