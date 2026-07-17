@@ -408,12 +408,11 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
                     log::info!("Bridge started on port {}", bridge.port());
                     *guard = Some(ActiveBridge { path, bridge });
                     // Startup catch-up + backfill resume: scan for donate-able
-                    // replays (30-day window, not in the ledger).  No-op while
-                    // consent is not opted in; the opt-in command triggers the
-                    // scan for users who consent later.
-                    if donation::consent().is_opted_in() {
-                        donation_uploader.spawn_scan();
-                    }
+                    // replays (30-day window, not in the ledger). Donation is
+                    // default-on for every user now, so always scan; the uploader's
+                    // internal flag gate still holds while the engine's
+                    // `replay_donation` kill switch is off.
+                    donation_uploader.spawn_scan();
                     *app.state::<UploaderState>().0.lock().unwrap() = Some(donation_uploader);
                 }
                 Err(e) => {
@@ -613,13 +612,13 @@ const MONITOR_EMBED_JS: &str = r##"
     return (w && typeof w.label === 'string') ? w.label : '';
   }
   function injectBar() {
-    // The hidden replay-player window (opened via double-right-click on the
-    // brand below) is a bare loopback page with no bar of its own — it is
-    // reached by loading http://127.0.0.1:<port>/player/ directly, which is
-    // neither the local dashboard nor an engine origin. Bail before any
-    // Tauri API use so the player's own UI is untouched.
+    // RePlayer is served from the bridge loopback and now lives IN the main
+    // window, so the shared bar renders on it too (Dashboard / Battle Monitor /
+    // Settings stay one click away, and the frameless window keeps its controls).
+    // `isPlayer` routes its nav: the loopback origin has no app-command IPC — only
+    // the window controls granted by capabilities/player.json — so its buttons
+    // navigate via `location` instead of invoking commands.
     var isPlayer = location.host.indexOf('127.0.0.1') === 0 || location.pathname === '/player' || location.pathname.indexOf('/player/') === 0;
-    if (isPlayer) return;
     if (document.getElementById('tfd-embed-bar') || !document.body) return;
     // The bar shows in two contexts (read synchronously off the global Tauri
     // window API — no IPC, no permission):
@@ -663,6 +662,8 @@ const MONITOR_EMBED_JS: &str = r##"
       var now = e.timeStamp || 0;
       if (now - lastCtx < 600) {
         lastCtx = -1e9;
+        // Already on RePlayer (the loopback page) — nothing to open.
+        if (isPlayer) return;
         // Local dashboard: IPC works, invoke directly. Engine pages: the remote
         // origin has no Tauri IPC, so route through the same-origin sentinel that
         // on_navigation intercepts (same bridge the nav buttons use).
@@ -700,17 +701,29 @@ const MONITOR_EMBED_JS: &str = r##"
       }
       navControls.push(mkBtn('‹', 'Back', function () { history.back(); }));
       navControls.push(mkBtn('›', 'Forward', function () { history.forward(); }));
+      // Engine destinations: from an engine page OR the loopback RePlayer page,
+      // navigate the main window straight to the engine URL (no IPC — the loopback
+      // origin isn't granted app commands). Only the local dashboard invokes the
+      // command (which captures the return-URL + shows the window).
       navControls.push(navBtn('Dashboard', 'Go to the engine Dashboard',
-        function () { if (isEngine) location.assign(ORIGIN + '/'); else invokeCmd('open_engine_home'); },
+        function () { if (isEngine || isPlayer) location.assign(ORIGIN + '/'); else invokeCmd('open_engine_home'); },
         isEngine && location.pathname === '/'));
       navControls.push(navBtn('Battle Monitor', 'Go to the live Battle Monitor',
-        function () { if (isEngine) location.assign(ORIGIN + '/monitor'); else invokeCmd('open_monitor'); },
+        function () { if (isEngine || isPlayer) location.assign(ORIGIN + '/monitor'); else invokeCmd('open_monitor'); },
         isEngine && location.pathname === '/monitor'));
+      // RePlayer lives in the main window now. On the RePlayer page it IS the
+      // active view (no-op); from engine route through the sentinel; from the
+      // local dashboard invoke the command.
+      navControls.push(navBtn('RePlayer', 'Open the replay player',
+        function () { if (isPlayer) return; if (isEngine) location.assign(ORIGIN + '/__tfd_replay_player'); else invokeCmd('open_replay_player'); },
+        isPlayer));
       // Settings = the local TFD Bridge app. Right-aligned (after the spacer). On
-      // the local app it IS the current view → active + no-op.
+      // the local app it IS the current view → active + no-op. From engine OR the
+      // loopback RePlayer page, navigate to the same-origin `__tfd_dashboard`
+      // sentinel (on_navigation round-trips both back to the captured local app).
       settingsBtn = navBtn('Settings', 'TFD Bridge settings',
-        function () { if (isEngine) location.assign(ORIGIN + '/__tfd_dashboard'); },
-        !isEngine);
+        function () { if (isEngine || isPlayer) location.assign(location.origin + '/__tfd_dashboard'); },
+        !isEngine && !isPlayer);
       closeTip = 'Close to tray';
     }
 
@@ -741,6 +754,10 @@ const MONITOR_EMBED_JS: &str = r##"
     bar.appendChild(maxBtn);
     bar.appendChild(close);
     document.documentElement.appendChild(bar);
+    // RePlayer's own layout reserves the 34px bar height via --tfd-bar-h. The var
+    // defaults to 0 in the standalone vite-dev build (no bar), so only the
+    // in-window bridge build gets inset.
+    if (isPlayer) { document.documentElement.style.setProperty('--tfd-bar-h', '34px'); }
     // Inset the ENTIRE engine document 34px below the fixed title bar by turning
     // <body> into a viewport-anchored scroll box (top:34px → bottom:0). This is the
     // SINGLE source of the title-bar offset and is page-agnostic: every engine page
@@ -970,61 +987,38 @@ pub(crate) fn open_profile_window(app: &AppHandle, url: &str) {
 /// Window label for the hidden in-app WoWS replay player. Fixed (not a
 /// per-invocation counter like the profile windows): only one player window
 /// should ever exist at a time.
-const REPLAY_PLAYER_LABEL: &str = "replay-player";
-
-/// Open (or focus) the hidden replay-player window, pointed at the bridge's
-/// own `/player/` route on the given loopback `port`. Reached only through the
-/// double-right-click gesture on the title-bar brand (`MONITOR_EMBED_JS`) — no
-/// visible UI affordance triggers this. The caller (`commands::open_replay_player`)
-/// already checked the bridge is running before resolving `port`.
+/// Navigate the MAIN window to the RePlayer, served from the bridge's own
+/// `/player/` route on loopback `port`. RePlayer lives IN the main window (like
+/// the embedded Battle Monitor) rather than a separate window: the shared title
+/// bar (`MONITOR_EMBED_JS`) renders on the player page too, so Dashboard / Battle
+/// Monitor / Settings stay one click away and the frameless main window keeps its
+/// controls. Window-control IPC for the loopback origin is granted, least-
+/// privilege, by `capabilities/player.json`. The caller
+/// (`commands::open_replay_player`) already confirmed the bridge is running.
 ///
-/// Singleton: a second invocation while the window is already open just
-/// refocuses it instead of spawning another.
-///
-/// The actual `WebviewWindowBuilder::build` is deferred onto
-/// `async_runtime::spawn`, same as `open_profile_window` above and for the
-/// same reason: on Windows it deadlocks when called synchronously from a
-/// Tauri command handler (Webview2 / wry #583).
-///
-/// The window is native-decorated (`decorations(true)`): the player has no
-/// in-app titlebar of its own, and `MONITOR_EMBED_JS`'s `injectBar()`
-/// self-suppresses on this origin/path (see the `isPlayer` guard), so the OS
-/// chrome is the only chrome — correct here, unlike the frameless profile
-/// windows.
-///
-/// SECURITY — `on_navigation` pins the window to `127.0.0.1` for its whole
-/// lifetime, mirroring the `engine.tfd.rocks` pin on profile windows: the
-/// player is served same-origin by the bridge itself, so nothing should ever
-/// navigate this window off loopback.
-pub(crate) fn open_replay_player_window(app: &AppHandle, port: u16) {
-    if let Some(win) = app.get_webview_window(REPLAY_PLAYER_LABEL) {
-        let _ = win.set_focus();
+/// SECURITY — the player page is served same-origin by the bridge itself; the
+/// `monitor-embed` `on_navigation` hook governs where the main window may go
+/// (it never captures loopback as the Settings return-target, and treats the
+/// loopback `__tfd_dashboard` sentinel exactly like the engine one).
+pub(crate) fn navigate_to_replay_player(app: &AppHandle, port: u16) {
+    let Some(win) = app.get_webview_window("main") else {
+        log::error!("navigate_to_replay_player: main window missing");
+        return;
+    };
+    let url = format!("http://127.0.0.1:{port}/player/");
+    let parsed = match tauri::Url::parse(&url) {
+        Ok(u) => u,
+        Err(e) => {
+            log::error!("navigate_to_replay_player: URL parse failed: {e}");
+            return;
+        }
+    };
+    if let Err(e) = win.navigate(parsed) {
+        log::error!("navigate_to_replay_player: navigate failed: {e}");
         return;
     }
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let url = format!("http://127.0.0.1:{port}/player/");
-        let Ok(parsed) = tauri::Url::parse(&url) else {
-            log::error!("open_replay_player_window: URL failed to parse: {url}");
-            return;
-        };
-        match tauri::WebviewWindowBuilder::new(
-            &app,
-            REPLAY_PLAYER_LABEL,
-            tauri::WebviewUrl::External(parsed),
-        )
-        .title("TFD Bridge — Replay Player")
-        .inner_size(1280.0, 820.0)
-        .min_inner_size(900.0, 600.0)
-        .decorations(true)
-        .focused(true)
-        .on_navigation(|u| u.host_str() == Some("127.0.0.1"))
-        .build()
-        {
-            Ok(_win) => log::info!("Opened replay-player window"),
-            Err(e) => log::error!("open_replay_player_window failed: {e}"),
-        }
-    });
+    let _ = win.show();
+    let _ = win.set_focus();
 }
 
 /// Label for the disabled tray version item, e.g. "TFD Bridge v0.2.4".
@@ -1111,7 +1105,12 @@ pub fn run() {
                         *webview.app_handle().state::<DashboardUrl>().0.lock().unwrap() =
                             Some(url.clone());
                     }
-                    if url.host_str() == Some("engine.tfd.rocks") {
+                    // Sentinel paths are intercepted on the engine origin AND on
+                    // the bridge loopback: RePlayer now lives in the main window,
+                    // so its bar's "Settings" navigates to the loopback
+                    // `__tfd_dashboard` sentinel, which must round-trip back to the
+                    // local app exactly like the engine one.
+                    if matches!(url.host_str(), Some("engine.tfd.rocks") | Some("127.0.0.1")) {
                         match url.path() {
                             SENTINEL_EXTERNAL => {
                                 if let Some(target) = url
@@ -1219,6 +1218,11 @@ pub fn run() {
                     .level(log::LevelFilter::Info)
                     .build(),
             )?;
+
+            // Launch-on-login is ON by default for fresh installs — seed the pref
+            // BEFORE the reconciliation below so it enables OS autostart on the
+            // first run (never overrides an existing/explicit choice).
+            commands::seed_fresh_install_launch_on_login(app.handle());
 
             // ── Reconcile autostart OS state with stored pref ──────────────
             #[cfg(desktop)]

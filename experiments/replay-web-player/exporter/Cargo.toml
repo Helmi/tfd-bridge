@@ -20,10 +20,10 @@ sha2 = "0.10"
 # tree, which CI has no access to). Rev = landaire/wows-toolkit `main` @
 # 36c4e41 — the exact tree the scene decoder was built and validated against.
 # Bump deliberately and re-validate the scene decode when advancing it.
-wows_replays = { git = "https://github.com/landaire/wows-toolkit.git", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", features = ["arc", "parsing", "vfs"] }
-wowsunpack = { git = "https://github.com/landaire/wows-toolkit.git", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", features = ["arc", "json", "parsing", "vfs-mmap"] }
-wows-battle-world = { git = "https://github.com/landaire/wows-toolkit.git", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", features = ["vfs"] }
-wows_minimap_renderer = { git = "https://github.com/landaire/wows-toolkit.git", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", default-features = false, features = ["rendering", "arc"] }
+wows_replays = { git = "https://github.com/landaire/wows-toolkit.git", rev = "f328397280f40582a0a16bd5b92923205968c1cc", features = ["arc", "parsing", "vfs"] }
+wowsunpack = { git = "https://github.com/landaire/wows-toolkit.git", rev = "f328397280f40582a0a16bd5b92923205968c1cc", features = ["arc", "json", "parsing", "vfs-mmap"] }
+wows-battle-world = { git = "https://github.com/landaire/wows-toolkit.git", rev = "f328397280f40582a0a16bd5b92923205968c1cc", features = ["vfs"] }
+wows_minimap_renderer = { git = "https://github.com/landaire/wows-toolkit.git", rev = "f328397280f40582a0a16bd5b92923205968c1cc", default-features = false, features = ["rendering", "arc"] }
 
 # Keep this disposable experiment out of the production TFD Bridge workspace.
 [workspace]

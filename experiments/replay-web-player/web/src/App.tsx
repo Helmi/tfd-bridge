@@ -7,9 +7,19 @@ import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
 import { evaluateScene } from './engine/timeline';
 import { shipClassIconUrl, shipClassNames } from './shipClassIcons';
+import { renderAndSave, webCodecsAvailable, type RenderProgress } from './video/encodeMp4';
 import type { DamageEvent, EvaluatedCaptureZone, ReplayScene, ShipKnowledge, TeamDefinition } from './types';
 
 const speeds = [1, 2, 5, 10, 20, 40];
+
+// Picker page size: the bridge returns the newest 30 finalized replays per
+// request, so a cold launch only header-reads 30 files. "Load more" pulls the
+// next page.
+const PAGE_SIZE = 30;
+
+// "Render as video" is still a prototype (td-18bfca) — hidden until it ships.
+// Flip to true (with WebCodecs available) to bring the button back.
+const SHOW_RENDER_VIDEO = false;
 
 // Set by vite.config.ts only for the `build:bridge` mode: talk to the
 // bridge's /player/api/replays + /v1/replays routes instead of the vite-dev
@@ -53,8 +63,8 @@ function damageLabel(event: DamageEvent, nameOf: (id?: string) => string): strin
 function chatChannelColor(channel: string): string {
   if (channel === 'team') return '#4fe0a0';
   if (channel === 'division') return '#ffd369';
-  if (channel === 'system') return '#8792a6';
-  return '#e4ecf2';
+  if (channel === 'system') return '#7b9189';
+  return '#eef4f1';
 }
 
 function readableName(value: string): string {
@@ -73,7 +83,7 @@ function captureSummary(zone: EvaluatedCaptureZone, teams: TeamDefinition[]) {
   if (blocked) return { label: 'Blocked', ariaLabel: `${invader!.name} capture blocked at ${Math.round(zone.progress)}%`, color: '#ffbd66', phase: 'blocked' };
   if (capturing) return { label: `Capping ${Math.round(zone.progress)}%`, ariaLabel: `${invader!.name} capturing at ${Math.round(zone.progress)}%`, color: invader!.color, phase: 'capturing' };
   if (owner) return { label: '', ariaLabel: `${owner.name} held`, color: owner.color, phase: 'held' };
-  return { label: '', ariaLabel: 'Neutral', color: '#91aab4', phase: 'neutral' };
+  return { label: '', ariaLabel: 'Neutral', color: '#7b9189', phase: 'neutral' };
 }
 
 async function fetchGeneratedScene(cacheKey = ''): Promise<ReplayScene> {
@@ -86,7 +96,7 @@ async function fetchGeneratedScene(cacheKey = ''): Promise<ReplayScene> {
 // The bridge/engine brand mark (teal ship-wheel), matching the app title bar.
 function BrandLogo({ size = 26 }: { size?: number }) {
   return (
-    <svg className="brand-logo" viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="#00d1a7" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg className="brand-logo" viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="#2fd6a6" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M12 10.189V14" />
       <path d="M12 2v3" />
       <path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6" />
@@ -101,6 +111,11 @@ export function App() {
   // synthetic/dummy battle). The vite-dev experiment keeps its sample scene.
   const [scene, setScene] = useState<ReplayScene | null>(isBridge ? null : sampleScene);
   const [localReplays, setLocalReplays] = useState<LocalReplaySummary[]>([]);
+  const [replaysTotal, setReplaysTotal] = useState(0);
+  // The bridge opens straight into the picker, so it starts in a loading state.
+  const [listLoading, setListLoading] = useState(isBridge);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [listError, setListError] = useState<string>();
   const [pickerOpen, setPickerOpen] = useState(isBridge);
   const [loadingReplayId, setLoadingReplayId] = useState<string>();
   const [replayError, setReplayError] = useState<string>();
@@ -114,22 +129,50 @@ export function App() {
         if (!controller.signal.aborted) console.info('Generated scene unavailable; using the synthetic replay.', reason);
       });
     }
-    const replayList = isBridge
-      ? listBridgeReplays(controller.signal)
+    // First page. The bridge path is paginated (newest 30 + total); the vite-dev
+    // path returns the whole list at once (no "load more" in the experiment).
+    const firstPage: Promise<{ replays: LocalReplaySummary[]; total: number }> = isBridge
+      ? listBridgeReplays({ offset: 0, limit: PAGE_SIZE, signal: controller.signal })
       : fetch('/api/replays', { cache: 'no-store', signal: controller.signal })
         .then(async (response) => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return (await response.json() as { replays: LocalReplaySummary[] }).replays;
+          const replays = (await response.json() as { replays: LocalReplaySummary[] }).replays;
+          return { replays, total: replays.length };
         });
-    void replayList
-      .then(setLocalReplays)
+    void firstPage
+      .then(({ replays, total }) => { setLocalReplays(replays); setReplaysTotal(total); })
       .catch((reason) => {
-        if (!controller.signal.aborted) console.info('Local replay picker is unavailable outside the development experiment.', reason);
-      });
+        if (controller.signal.aborted) return;
+        // In the bridge the picker is the only way in, so surface the failure;
+        // in the vite-dev experiment the picker is optional, so just log.
+        if (isBridge) setListError(reason instanceof Error ? reason.message : String(reason));
+        else console.info('Local replay picker is unavailable outside the development experiment.', reason);
+      })
+      .finally(() => { if (!controller.signal.aborted) setListLoading(false); });
     return () => controller.abort();
   // Initial local-scene discovery only.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // "Load more": append the next page of older replays (bridge only). Dedupes by
+  // id in case the folder changed between pages.
+  const loadMoreReplays = async () => {
+    if (!isBridge || loadingMore || localReplays.length >= replaysTotal) return;
+    setLoadingMore(true);
+    setListError(undefined);
+    try {
+      const { replays, total } = await listBridgeReplays({ offset: localReplays.length, limit: PAGE_SIZE });
+      setLocalReplays((previous) => {
+        const seen = new Set(previous.map((replay) => replay.id));
+        return [...previous, ...replays.filter((replay) => !seen.has(replay.id))];
+      });
+      setReplaysTotal(total);
+    } catch (reason) {
+      setListError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const chooseReplay = async (replay: LocalReplaySummary) => {
     if (loadingReplayId) return;
@@ -164,7 +207,7 @@ export function App() {
         <PlayerView
           key={scene.replay.id}
           scene={scene}
-          replayCount={localReplays.length}
+          replayCount={replaysTotal || localReplays.length}
           onOpenPicker={() => setPickerOpen(true)}
         />
       ) : (
@@ -173,13 +216,13 @@ export function App() {
             <div className="brand-lockup">
               <BrandLogo />
               <div>
-                <div className="eyebrow">TFD Replay Lab</div>
-                <h1>Replay player</h1>
+                <div className="eyebrow">TFD RePlayer</div>
+                <h1>RePlayer</h1>
               </div>
             </div>
             <button className="choose-replay-button" onClick={() => setPickerOpen(true)}>
               <span>Choose replay</span>
-              <small>{localReplays.length || 'Local'}</small>
+              <small>{replaysTotal || 'Local'}</small>
             </button>
           </header>
           <div className="empty-hero">
@@ -193,9 +236,15 @@ export function App() {
       {pickerOpen && (
         <ReplayPicker
           replays={localReplays}
+          total={replaysTotal}
           currentFilename={scene?.replay.title ?? ''}
           loadingId={loadingReplayId}
-          error={replayError}
+          loading={listLoading}
+          loadingMore={loadingMore}
+          canLoadMore={isBridge && localReplays.length < replaysTotal}
+          pageSize={PAGE_SIZE}
+          onLoadMore={loadMoreReplays}
+          error={replayError ?? listError}
           onChoose={chooseReplay}
           onClose={() => setPickerOpen(false)}
         />
@@ -215,6 +264,28 @@ function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; 
   );
   const previousFrame = useRef<number | undefined>(undefined);
   const state = useMemo(() => evaluateScene(scene, time), [scene, time]);
+
+  // Experimental: render this replay to a 16:9 broadcast-layout mp4 (offline,
+  // bridge-local). Prototype — see td-18bfca.
+  const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
+  const [renderNote, setRenderNote] = useState<string>();
+  const onRenderVideo = async () => {
+    if (renderProgress) return;
+    setRenderNote(undefined);
+    setRenderProgress({ frame: 0, total: 1 });
+    const base = (scene.replay.title || perspectiveShip?.shipName || 'replay')
+      .replace(/[^\w.-]+/g, '_').slice(0, 60) + '_' + readableName(scene.map.name).replace(/[^\w.-]+/g, '_');
+    try {
+      const saved = await renderAndSave(scene, base, (p) => setRenderProgress(p));
+      const secs = (saved.elapsedMs / 1000).toFixed(1);
+      const mb = (saved.bytes / 1_048_576).toFixed(1);
+      setRenderNote(`Rendered ${saved.frames} frames in ${secs}s → ${mb} MB${saved.path ? ` · ${saved.path}` : ' · downloaded'}`);
+    } catch (reason) {
+      setRenderNote(`Render failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+    } finally {
+      setRenderProgress(null);
+    }
+  };
 
   useEffect(() => {
     if (!playing) {
@@ -274,11 +345,26 @@ function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; 
             <h1>{perspectiveShip?.shipName ?? 'Replay'} <span>· {readableName(scene.map.name)}</span></h1>
           </div>
         </div>
-        <button className="choose-replay-button" onClick={onOpenPicker}>
-          <span>Choose replay</span>
-          <small>{replayCount || 'Local'}</small>
-        </button>
+        <div className="topbar-actions">
+          {SHOW_RENDER_VIDEO && webCodecsAvailable() && (
+            <button
+              className="render-video-button"
+              onClick={onRenderVideo}
+              disabled={Boolean(renderProgress)}
+              title="Render this replay to a 16:9 broadcast-layout mp4 (experimental)"
+            >
+              {renderProgress
+                ? `Rendering… ${Math.round((renderProgress.frame / renderProgress.total) * 100)}%`
+                : 'Render as video'}
+            </button>
+          )}
+          <button className="choose-replay-button" onClick={onOpenPicker}>
+            <span>Choose replay</span>
+            <small>{replayCount || 'Local'}</small>
+          </button>
+        </div>
       </header>
+      {renderNote && <div className="render-note" role="status">{renderNote}</div>}
 
       <section className="scoreboard" aria-label="Team score and capture points">
         {scene.teams.map((team, index) => (

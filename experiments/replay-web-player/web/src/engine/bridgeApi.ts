@@ -23,7 +23,16 @@ export interface BridgeReplayEntry {
 
 interface BridgeReplayListResponse {
   generation: number;
+  /** Total number of finalized replays on disk (for "Load more" paging). */
+  total: number;
+  offset: number;
   replays: BridgeReplayEntry[];
+}
+
+/** One page of the picker list plus the total count on disk. */
+export interface BridgeReplayPage {
+  replays: LocalReplaySummary[];
+  total: number;
 }
 
 function titleCase(value: string): string {
@@ -76,20 +85,32 @@ export function replayEntryToSummary(entry: BridgeReplayEntry): LocalReplaySumma
 }
 
 /**
- * `GET /player/api/replays` (the player-scoped enriched list: the same entries
- * as `/v1/replays` plus per-replay battle type, short version and a
- * complete/incomplete flag), filtered to `*.wowsreplay` (the list also includes
- * `tempArenaInfo.json`, the live in-progress battle) and mapped to the picker's
- * summary shape, newest battle first.
+ * One page of `GET /player/api/replays?offset=&limit=` — the player-scoped
+ * enriched list (per-replay battle type, short version and a complete/incomplete
+ * flag), already filtered to finalized `*.wowsreplay` and sorted newest-first by
+ * the bridge. Server order is preserved (not re-sorted) so page boundaries stay
+ * stable as more pages append. `total` is the full count on disk for paging.
  */
-export async function listBridgeReplays(signal?: AbortSignal): Promise<LocalReplaySummary[]> {
-  const response = await fetch('/player/api/replays', { cache: 'no-store', signal });
+export async function listBridgeReplays(
+  opts: { offset?: number; limit?: number; signal?: AbortSignal } = {},
+): Promise<BridgeReplayPage> {
+  const offset = opts.offset ?? 0;
+  const limit = opts.limit ?? 30;
+  const response = await fetch(`/player/api/replays?offset=${offset}&limit=${limit}`, {
+    cache: 'no-store',
+    signal: opts.signal,
+  });
   if (!response.ok) throw new Error(`Bridge replay list failed (HTTP ${response.status}).`);
   const payload = await response.json() as BridgeReplayListResponse;
-  return payload.replays
-    .filter((entry) => entry.name.toLowerCase().endsWith('.wowsreplay'))
-    .map(replayEntryToSummary)
-    .sort((left, right) => right.playedAt.localeCompare(left.playedAt));
+  const replays = payload.replays
+    // Defensive: the bridge already drops the live tempArenaInfo.json and the
+    // in-progress temp.wowsreplay, but never show either even if one slips in.
+    .filter((entry) => {
+      const base = (entry.name.split('/').pop() ?? entry.name).toLowerCase();
+      return base.endsWith('.wowsreplay') && base !== 'temp.wowsreplay';
+    })
+    .map(replayEntryToSummary);
+  return { replays, total: payload.total ?? replays.length };
 }
 
 // Falls back to a fixed loopback origin outside a browser (e.g. under

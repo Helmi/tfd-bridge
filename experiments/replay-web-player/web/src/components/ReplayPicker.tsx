@@ -21,10 +21,21 @@ export interface LocalReplaySummary {
 
 interface Props {
   replays: LocalReplaySummary[];
+  /** Total finalized replays on disk (loaded ones may be fewer — see canLoadMore). */
+  total: number;
   currentFilename: string;
   loadingId?: string;
+  /** Initial page is still loading (nothing to show yet). */
+  loading?: boolean;
+  /** A "Load more" page is in flight. */
+  loadingMore?: boolean;
+  /** More pages exist on disk beyond what's loaded. */
+  canLoadMore?: boolean;
+  /** How many a "Load more" click pulls (for the button label). */
+  pageSize?: number;
   error?: string;
   onChoose: (replay: LocalReplaySummary) => void;
+  onLoadMore?: () => void;
   onClose: () => void;
 }
 
@@ -33,13 +44,29 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   timeStyle: 'short',
 });
 
-export function ReplayPicker({ replays, currentFilename, loadingId, error, onChoose, onClose }: Props) {
+export function ReplayPicker({
+  replays,
+  total,
+  currentFilename,
+  loadingId,
+  loading,
+  loadingMore,
+  canLoadMore,
+  pageSize = 30,
+  error,
+  onChoose,
+  onLoadMore,
+  onClose,
+}: Props) {
   const [query, setQuery] = useState('');
+  const searching = query.trim().length > 0;
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return replays;
     return replays.filter((replay) => `${replay.shipName} ${replay.mapName} ${replay.filename}`.toLocaleLowerCase().includes(needle));
   }, [query, replays]);
+  const busy = Boolean(loadingId);
+  const decoding = loadingId ? replays.find((replay) => replay.id === loadingId) : undefined;
 
   return (
     <div className="replay-picker-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !loadingId && onClose()}>
@@ -59,13 +86,20 @@ export function ReplayPicker({ replays, currentFilename, loadingId, error, onCho
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-          <span>{filtered.length} replays</span>
+          <span>{loading ? 'Loading…' : searching ? `${filtered.length} match` : `${total} replays`}</span>
         </div>
         {error && <div className="picker-error">{error}</div>}
         <div className="replay-list">
+          {loading && !replays.length ? (
+            <div className="picker-loading" role="status">
+              <span className="picker-spinner" aria-hidden="true" />
+              Loading replays…
+            </div>
+          ) : (
+          <>
           {filtered.map((replay) => {
             const active = replay.filename === currentFilename;
-            const loading = replay.id === loadingId;
+            const preparing = replay.id === loadingId;
             const typeLabel = battleTypeLabel(replay.battleType);
             const incomplete = replay.complete === false;
             return (
@@ -75,10 +109,12 @@ export function ReplayPicker({ replays, currentFilename, loadingId, error, onCho
                 onClick={() => onChoose(replay)}
                 disabled={Boolean(loadingId)}
               >
-                <span className="replay-class-icon"><img src={shipClassIconUrl(replay.shipClass)} alt="" /></span>
+                <span className="replay-class-icon" title={shipClassNames[replay.shipClass]}>
+                  <img src={shipClassIconUrl(replay.shipClass)} alt={shipClassNames[replay.shipClass]} />
+                </span>
                 <span className="replay-option-copy">
                   <strong>{replay.shipName}</strong>
-                  <small>{shipClassNames[replay.shipClass]} · {replay.mapName}</small>
+                  <small>Map: {replay.mapName}</small>
                   {(typeLabel || replay.gameVersion || incomplete) && (
                     <small className="replay-tags">
                       {typeLabel && <span className="replay-tag">{typeLabel}</span>}
@@ -89,14 +125,38 @@ export function ReplayPicker({ replays, currentFilename, loadingId, error, onCho
                 </span>
                 <span className="replay-option-meta">
                   <time>{dateFormatter.format(new Date(replay.playedAt))}</time>
-                  <small>{loading ? 'Preparing replay…' : active ? 'Currently loaded' : `${(replay.size / 1_048_576).toFixed(1)} MB`}</small>
+                  <small>{preparing ? 'Preparing replay…' : active ? 'Currently loaded' : `${(replay.size / 1_048_576).toFixed(1)} MB`}</small>
                 </span>
               </button>
             );
           })}
-          {!filtered.length && <div className="empty-replays">No matching replays found.</div>}
+          {!filtered.length && (
+            <div className="empty-replays">
+              {searching ? 'No matches in the loaded replays.' : 'No replays found.'}
+            </div>
+          )}
+          {canLoadMore && (
+            <button
+              className="load-more-button"
+              onClick={onLoadMore}
+              disabled={loadingMore || busy}
+            >
+              {loadingMore ? 'Loading…' : `Load ${Math.min(pageSize, total - replays.length)} more`}
+            </button>
+          )}
+          </>
+          )}
         </div>
         <footer>Preparing a replay decodes it locally; nothing is uploaded.</footer>
+
+        {loadingId && (
+          <div className="picker-decoding" role="status" aria-live="polite">
+            <span className="picker-spinner picker-spinner-lg" aria-hidden="true" />
+            <strong>Decoding replay…</strong>
+            {decoding && <span className="picker-decoding-name">{decoding.shipName} · {decoding.mapName}</span>}
+            <small>Reading the full battle from the replay file — this takes a few seconds.</small>
+          </div>
+        )}
       </section>
     </div>
   );

@@ -14,22 +14,27 @@
       src: url("fonts/space-grotesk.woff2") format("woff2");
     }
 
-    /* ── Brand tokens (derived from engine.tfd.rocks dark theme) ───────────── */
+    /* ── Brand tokens (TFD Engine design system — Color Palette, project
+         527e8989: green-black Abyss ground, teal interactive, gold prestige) ── */
     :root {
-      --bg:            #05070e;
-      --bg-grad:       #0b1018;
-      --surface:       #0e1624;
-      --surface-2:     #11192a;
-      --border:        rgba(255, 255, 255, 0.10);
-      --border-strong: rgba(255, 255, 255, 0.16);
-      --fg:            #dfe6e8;
-      --fg-muted:      #8a949a;
-      --fg-faint:      #5e676d;
-      --accent:        #00d1a7;
-      --accent-hi:     #1ce6bd;
+      --bg:            #0a1411;
+      --bg-grad:       #0f1c18;
+      --surface:       #0d1916;
+      --surface-2:     #0f1c18;
+      --border:        rgba(140, 180, 168, 0.16);
+      --border-strong: rgba(140, 180, 168, 0.28);
+      --fg:            #eef4f1;
+      --fg-muted:      #aec1ba;
+      --fg-faint:      #7b9189;
+      --accent:        #2fd6a6;
+      --accent-hi:     #5ee6bd;
       --accent-fg:     #04130f;
-      --accent-soft:   rgba(0, 209, 167, 0.12);
-      --danger:        #e05563;
+      --accent-soft:   rgba(47, 214, 166, 0.12);
+      --gold:          #d8ad4e;
+      --gold-hi:       #f0d480;
+      --gold-soft:     rgba(216, 173, 78, 0.12);
+      --gold-line:     rgba(216, 173, 78, 0.30);
+      --danger:        #f2665c;
       --topbar-h:      34px;
       --font-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, monospace;
@@ -43,7 +48,8 @@
       font-family: var(--font-sans);
       color: var(--fg);
       background:
-        radial-gradient(120% 90% at 50% -10%, var(--bg-grad) 0%, var(--bg) 60%);
+        radial-gradient(120% 80% at 50% -10%, rgba(28, 150, 116, 0.10), transparent 55%),
+        var(--bg);
       height: 100%;
       overflow: hidden;            /* body/html never scroll; .content is the one scroll box */
       -webkit-font-smoothing: antialiased;
@@ -81,7 +87,7 @@
       letter-spacing: -0.01em;
       color: var(--fg);
     }
-    .lede h1 .accent { color: var(--accent); }
+    .lede h1 .accent { color: var(--gold); }
     .lede p {
       margin-top: 0.3rem;
       color: var(--fg-muted);
@@ -439,14 +445,6 @@
       margin-top: 0.7rem;
     }
 
-    /* ── Replay-donation card ──────────────────────────────────────────────── */
-    /* Separate the decision row (ask buttons / toggle) from the privacy copy. */
-    #donation-card .toggle-row {
-      margin-top: 0.9rem;
-      padding-top: 0.9rem;
-      border-top: 1px solid var(--border);
-    }
-
     /* ── Initial visibility + spacing (former inline style attributes) ──────
        The CSP (tauri.conf.json) gives style-src a Tauri-injected nonce, which
        makes the webview ignore 'unsafe-inline' — inline style attributes
@@ -458,10 +456,6 @@
     #detected-section { display: none; }
     #no-detect-msg    { display: none; }
     #error-msg        { display: none; }
-    #donation-card    { display: none; }
-    #donation-ask     { display: none; }
-    #donation-toggle-row   { display: none; }
-    #donation-paused-badge { display: none; }
     .card-head + .hint { margin-top: 0.6rem; }
     #main-status .hint { margin-bottom: 0.85rem; }
     #detected-section > .path-source { margin-bottom: 0.5rem; }
@@ -593,42 +587,6 @@
         </div>
       </div>
 
-      <!-- Replay donation (shared by onboarding + dashboard): while consent is
-           undecided the card shows the one active ask; once answered it becomes
-           a settings toggle that can flip the decision any time. -->
-      <div class="card" id="donation-card">
-        <div class="card-head">
-          <h2>Replay donation</h2>
-          <span class="badge-soon" id="donation-paused-badge">Paused by server</span>
-        </div>
-        <p class="hint">
-          Donate your battle replays to TFD to power community stats, contests
-          and challenges built on data the public API can't provide.
-        </p>
-        <p class="hint">
-          A replay contains the battle data of all players in the match,
-          including their names and in-game chat. Only *.wowsreplay files are
-          uploaded — nothing else from your disk. Uploads are anonymous (no
-          account needed) and are attributed to the in-game player name stored
-          inside the file. Already-uploaded replays stay donated if you opt
-          out later.
-        </p>
-
-        <!-- Ask mode: consent is unset — shown exactly until a decision -->
-        <div class="actions" id="donation-ask">
-          <button class="btn btn-primary" id="btn-donate-yes" type="button">Donate my replays</button>
-          <button class="btn btn-secondary" id="btn-donate-no" type="button">No thanks</button>
-        </div>
-
-        <!-- Toggle mode: a decision exists — flip it any time -->
-        <div class="toggle-row" id="donation-toggle-row">
-          <div>
-            <div class="label">Donate replays</div>
-            <div class="sub" id="donation-sub"></div>
-          </div>
-          <div class="switch" id="toggle-donation" role="switch" aria-label="Donate replays"></div>
-        </div>
-      </div>
     </div>
   </main>
 
@@ -679,9 +637,6 @@
       // Show onboarding as fallback
       showOnboarding([]);
     }
-    // The donation card shows in both views: the active ask during onboarding
-    // (new installs) or on the dashboard (existing installs after update).
-    refreshDonation();
     // Reflect the persisted profile-link target preference on the dashboard.
     initLinkTarget();
   }
@@ -803,88 +758,9 @@
     }
   });
 
-  // ── Replay donation (consent UX) ──────────────────────────────────────────
-  // Tri-state consent: 'unset' shows the one active ask; an answer (either
-  // way) is persisted, swaps the card to the settings toggle, and is never
-  // asked again. The Rust side syncs the uploader's consent cache before
-  // answering, so flipping the toggle takes effect immediately.
-
-  function donationSubText(status) {
-    if (status.consent !== 'opted_in') return 'No replays are uploaded.';
-    if (!status.remoteEnabled) {
-      return 'Donation is currently paused by the server — nothing is uploaded right now.';
-    }
-    return 'New replays are donated automatically after each battle.';
-  }
-
-  function setDonationToggle(on) {
-    const sw = document.getElementById('toggle-donation');
-    if (on) {
-      sw.classList.add('on');
-    } else {
-      sw.classList.remove('on');
-    }
-    sw.setAttribute('aria-checked', String(on));
-  }
-
-  function renderDonation(status) {
-    document.getElementById('donation-card').style.display = 'block';
-    // The consent UI stays visible when the server pauses donation — the
-    // badge just reflects the remote feature flag.
-    document.getElementById('donation-paused-badge').style.display =
-      status.remoteEnabled ? 'none' : 'inline-block';
-    const undecided = status.consent === 'unset';
-    document.getElementById('donation-ask').style.display = undecided ? 'flex' : 'none';
-    document.getElementById('donation-toggle-row').style.display = undecided ? 'none' : 'flex';
-    if (!undecided) {
-      setDonationToggle(status.consent === 'opted_in');
-      document.getElementById('donation-sub').textContent = donationSubText(status);
-    }
-  }
-
-  async function refreshDonation() {
-    try {
-      renderDonation(await invoke('get_donation_status'));
-    } catch (err) {
-      // Leave the card hidden rather than render a wrong consent state.
-      console.error('get_donation_status failed:', err);
-    }
-  }
-
-  // The active first ask: either answer persists and swaps the card to the
-  // settings toggle. The command also emits donation-status-changed, but the
-  // swap refreshes directly so it never depends on the event round-trip.
-  async function answerDonationAsk(optedIn) {
-    try {
-      await invoke('set_donation_consent', { optedIn });
-      await refreshDonation();
-    } catch (err) {
-      console.error('set_donation_consent failed:', err);
-    }
-  }
-  document.getElementById('btn-donate-yes').addEventListener('click', () => answerDonationAsk(true));
-  document.getElementById('btn-donate-no').addEventListener('click', () => answerDonationAsk(false));
-
-  // Settings toggle: optimistic flip like the launch-on-login switch.
-  document.getElementById('toggle-donation').addEventListener('click', async () => {
-    const sw = document.getElementById('toggle-donation');
-    const currentlyOn = sw.classList.contains('on');
-    const newState = !currentlyOn;
-    setDonationToggle(newState);
-    try {
-      await invoke('set_donation_consent', { optedIn: newState });
-    } catch (err) {
-      // Revert on failure.
-      setDonationToggle(currentlyOn);
-      console.error('set_donation_consent failed:', err);
-    }
-  });
-
-  // Live updates: consent decisions (the command emits after persisting) and
-  // hourly engine feature-flag refreshes both land here.
-  window.__TAURI__.event
-    .listen('donation-status-changed', ({ payload }) => renderDonation(payload))
-    .catch((err) => console.warn('donation-status-changed listen failed:', err));
+  // Replay donation is default-on for every user now (the per-user consent UI
+  // was removed): replays upload automatically, subject only to the engine's
+  // server-side `replay_donation` kill switch. No dashboard controls remain.
 
   function showOnboarding(detected) {
     document.getElementById('onboarding').style.display = 'block';

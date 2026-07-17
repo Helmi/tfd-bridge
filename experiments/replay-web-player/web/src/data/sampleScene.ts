@@ -245,8 +245,8 @@ export const sampleScene: ReplayScene = {
     bounds: { minX: 0, minY: 0, maxX: 1000, maxY: 1000 },
   },
   teams: [
-    { id: 'allies', name: 'TFD Fleet', color: '#00d1a7', score: [{ t: 0, value: 300 }, { t: 120, value: 362 }, { t: 240, value: 518 }, { t: 360, value: 714 }, { t: 420, value: 826 }] },
-    { id: 'enemies', name: 'Opposing Fleet', color: '#ef5a4c', score: [{ t: 0, value: 300 }, { t: 120, value: 388 }, { t: 240, value: 472 }, { t: 360, value: 641 }, { t: 420, value: 702 }] },
+    { id: 'allies', name: 'TFD Fleet', color: '#2fd6a6', score: [{ t: 0, value: 300 }, { t: 120, value: 362 }, { t: 240, value: 518 }, { t: 360, value: 714 }, { t: 420, value: 826 }] },
+    { id: 'enemies', name: 'Opposing Fleet', color: '#f2665c', score: [{ t: 0, value: 300 }, { t: 120, value: 388 }, { t: 240, value: 472 }, { t: 360, value: 641 }, { t: 420, value: 702 }] },
   ],
   ships,
   captureZones: [

@@ -101,11 +101,12 @@ pub fn open_monitor(app: AppHandle) {
     crate::open_monitor_window(&app);
 }
 
-/// Open (or focus) the hidden in-app WoWS replay player. Reached only via the
-/// double-right-click gesture on the title-bar brand (`MONITOR_EMBED_JS`) —
-/// there is no visible menu item or button for this. No-op (logged) if the
-/// bridge is not running, since the player window loads its `/player/` route
-/// off the bridge's own loopback port.
+/// Open the in-app RePlayer (WoWS replay player) by navigating the main window to
+/// the bridge's own `/player/` route — RePlayer lives IN the main window, not a
+/// separate one. Reached from the "RePlayer" title-bar nav button and the
+/// double-right-click gesture on the brand (`MONITOR_EMBED_JS`). No-op (logged) if
+/// the bridge is not running, since the player page loads off the bridge's own
+/// loopback port.
 #[tauri::command]
 pub fn open_replay_player(app: AppHandle) {
     use crate::BridgeState;
@@ -118,7 +119,7 @@ pub fn open_replay_player(app: AppHandle) {
         .as_ref()
         .map(|ab| ab.bridge.port());
     match port {
-        Some(port) => crate::open_replay_player_window(&app, port),
+        Some(port) => crate::navigate_to_replay_player(&app, port),
         None => log::info!("player: no bridge"),
     }
 }
@@ -400,6 +401,30 @@ pub fn seed_fresh_install_donation_default(app: &AppHandle) {
         return; // existing install, or already decided — leave as-is
     }
     save_donation_consent(app, DonationConsent::OptedIn);
+}
+
+/// Launch-on-login defaults ON for FRESH installs only. On first launch — no
+/// pref stored AND onboarding not yet completed — this persists `true`, so a new
+/// user starts with autostart enabled (the startup reconciliation in `lib.rs`
+/// then flips the OS state to match). Existing installs, and anyone who
+/// explicitly turned it off (pref present = `false`), are never touched.
+/// Idempotent; must run BEFORE the autostart reconciliation.
+pub fn seed_fresh_install_launch_on_login(app: &AppHandle) {
+    let Ok(store) = app.store(STORE_FILE) else {
+        return;
+    };
+    let pref_set = store.get(KEY_LAUNCH_ON_LOGIN).is_some();
+    let onboarding_done = store
+        .get(KEY_ONBOARDING_DONE)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if pref_set || onboarding_done {
+        return;
+    }
+    store.set(KEY_LAUNCH_ON_LOGIN, serde_json::json!(true));
+    if let Err(e) = store.save() {
+        log::error!("Failed to seed launch-on-login default: {e}");
+    }
 }
 
 /// Read the persisted launch-on-login pref from the store. Returns `false` when

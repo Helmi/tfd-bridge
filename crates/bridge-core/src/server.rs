@@ -525,7 +525,7 @@ fn handle_requests(
     player: Option<&Arc<PlayerState>>,
 ) {
     loop {
-        let request = match server.recv() {
+        let mut request = match server.recv() {
             Ok(r) => r,
             Err(_) => break,
         };
@@ -570,6 +570,21 @@ fn handle_requests(
         // Strip query string for routing
         let path_no_qs = path.split('?').next().unwrap_or(&path);
 
+        // POST routes are handled first: reading the request body needs `&mut
+        // request`, which the borrow held by `match request.method()` below would
+        // forbid. Currently the only POST endpoint is the player's render-save.
+        if request.method() == &tiny_http::Method::Post {
+            let response = match path_no_qs {
+                "/player/api/render" => handle_player_render_save(&mut request, &path, player),
+                _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+            };
+            let response = attach_cors(response, cors_origin.as_deref());
+            if let Err(e) = request.respond(response) {
+                log::warn!("Bridge: failed to send response: {e}");
+            }
+            continue;
+        }
+
         let response = match request.method() {
             tiny_http::Method::Get => match path_no_qs {
                 "/v1/health" => handle_health(decode_ctx),
@@ -605,7 +620,9 @@ fn handle_requests(
                     handle_fetch(replays_dir, name)
                 }
                 // Enriched picker list — matched before the static catch-all.
-                "/player/api/replays" => handle_player_replays(replays_dir, generation, player),
+                "/player/api/replays" => {
+                    handle_player_replays(replays_dir, generation, player, &path)
+                }
                 p if p == "/player" || p.starts_with("/player/") => {
                     handle_player_static(player, p)
                 }
@@ -1026,38 +1043,65 @@ fn scene_cached(path: &Path, replays_dir: &Path, state: &PlayerState) -> Result<
     Ok(body)
 }
 
-/// `GET /player/api/replays` — the enriched replay list backing the player's
-/// picker: the same entries as `/v1/replays` (engine-facing, unchanged) plus a
-/// per-replay `battleType` + `gameVersionShort` read cheaply from each replay's
-/// plaintext header. 404 when the player is disabled.
+/// Parse a `usize` query parameter (e.g. `limit`/`offset`) out of a raw request
+/// URL like `/player/api/replays?limit=30&offset=60`. Splitting on both `?` and
+/// `&` means the leading path segment (which has no `=`) is simply skipped.
+fn parse_usize_param(url: &str, key: &str) -> Option<usize> {
+    url.split(['?', '&']).find_map(|pair| {
+        let (k, v) = pair.split_once('=')?;
+        (k == key).then(|| v.parse::<usize>().ok()).flatten()
+    })
+}
+
+/// `GET /player/api/replays?limit=30&offset=0` — the paginated, enriched replay
+/// list backing the player's picker. Real replays only (the live
+/// `tempArenaInfo.json` is dropped), newest battle first, and only the requested
+/// page is header-enriched (`battleType` + `gameVersionShort` + `complete`) — so
+/// a cold launch reads ~30 file headers instead of every replay on disk. The
+/// response carries `total` so the client can offer a "Load more" button.
+/// 404 when the player is disabled.
 fn handle_player_replays(
     replays_dir: &Path,
     generation: &AtomicU64,
     player: Option<&Arc<PlayerState>>,
+    url: &str,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
     let state = match player {
         Some(s) => s,
         None => return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
     };
-    let entries = list_replays(replays_dir).unwrap_or_default();
+    // Default to the newest 30; cap the window so one request can't force the
+    // bridge to header-read an unbounded number of files.
+    let limit = parse_usize_param(url, "limit").unwrap_or(30).clamp(1, 500);
+    let offset = parse_usize_param(url, "offset").unwrap_or(0);
+
+    let mut entries = list_replays(replays_dir).unwrap_or_default();
+    // The picker only shows finalized replays it can decode; drop the live
+    // tempArenaInfo.json (battle monitor's file, not a .wowsreplay) AND the live
+    // in-progress `temp.wowsreplay` (an incomplete packet stream the decoder
+    // can't read) so `total` and the page slice are exact.
+    entries.retain(|e| {
+        let base = e.name.rsplit('/').next().unwrap_or(e.name.as_str());
+        base.to_ascii_lowercase().ends_with(".wowsreplay")
+            && !base.eq_ignore_ascii_case("temp.wowsreplay")
+    });
+    // Newest first: the file mtime tracks battle finalization.
+    entries.sort_by_key(|e| std::cmp::Reverse(e.modified_ms));
+    let total = entries.len();
     let gen = generation.load(Ordering::SeqCst);
+
     let enriched: Vec<serde_json::Value> = entries
         .iter()
+        .skip(offset)
+        .take(limit)
         .map(|entry| {
             let mut value = serde_json::json!({
                 "name": entry.name,
                 "size": entry.size,
                 "modified_ms": entry.modified_ms,
             });
-            // Only real replays carry decodable metadata (skip the live
-            // tempArenaInfo.json). Failures degrade gracefully to no meta.
-            let meta = entry
-                .name
-                .to_ascii_lowercase()
-                .ends_with(".wowsreplay")
-                .then(|| state.meta_for(replays_dir, &entry.name))
-                .flatten();
-            if let Some(meta) = meta {
+            // Failures (unreadable/odd header) degrade gracefully to no meta.
+            if let Some(meta) = state.meta_for(replays_dir, &entry.name) {
                 let object = value.as_object_mut().expect("json object");
                 if let Some(battle_type) = meta.battle_type {
                     object.insert("battleType".to_string(), battle_type.into());
@@ -1073,7 +1117,72 @@ fn handle_player_replays(
             value
         })
         .collect();
-    let body = serde_json::json!({ "generation": gen, "replays": enriched }).to_string();
+
+    let body = serde_json::json!({
+        "generation": gen,
+        "total": total,
+        "offset": offset,
+        "replays": enriched,
+    })
+    .to_string();
+    make_json_response(StatusCode(200), &body, None)
+}
+
+/// Local folder the player writes rendered mp4s into. Prototype: the user's
+/// `Videos\TFD Bridge Renders` (Windows), falling back to the temp dir.
+fn render_output_dir() -> PathBuf {
+    let base = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|home| home.join("Videos"))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("TFD Bridge Renders")
+}
+
+/// POST /player/api/render?name=<file>.mp4 — persist an mp4 the player rendered
+/// in the webview. Same-origin loopback only (the player and this endpoint share
+/// the bridge origin, so no CORS preflight). Writes to `render_output_dir()` and
+/// returns `{"path": "<absolute>"}`. Prototype for the hidden video-render
+/// feature (td-18bfca).
+fn handle_player_render_save(
+    request: &mut tiny_http::Request,
+    full_path: &str,
+    player: Option<&Arc<PlayerState>>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    if player.is_none() {
+        return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None);
+    }
+    // Extract + sanitise the ?name= query into a bare, safe *.mp4 basename.
+    let raw = full_path
+        .split_once('?')
+        .and_then(|(_, qs)| qs.split('&').find_map(|kv| kv.strip_prefix("name=")))
+        .unwrap_or("");
+    let decoded = percent_decode_str(raw).decode_utf8().unwrap_or_default();
+    let base = decoded.rsplit(['/', '\\']).next().unwrap_or("");
+    let safe: String = base
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ' '))
+        .collect();
+    if !safe.to_ascii_lowercase().ends_with(".mp4") || safe.len() <= 4 {
+        return make_json_response(StatusCode(400), r#"{"error":"invalid name"}"#, None);
+    }
+
+    let mut bytes = Vec::new();
+    if request.as_reader().read_to_end(&mut bytes).is_err() {
+        return make_json_response(StatusCode(400), r#"{"error":"read error"}"#, None);
+    }
+    if bytes.is_empty() {
+        return make_json_response(StatusCode(400), r#"{"error":"empty body"}"#, None);
+    }
+
+    let dir = render_output_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return make_json_response(StatusCode(500), &format!(r#"{{"error":"mkdir: {e}"}}"#), None);
+    }
+    let out = dir.join(&safe);
+    if let Err(e) = std::fs::write(&out, &bytes) {
+        return make_json_response(StatusCode(500), &format!(r#"{{"error":"write: {e}"}}"#), None);
+    }
+    let body = serde_json::json!({ "path": out.display().to_string(), "bytes": bytes.len() }).to_string();
     make_json_response(StatusCode(200), &body, None)
 }
 
@@ -2841,6 +2950,72 @@ mod tests {
         let (status2, body2, _) = get(&url_no_slash);
         assert_eq!(status2, 200);
         assert_eq!(body2, "<html>player</html>");
+
+        bridge.stop();
+    }
+
+    /// GET /player/api/replays paginates: `total` counts all finalized replays,
+    /// each page honours `limit`/`offset` (disjoint pages), and the live
+    /// tempArenaInfo.json is excluded from both the page and the count.
+    #[test]
+    fn player_replays_paginates_and_excludes_temp_arena() {
+        let tmp = TempDir::new().unwrap();
+        for i in 0..5 {
+            fs::write(
+                tmp.path()
+                    .join(format!("2026010{i}_100000_PBSD110-Ship_10_map.wowsreplay")),
+                b"x",
+            )
+            .unwrap();
+        }
+        // Neither live file may appear in the picker: the battle roster
+        // (tempArenaInfo.json) nor the in-progress recording (temp.wowsreplay).
+        fs::write(tmp.path().join("tempArenaInfo.json"), b"{}").unwrap();
+        fs::write(tmp.path().join("temp.wowsreplay"), b"live").unwrap();
+        let dist = TempDir::new().unwrap();
+        fs::write(dist.path().join("index.html"), b"<html>player</html>").unwrap();
+        let bridge = start_bridge_with_player(&tmp, dist.path());
+
+        let page_names = |offset: u32, limit: u32| -> (u64, Vec<String>) {
+            let url = format!(
+                "http://127.0.0.1:{}/player/api/replays?limit={limit}&offset={offset}",
+                bridge.port()
+            );
+            let (status, body, _) = get(&url);
+            assert_eq!(status, 200);
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let names = v["replays"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["name"].as_str().unwrap().to_string())
+                .collect();
+            (v["total"].as_u64().unwrap(), names)
+        };
+
+        let (total, page0) = page_names(0, 2);
+        assert_eq!(
+            total, 5,
+            "total counts finalized replays only (both live files excluded)"
+        );
+        assert_eq!(page0.len(), 2, "limit=2 returns two entries");
+        assert!(
+            !page0.iter().any(|n| n.to_ascii_lowercase().contains("temp")),
+            "no live temp file may appear: {page0:?}"
+        );
+
+        let (_, page1) = page_names(2, 2);
+        assert_eq!(page1.len(), 2);
+        assert!(
+            page0.iter().all(|n| !page1.contains(n)),
+            "pages must be disjoint: {page0:?} vs {page1:?}"
+        );
+
+        // The default limit (30) comfortably returns all five.
+        let url_all = format!("http://127.0.0.1:{}/player/api/replays", bridge.port());
+        let (_, body_all, _) = get(&url_all);
+        let v_all: serde_json::Value = serde_json::from_str(&body_all).unwrap();
+        assert_eq!(v_all["replays"].as_array().unwrap().len(), 5);
 
         bridge.stop();
     }

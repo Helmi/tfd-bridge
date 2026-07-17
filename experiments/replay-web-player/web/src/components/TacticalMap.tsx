@@ -99,7 +99,7 @@ function mapText(text: string, fontSize: number, color: string, weight: '500' | 
       fontWeight: weight,
       fill: color,
       align: 'center',
-      stroke: { color: '#05070f', width: Math.max(2, fontSize * 0.22) },
+      stroke: { color: '#05100d', width: Math.max(2, fontSize * 0.22) },
     },
   });
 }
@@ -114,8 +114,8 @@ function drawCaptureZones(runtime: Runtime, teamColors: Record<string, string>):
     const invaderColor = zone.hasInvaders && zone.invader ? teamColors[zone.invader] : undefined;
     const capturing = Boolean(invaderColor);
     const blocked = capturing && zone.contested;
-    const outline = blocked ? '#ffbd66' : invaderColor ?? ownerColor ?? '#96a3ba';
-    const fill = ownerColor ?? '#151d31';
+    const outline = blocked ? '#ffbd66' : invaderColor ?? ownerColor ?? '#7b9189';
+    const fill = ownerColor ?? '#122420';
 
     // Base ring: thin, in the owning/neutral color.
     graphics.circle(center.x, center.y, radius)
@@ -147,7 +147,7 @@ function drawBuffZones(runtime: Runtime, teamColors: Record<string, string>): vo
     if (!zone.active) continue;
     const center = worldToScreen(scene, viewport, zone.center);
     const radius = (zone.radius / (scene.map.bounds.maxX - scene.map.bounds.minX)) * viewport.size;
-    const color = zone.teamId ? teamColors[zone.teamId] ?? '#eaf8ff' : '#eaf8ff';
+    const color = zone.teamId ? teamColors[zone.teamId] ?? '#eef4f1' : '#eef4f1';
 
     // Zones with no Drop marker are not Arms Race powerups — they are generic
     // interactive zones (e.g. catapult-fighter patrol areas). Render them as a
@@ -205,12 +205,12 @@ function drawSmoke(runtime: Runtime): void {
     const radius = (smoke.radius / (scene.map.bounds.maxX - scene.map.bounds.minX)) * viewport.size;
     for (const puff of smoke.puffs) {
       const center = worldToScreen(scene, viewport, puff);
-      graphics.circle(center.x, center.y, radius).fill({ color: '#aebfc7', alpha: 0.16 });
-      graphics.circle(center.x, center.y, radius * 0.72).fill({ color: '#c6d4da', alpha: 0.14 });
+      graphics.circle(center.x, center.y, radius).fill({ color: '#aec1ba', alpha: 0.16 });
+      graphics.circle(center.x, center.y, radius * 0.72).fill({ color: '#c1d2c9', alpha: 0.14 });
     }
     for (const puff of smoke.puffs) {
       const center = worldToScreen(scene, viewport, puff);
-      graphics.circle(center.x, center.y, radius).stroke({ color: '#d5e2e8', width: 0.8, alpha: 0.2 });
+      graphics.circle(center.x, center.y, radius).stroke({ color: '#d5e2dc', width: 0.8, alpha: 0.2 });
     }
   }
 }
@@ -232,7 +232,7 @@ function drawWards(runtime: Runtime, markers: Container, teamColors: Record<stri
     if (!ward.active) continue;
     const center = worldToScreen(scene, viewport, ward.definition.center);
     const radius = (ward.definition.radius / (scene.map.bounds.maxX - scene.map.bounds.minX)) * viewport.size;
-    const color = ward.definition.teamId ? teamColors[ward.definition.teamId] ?? '#9fd6e8' : '#9fd6e8';
+    const color = ward.definition.teamId ? teamColors[ward.definition.teamId] ?? '#9fe6d2' : '#9fe6d2';
     graphics.circle(center.x, center.y, radius).fill({ color, alpha: 0.05 });
     dashedCircle(graphics, center.x, center.y, radius, color, 0.55);
     if (wardTexture) {
@@ -288,7 +288,7 @@ function drawPlanes(runtime: Runtime, markers: Container, teamColors: Record<str
       icon.alpha = plane.definition.category === 'consumable' ? 0.9 : 1;
       markers.addChild(icon);
     } else {
-      const color = teamColors[plane.definition.teamId] ?? '#d9fff9';
+      const color = teamColors[plane.definition.teamId] ?? '#d9fff2';
       const scale = Math.max(0.55, viewport.size / 1300);
       graphics.poly(transformedPlane(center, plane.heading, scale))
         .fill({ color, alpha: 0.9 }).stroke({ color: '#0a1a21', width: 0.8, alpha: 0.85 });
@@ -302,7 +302,7 @@ function shellColor(ammoType: string | undefined): string {
     case 'HE': return '#ffd633';
     case 'AP': return '#ffffff';
     case 'SAP': return '#ff5347';
-    default: return '#e8ecf2';
+    default: return '#eef4f1';
   }
 }
 
@@ -324,8 +324,8 @@ function drawMap(runtime: Runtime): void {
   for (const child of markers.removeChildren()) child.destroy();
 
   backdrop.roundRect(viewport.left - 2, viewport.top - 2, viewport.size + 4, viewport.size + 4, 8)
-    .fill({ color: '#0a101e' })
-    .stroke({ color: '#3c486a', width: 1.2, alpha: 0.85 });
+    .fill({ color: '#081210' })
+    .stroke({ color: '#2a3d36', width: 1.2, alpha: 0.85 });
 
   mapSprite.position.set(viewport.left, viewport.top);
   mapSprite.width = viewport.size;
@@ -336,9 +336,9 @@ function drawMap(runtime: Runtime): void {
   for (let index = 1; index < 10; index += 1) {
     const offset = index * gridSize;
     graphics.moveTo(viewport.left + offset, viewport.top).lineTo(viewport.left + offset, viewport.top + viewport.size)
-      .stroke({ color: '#8290b5', width: 0.7, alpha: 0.12 });
+      .stroke({ color: '#5f8074', width: 0.7, alpha: 0.12 });
     graphics.moveTo(viewport.left, viewport.top + offset).lineTo(viewport.left + viewport.size, viewport.top + offset)
-      .stroke({ color: '#8290b5', width: 0.7, alpha: 0.12 });
+      .stroke({ color: '#5f8074', width: 0.7, alpha: 0.12 });
   }
 
   if (scene.replay.source === 'synthetic') {
@@ -352,6 +352,11 @@ function drawMap(runtime: Runtime): void {
   }
 
   const teamColors = Object.fromEntries(scene.teams.map((team) => [team.id, team.color]));
+  // Torpedoes are colored by side so incoming enemy fish read as a threat:
+  // enemy = enemy red, friendly (own/ally) = green. Derived from the roster.
+  const enemyTeamIds = new Set(
+    scene.ships.filter((ship) => ship.relation === 'enemy').map((ship) => ship.teamId),
+  );
   drawCaptureZones(runtime, teamColors);
   drawBuffZones(runtime, teamColors);
   drawSmoke(runtime);
@@ -369,8 +374,9 @@ function drawMap(runtime: Runtime): void {
       const color = shellColor(ordnance.event.ammoType);
       graphics.moveTo(tail.x, tail.y).lineTo(position.x, position.y).stroke({ color, width: 1, alpha: 0.85 });
     } else {
-      // Torpedoes read as a distinct green capsule trailing a faint wake.
-      const torpedoColor = ordnance.armed ? '#4fe0a0' : '#8a97a0';
+      // Torpedoes read as a capsule trailing a faint wake, colored by side
+      // (enemy red / friendly green); the armed state is carried by alpha below.
+      const torpedoColor = enemyTeamIds.has(ordnance.event.teamId) ? '#f2665c' : '#4fe0a0';
       const wakeLength = viewport.size * 0.03;
       const wakeTail = { x: position.x - forward.x * wakeLength, y: position.y - forward.y * wakeLength };
       graphics.moveTo(wakeTail.x, wakeTail.y).lineTo(position.x, position.y)
@@ -410,7 +416,7 @@ function drawMap(runtime: Runtime): void {
       markers.addChild(icon);
     } else {
       const hull = transformedHull(point, ship.displayPose.yaw, scale);
-      graphics.poly(hull).fill({ color, alpha }).stroke({ color: '#eafaff', width: selected ? 1.35 : 0.75, alpha: 0.8 * alpha });
+      graphics.poly(hull).fill({ color, alpha }).stroke({ color: '#eef4f1', width: selected ? 1.35 : 0.75, alpha: 0.8 * alpha });
     }
 
     if (ship.knowledge === 'last-known') {
@@ -424,7 +430,7 @@ function drawMap(runtime: Runtime): void {
     if (!ship.destroyed && hpRatio < 0.995) {
       const hpRadius = 13 * scale;
       const hpColor = hpRatio > 0.55 ? '#4fe0a0' : hpRatio > 0.25 ? '#ffd369' : '#ff665f';
-      graphics.circle(point.x, point.y, hpRadius).stroke({ color: '#0b1220', width: 2.4, alpha: 0.55 });
+      graphics.circle(point.x, point.y, hpRadius).stroke({ color: '#0a1411', width: 2.4, alpha: 0.55 });
       graphics.beginPath();
       graphics.arc(point.x, point.y, hpRadius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * hpRatio)
         .stroke({ color: hpColor, width: 2.4, alpha: 0.95 * alpha });
@@ -435,7 +441,7 @@ function drawMap(runtime: Runtime): void {
       const cross = 7 * scale;
       graphics.moveTo(point.x - cross, point.y - cross).lineTo(point.x + cross, point.y + cross)
         .moveTo(point.x + cross, point.y - cross).lineTo(point.x - cross, point.y + cross)
-        .stroke({ color: '#d4e2e6', width: 1.8, alpha: 0.75 });
+        .stroke({ color: '#d5e2dc', width: 1.8, alpha: 0.75 });
     }
 
     const name = mapText(

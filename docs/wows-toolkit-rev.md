@@ -18,8 +18,8 @@ transitive deps (`pickled`, `bevy_ecs`, …). They **must** be pinned to the sam
 `wows_replays` in the tree, which then force a single incompatible `pickled`
 version onto one of them and fail to build.
 
-**Current rev: `36c4e41a6366115f3ddfc8355ca32d328e81625c`** (landaire main,
-2026-06-29), served by `Helmi/wows-toolkit` by SHA (GitHub fork networks serve
+**Current rev: `f328397280f40582a0a16bd5b92923205968c1cc`** (landaire main
+2026-07-09), served by `Helmi/wows-toolkit` by SHA (GitHub fork networks serve
 upstream commits by SHA, the same way the previous `50301ee` pin resolved).
 
 The fork's own `main` branch is intentionally stale and is **not** used — we pin
@@ -28,6 +28,12 @@ commit; the fork is not pinned for any special reason and can track upstream.
 
 ## History
 
+- Bumped to `f328397` (landaire main, 2026-07-09) on 2026-07-17 — routine
+  catch-up to upstream (the intervening commits are armor-viewer / camouflage /
+  texture-rendering work, none touching replay decoding). Re-validated: workspace
+  compiles, all 175 bridge-core tests pass (battle-result schema unchanged), and
+  a real 15.6 scene decodes intact (24 ships, tracks, salvos/torpedoes/kills).
+  `wows_replays` 0.43→0.44, `wowsunpack` 0.42→0.43; no schema change.
 - The battle-result decoder shipped on `50301ee` (2026-06-06).
 - The scene decoder (lifted from the standalone `experiments/.../exporter`) was
   written and validated against `36c4e41` (2026-06-29). Between those revs

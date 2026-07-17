@@ -259,8 +259,10 @@ pub struct UploaderOptions {
 }
 
 impl UploaderOptions {
-    /// Production wiring: default timings, the real consent + feature-flag
-    /// gates, and the engine multipart transport.
+    /// Production wiring: default timings, the feature-flag gate, and the engine
+    /// multipart transport. Replay donation is now default-on for every user (the
+    /// per-user consent UI was removed), so the privacy `consent_gate` is always
+    /// open; the engine's `replay_donation` flag stays the remote kill switch.
     pub fn production(replays_dir: PathBuf, ledger_path: PathBuf) -> Self {
         Self {
             replays_dir,
@@ -273,7 +275,7 @@ impl UploaderOptions {
             max_attempts: DEFAULT_MAX_ATTEMPTS,
             rate_limit_pause: DEFAULT_RATE_LIMIT_PAUSE,
             unavailable_pause: DEFAULT_UNAVAILABLE_PAUSE,
-            consent_gate: Arc::new(|| crate::donation::consent().is_opted_in()),
+            consent_gate: Arc::new(|| true),
             flag_gate: Arc::new(|| crate::engine::features().replay_donation),
             transport: engine_transport(),
         }

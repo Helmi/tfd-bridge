@@ -11,6 +11,25 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.14.0] — 2026-07-17
+
+### Added
+- **RePlayer** — the in-app replay viewer is now a real, visible tool, reached from the **RePlayer** button in the title bar (next to Dashboard and Battle Monitor). It decodes your saved battles locally and plays them back: a tactical map with ship tracks, torpedoes, capture zones, live score, the full roster, and a per-ship panel with health, consumables, damage taken and battle chat — all scrubbable along a timeline. (This was the "hidden test feature" from 0.12; it now has a home in the UI.)
+  - Replay picker shows your newest 30 battles with a **Load 30 more** button, search, and a proper loading state; a decoding overlay appears while a battle opens (decoding a replay takes a few seconds).
+  - Enemy torpedoes are drawn in enemy red so incoming fish read as a threat.
+- **Launch on login now defaults to on** for new installs (existing installs keep whatever you already had; you can still turn it off in Settings).
+
+### Changed
+- **Replay donation is now on for everyone** — the opt-in/out toggle has been removed. Your `.wowsreplay` files upload automatically to power community stats and challenges; uploads are anonymous and can still be paused centrally by TFD.
+- RePlayer now opens **inside the main window** (like the embedded Battle Monitor) instead of a separate window, so the title-bar navigation stays with you.
+- Refreshed the RePlayer's look to the TFD Engine style (deep green-black, teal and gold).
+- Updated the bundled wows-toolkit replay-decoding libraries to the current upstream — routine maintenance, with no change to the decoded battle data (re-validated against real replays).
+
+### Known issues
+- RePlayer's **"Incomplete" marker** — which flags a battle you left before it ended — may not flag some replays on the current game patch. Detection is confirmed working on earlier patches; a fix is planned.
+
+---
+
 ## [0.12.1] — 2026-07-13
 
 ### Changed

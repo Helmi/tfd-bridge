@@ -21,8 +21,8 @@ hex = "0.4"
 # share ONE rev with the scene-export decoder (the replay player needs an API
 # only present from 36c4e41). Re-validated the battle-result decode against this
 # rev — see docs/wows-toolkit-rev.md. Bump both crates together.
-wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c" }
-wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "36c4e41a6366115f3ddfc8355ca32d328e81625c", default-features = false, features = ["vfs-mmap"] }
+wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc" }
+wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc", default-features = false, features = ["vfs-mmap"] }
 # In-process replay → battle-scene decoder for the hidden replay player. Runs
 # the decode in this process (no bundled sidecar / subprocess).
 scene-export = { path = "../scene-export" }

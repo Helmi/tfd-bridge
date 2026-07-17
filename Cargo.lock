@@ -5543,7 +5543,7 @@ dependencies = [
 
 [[package]]
 name = "tfd-bridge"
-version = "0.12.1"
+version = "0.13.10"
 dependencies = [
  "bridge-core",
  "hex",
@@ -7255,7 +7255,7 @@ dependencies = [
 [[package]]
 name = "wows-battle-world"
 version = "0.11.0"
-source = "git+https://github.com/Helmi/wows-toolkit?rev=36c4e41a6366115f3ddfc8355ca32d328e81625c#36c4e41a6366115f3ddfc8355ca32d328e81625c"
+source = "git+https://github.com/Helmi/wows-toolkit?rev=f328397280f40582a0a16bd5b92923205968c1cc#f328397280f40582a0a16bd5b92923205968c1cc"
 dependencies = [
  "bevy_ecs",
  "pickled",
@@ -7272,7 +7272,7 @@ dependencies = [
 [[package]]
 name = "wows-core"
 version = "0.11.0"
-source = "git+https://github.com/Helmi/wows-toolkit?rev=36c4e41a6366115f3ddfc8355ca32d328e81625c#36c4e41a6366115f3ddfc8355ca32d328e81625c"
+source = "git+https://github.com/Helmi/wows-toolkit?rev=f328397280f40582a0a16bd5b92923205968c1cc#f328397280f40582a0a16bd5b92923205968c1cc"
 dependencies = [
  "roxmltree 0.21.1",
  "serde",
@@ -7281,7 +7281,7 @@ dependencies = [
 [[package]]
 name = "wows-replay-insights"
 version = "0.11.0"
-source = "git+https://github.com/Helmi/wows-toolkit?rev=36c4e41a6366115f3ddfc8355ca32d328e81625c#36c4e41a6366115f3ddfc8355ca32d328e81625c"
+source = "git+https://github.com/Helmi/wows-toolkit?rev=f328397280f40582a0a16bd5b92923205968c1cc#f328397280f40582a0a16bd5b92923205968c1cc"
 dependencies = [
  "tracing",
  "wows-battle-world",
@@ -7292,7 +7292,7 @@ dependencies = [
 [[package]]
 name = "wows_minimap_renderer"
 version = "0.37.0"
-source = "git+https://github.com/Helmi/wows-toolkit?rev=36c4e41a6366115f3ddfc8355ca32d328e81625c#36c4e41a6366115f3ddfc8355ca32d328e81625c"
+source = "git+https://github.com/Helmi/wows-toolkit?rev=f328397280f40582a0a16bd5b92923205968c1cc#f328397280f40582a0a16bd5b92923205968c1cc"
 dependencies = [
  "ab_glyph",
  "convert_case 0.11.0",
@@ -7315,7 +7315,7 @@ dependencies = [
 [[package]]
 name = "wows_replays"
 version = "0.44.0"
-source = "git+https://github.com/Helmi/wows-toolkit?rev=36c4e41a6366115f3ddfc8355ca32d328e81625c#36c4e41a6366115f3ddfc8355ca32d328e81625c"
+source = "git+https://github.com/Helmi/wows-toolkit?rev=f328397280f40582a0a16bd5b92923205968c1cc#f328397280f40582a0a16bd5b92923205968c1cc"
 dependencies = [
  "blowfish",
  "bon",
@@ -7338,7 +7338,7 @@ dependencies = [
 [[package]]
 name = "wowsunpack"
 version = "0.43.0"
-source = "git+https://github.com/Helmi/wows-toolkit?rev=36c4e41a6366115f3ddfc8355ca32d328e81625c#36c4e41a6366115f3ddfc8355ca32d328e81625c"
+source = "git+https://github.com/Helmi/wows-toolkit?rev=f328397280f40582a0a16bd5b92923205968c1cc#f328397280f40582a0a16bd5b92923205968c1cc"
 dependencies = [
  "bon",
  "convert_case 0.11.0",
@@ -7413,7 +7413,7 @@ dependencies = [
 [[package]]
 name = "wt-translations"
 version = "0.14.0"
-source = "git+https://github.com/Helmi/wows-toolkit?rev=36c4e41a6366115f3ddfc8355ca32d328e81625c#36c4e41a6366115f3ddfc8355ca32d328e81625c"
+source = "git+https://github.com/Helmi/wows-toolkit?rev=f328397280f40582a0a16bd5b92923205968c1cc#f328397280f40582a0a16bd5b92923205968c1cc"
 dependencies = [
  "wows-core",
 ]

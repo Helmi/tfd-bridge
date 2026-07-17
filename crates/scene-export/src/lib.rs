@@ -1676,12 +1676,12 @@ fn build_teams(entities: &[EntityDescriptor]) -> Vec<TeamDescriptor> {
     relations
         .into_iter()
         .map(|(id, relation)| {
-            // Team colors follow the tfd-engine dark theme: accent teal for
-            // allies, destructive red for enemies.
+            // Team colors follow the TFD Engine design system: interactive teal
+            // for allies, destructive red for enemies.
             let (name, color) = if relation == "enemy" {
-                ("Enemy", "#ef5a4c")
+                ("Enemy", "#f2665c")
             } else {
-                ("Allied", "#00d1a7")
+                ("Allied", "#2fd6a6")
             };
             TeamDescriptor {
                 id,

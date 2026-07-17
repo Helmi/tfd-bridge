@@ -42,21 +42,26 @@ describe('listBridgeReplays', () => {
     vi.unstubAllGlobals();
   });
 
-  it('fetches /player/api/replays, excludes tempArenaInfo.json, sorts newest first, and carries meta', async () => {
+  it('requests a page of /player/api/replays, defensively drops tempArenaInfo.json, preserves the bridge order, and carries meta + total', async () => {
+    // The bridge already sorts newest-first and paginates; the client keeps that
+    // order (no re-sort) so page boundaries stay stable. The mock is in bridge
+    // order: carrier (newest) then cruiser.
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       generation: 1,
+      total: 42,
+      offset: 0,
       replays: [
         { name: 'tempArenaInfo.json', size: 1, modified_ms: 0 },
-        { name: '20260101_100000_PBSC110-Cruiser_10_north.wowsreplay', size: 100, modified_ms: 1, battleType: 'ranked', gameVersionShort: '15.5', complete: false },
         { name: '20260601_100000_PBSA110-Carrier_10_south.wowsreplay', size: 200, modified_ms: 2, battleType: 'pvp', gameVersionShort: '15.5', complete: true },
+        { name: '20260101_100000_PBSC110-Cruiser_10_north.wowsreplay', size: 100, modified_ms: 1, battleType: 'ranked', gameVersionShort: '15.5', complete: false },
       ],
     }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const replays = await listBridgeReplays();
-    expect(fetchMock).toHaveBeenCalledWith('/player/api/replays', expect.objectContaining({ cache: 'no-store' }));
+    const { replays, total } = await listBridgeReplays({ offset: 0, limit: 30 });
+    expect(fetchMock).toHaveBeenCalledWith('/player/api/replays?offset=0&limit=30', expect.objectContaining({ cache: 'no-store' }));
+    expect(total).toBe(42);
     expect(replays.map((replay) => replay.shipClass)).toEqual(['carrier', 'cruiser']);
-    // Newest first: the carrier (June) leads; battle-type/version/complete carried through.
     expect(replays[0]).toMatchObject({ battleType: 'pvp', gameVersion: '15.5', complete: true });
     expect(replays[1]).toMatchObject({ battleType: 'ranked', gameVersion: '15.5', complete: false });
   });

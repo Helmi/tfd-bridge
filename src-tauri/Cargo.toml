@@ -1,6 +1,6 @@
 [package]
 name = "tfd-bridge"
-version = "0.12.1"
+version = "0.14.0"
 description = "TFD Bridge — local companion app for the TFD World of Warships community"
 authors = []
 license = "MIT"
@@ -15,7 +15,7 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.2" }
+tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 serde_json = "1.0"
