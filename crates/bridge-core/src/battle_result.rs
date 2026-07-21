@@ -139,7 +139,8 @@ pub struct BattlePlayer {
     pub ribbons_hits: Option<i64>,
     pub spotting_damage: Option<i64>,
     pub damage_received: Option<i64>,
-    /// Credits earned. OWNER ONLY (from privateDataList economics); `None` for
+    /// Base battle credits before premium-account and economic-bonus modifiers.
+    /// OWNER ONLY (from `privateDataList.init_economics.credits`); `None` for
     /// every other player — a replay does not contain others' economics.
     pub credits: Option<i64>,
     pub afk: Option<bool>,
@@ -300,16 +301,21 @@ pub struct DamageMainByShell {
 /// economics for the recording player only, so this is `Some` on the owner row
 /// and `None` for every other player.
 ///
-/// Consumer-side derivations (NOT precomputed here):
-/// - net credits = `credits` (top-level, gross) − (`cost_service` + `cost_ammo`
-///   + `cost_camo` + `cost_signals` + `cost_boost`).
-/// - the `*_factor` fields are the premium/flag multipliers already applied.
+/// Consumer note: top-level `credits` is the base battle amount, before the
+/// credit-bearing entries in `economic_bonuses`; it is NOT gross/final credits.
+/// Do not derive net credits as `credits - costs`, because that omits those
+/// modifiers. The `*_factor` fields describe premium-account multipliers.
 ///
 /// NOT exposed: the free/ship/commander XP split. The replay's
 /// `subtotal_economics` stores only bonus-multiplier breakdown objects, never the
 /// final per-type XP amounts; base XP is already the top-level `raw_exp`.
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct Economics {
+    /// Account premium state recorded for this battle (`PLAYER_PRIVATE_RESULTS`
+    /// `premium_type`): `0` = none, `1` = common Wargaming Premium, `2` =
+    /// Warships Premium. Other values are preserved for forward compatibility;
+    /// `None` means the replay did not carry a usable value. Added in schema 1.8.
+    pub premium_type: Option<i64>,
     /// Post-battle service/repair cost (COMMON_ECONOMICS `auto_repair_credits`).
     pub cost_service: i64,
     /// Ammunition auto-resupply cost (`auto_load_credits`).
@@ -1893,7 +1899,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.7".into(),
+            schema_version: "1.8".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -2064,10 +2070,10 @@ pub(crate) fn resolve_player(
         None
     };
 
-    // credits: owner only, from privateDataList init_economics[credits].
-    // PLAYER_PRIVATE_RESULTS has an "init_economics" sub-array; its first slot
-    // (INIT_ECONOMICS_INDICES["credits"]) is the credits earned. Other players'
-    // economics are not present in the replay.
+    // Base battle credits: owner only, from privateDataList
+    // init_economics[credits]. Credit-bearing subtotal_economics modifiers are
+    // separate (surfaced through economic_bonuses), so this is not gross/final
+    // credits. Other players' economics are not present in the replay.
     let credits: Option<i64> = if is_self {
         let econ_idx = tables
             .private_results
@@ -2136,10 +2142,17 @@ pub(crate) fn resolve_player(
     };
 
     // ── Schema 1.3: owner-only economics (raw scalars, no precompute) ───────────
-    // A replay carries the recording player's economics only. Read the expense
-    // scalars + premium multipliers from the `common_economics` sub-array of
-    // privateDataList (indexed by COMMON_ECONOMICS_INDICES). Absent slots → 0.
+    // A replay carries the recording player's economics only. Read the account's
+    // premium type plus expense scalars + premium multipliers from privateDataList.
+    // Costs/factors use the common_economics sub-array (indexed by
+    // COMMON_ECONOMICS_INDICES). Absent cost/factor slots → 0.
     let economics: Option<Economics> = if is_self {
+        let premium_type = tables
+            .private_results
+            .iter()
+            .position(|name| name == "premium_type")
+            .and_then(|i| private_for_owner.and_then(|pd| pd.get(i)))
+            .and_then(to_i64_tolerant);
         let common = tables
             .private_results
             .iter()
@@ -2156,6 +2169,7 @@ pub(crate) fn resolve_player(
             let int = |name: &str| -> i64 { slot(name).and_then(to_i64_tolerant).unwrap_or(0) };
             let num = |name: &str| -> f64 { slot(name).and_then(|v| v.as_f64()).unwrap_or(0.0) };
             Economics {
+                premium_type,
                 cost_service: int("auto_repair_credits"),
                 cost_ammo: int("auto_load_credits"),
                 cost_camo: int("auto_camo_credits"),
@@ -2827,23 +2841,25 @@ mod tests {
         assert_eq!(s.he + s.ap + s.sap, p.damage_dealt_by_type.main);
     }
 
-    /// Schema 1.3: owner-only economics reads the raw expense + multiplier scalars
-    /// from the `common_economics` sub-array; a non-owner row gets `None` even if a
-    /// private array is (implausibly) supplied.
+    /// Schema 1.3/1.5: owner-only economics keeps base battle credits separate
+    /// from costs and active credit modifiers; a non-owner row gets none of the
+    /// private economics even if a private array is (implausibly) supplied.
     #[test]
-    fn resolve_player_economics_owner_only() {
+    fn resolve_player_economics_keeps_base_credits_and_modifiers_separate() {
         let tables = make_tables_from_fixture();
         let max = *tables.public_indices.values().max().unwrap();
         let arr = make_arr(max + 1);
 
-        // Build a privateDataList whose `common_economics` slot carries the scalars.
+        // Build the exact economic shape that exposed td-0eb1f0: base credits in
+        // init_economics, costs in common_economics, and +40%/+50% credit bonuses
+        // in separate subtotal_economics modifier entries.
         let ce_idx = &tables.common_economics_indices;
         let celen = ce_idx.values().max().unwrap() + 1;
         let mut ce = vec![serde_json::Value::Null; celen];
-        ce[ce_idx["auto_repair_credits"]] = serde_json::json!(35700);
-        ce[ce_idx["auto_load_credits"]] = serde_json::json!(4032);
+        ce[ce_idx["auto_repair_credits"]] = serde_json::json!(76500);
+        ce[ce_idx["auto_load_credits"]] = serde_json::json!(15480);
         ce[ce_idx["auto_camo_credits"]] = serde_json::json!(0);
-        ce[ce_idx["auto_signals_credits"]] = serde_json::json!(0);
+        ce[ce_idx["auto_signals_credits"]] = serde_json::json!(384000);
         ce[ce_idx["auto_boost_credits"]] = serde_json::json!(0);
         ce[ce_idx["free_exp_factor"]] = serde_json::json!(0.1);
         ce[ce_idx["premium_credits_factor"]] = serde_json::json!(1.5);
@@ -2851,25 +2867,64 @@ mod tests {
         ce[ce_idx["wows_premium_credits_factor"]] = serde_json::json!(1.5);
         ce[ce_idx["wows_premium_exp_factor"]] = serde_json::json!(1.65);
 
-        let ce_slot = tables
-            .private_results
-            .iter()
-            .position(|n| n == "common_economics")
-            .expect("common_economics in PLAYER_PRIVATE_RESULTS");
-        let mut private = vec![serde_json::Value::Null; ce_slot + 1];
-        private[ce_slot] = serde_json::Value::Array(ce);
+        let slot = |name: &str| {
+            tables
+                .private_results
+                .iter()
+                .position(|n| n == name)
+                .unwrap_or_else(|| panic!("{name} in PLAYER_PRIVATE_RESULTS"))
+        };
+        let premium_slot = slot("premium_type");
+        let init_slot = slot("init_economics");
+        let common_slot = slot("common_economics");
+        let subtotal_slot = slot("subtotal_economics");
+        let mut private = vec![serde_json::Value::Null; subtotal_slot + 1];
+        private[premium_slot] = serde_json::json!(2);
+        private[init_slot] = serde_json::json!([347582, 0, 0, 2720, 0]);
+        private[common_slot] = serde_json::Value::Array(ce);
+        private[subtotal_slot] = serde_json::json!([
+            {"sse": [], "base": [], "mod": []},
+            {"sse": [], "base": [], "mod": []},
+            {"sse": [], "base": [], "mod": []},
+            {"sse": [], "base": [], "mod": [
+                [999003, 0.4, true, 0],
+                [999002, 0.5, true, 0]
+            ]}
+        ]);
 
-        // Owner → economics present with the raw scalars.
         let owner = resolve_player(&arr, 42, &tables, 42, Some(1), Some(private.as_slice()));
+        assert_eq!(
+            owner.credits,
+            Some(347582),
+            "credits is the unmodified base"
+        );
         let e = owner.economics.expect("owner has economics");
-        assert_eq!(e.cost_service, 35700);
-        assert_eq!(e.cost_ammo, 4032);
+        assert_eq!(e.premium_type, Some(2));
+        assert_eq!(e.cost_service, 76500);
+        assert_eq!(e.cost_ammo, 15480);
+        assert_eq!(e.cost_signals, 384000);
         assert_eq!(e.premium_exp_factor, 1.5);
         assert_eq!(e.wows_premium_exp_factor, 1.65);
 
-        // Non-owner (db_id != owner_db_id) → economics is None.
+        let bonuses = owner.economic_bonuses.expect("owner has economic bonuses");
+        let credit_factors: std::collections::BTreeMap<_, _> = bonuses
+            .iter()
+            .filter_map(|bonus| {
+                bonus
+                    .modifiers
+                    .get("creditsFactor")
+                    .map(|factor| (bonus.index.as_str(), *factor))
+            })
+            .collect();
+        assert_eq!(
+            credit_factors,
+            std::collections::BTreeMap::from([("PCEA012", 1.4), ("PCEU010", 1.5)])
+        );
+
         let other = resolve_player(&arr, 99, &tables, 42, Some(1), Some(private.as_slice()));
+        assert_eq!(other.credits, None);
         assert!(other.economics.is_none());
+        assert!(other.economic_bonuses.is_none());
     }
 
     /// Schema 1.4: the public `achievements` field ([id, count] pairs) resolves
@@ -3757,7 +3812,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.7");
+        assert_eq!(data.meta.schema_version, "1.8");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────
@@ -3940,33 +3995,33 @@ mod tests {
         assert_eq!(data.meta.decode_status, DecodeStatus::Unreliable);
     }
 
-    // ── 1.7 example-dump generator (for the engine agent) ─────────────────────
+    // ── 1.8 example-dump generator (for the engine agent) ─────────────────────
 
-    /// Generate a real `BattleData` (schema 1.7) JSON dump from a live replay, to
+    /// Generate a real `BattleData` (schema 1.8) JSON dump from a live replay, to
     /// hand the engine agent a concrete example of the wire format. Gated on
-    /// `TFD_DUMP_1_7=1`; decodes 15.5 replays (matching the installed client)
-    /// newest-first and writes the first clean decode that has the owner economics
+    /// `TFD_DUMP_1_8=1`; decodes 15.6 replays (matching the installed client)
+    /// newest-first and writes the first usable decode that has the owner economics
     /// group populated AND at least one player with a non-empty `achievements`
     /// (so the new fields aren't just `[]`/`{}` in the example), falling back to
-    /// the first clean owner-economics decode otherwise.
+    /// the first usable owner-economics decode otherwise.
     ///
-    /// Run: `TFD_DUMP_1_7=1 cargo test -p bridge-core dump_1_7_example -- --ignored --nocapture`
+    /// Run: `TFD_DUMP_1_8=1 cargo test -p bridge-core dump_1_8_example -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn dump_1_7_example() {
-        if std::env::var("TFD_DUMP_1_7").as_deref() != Ok("1") {
-            eprintln!("Skipping dump: TFD_DUMP_1_7!=1");
+    fn dump_1_8_example() {
+        if std::env::var("TFD_DUMP_1_8").as_deref() != Ok("1") {
+            eprintln!("Skipping dump: TFD_DUMP_1_8!=1");
             return;
         }
 
         let game_dir = PathBuf::from(r"C:\Games\World_of_Warships");
-        let archive_155 = PathBuf::from(r"T:\wows-replay-archive\15.5");
+        let archive_156 = PathBuf::from(r"T:\wows-replay-archive\15.6");
         let out_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap()
-            .join("private-sync/notes/result-data-1.7-example.json");
+            .join("private-sync/notes/result-data-1.8-example.json");
 
         let si_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -3990,19 +4045,20 @@ mod tests {
             bonus_index_path: bonus_index_path(),
         };
 
-        // Collect 15.5 replays newest-first (by filename, which is timestamp-led).
-        let mut replays: Vec<PathBuf> = walkdir(&archive_155)
+        // Collect 15.6 replays newest-first (by filename, which is timestamp-led).
+        let mut replays: Vec<PathBuf> = walkdir(&archive_156)
             .into_iter()
             .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("wowsreplay"))
             .collect();
         replays.sort();
         replays.reverse();
-        assert!(!replays.is_empty(), "no 15.5 replays in {archive_155:?}");
+        assert!(!replays.is_empty(), "no 15.6 replays in {archive_156:?}");
 
         // Prefer a richer example: an owner whose main-battery damage includes AP
         // or SAP (a battleship/cruiser) AND at least one player with a non-empty
         // achievements[] (so the 1.4 field shows real data, not just `[]`).
-        // Fall back to the first clean owner-economics decode otherwise.
+        // Fall back to the first usable owner-economics decode otherwise.
+        // 15.6 is not yet in KNOWN_GOOD, so an otherwise valid result is degraded.
         let mut chosen: Option<(PathBuf, BattleData)> = None;
         let mut fallback: Option<(PathBuf, BattleData)> = None;
         for rp in replays.iter().take(80) {
@@ -4010,7 +4066,7 @@ mod tests {
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            if data.meta.decode_status != DecodeStatus::Ok {
+            if data.meta.decode_status == DecodeStatus::Unreliable {
                 continue;
             }
             let Some(owner) = data.players.iter().find(|p| p.is_self) else {
@@ -4024,6 +4080,10 @@ mod tests {
             // (so main_hits_quality shows real sub-ribbon counts).
             let s = &owner.damage_main_by_shell;
             let has_grade = owner.ship_efficiency.is_some();
+            let has_premium_type = owner
+                .economics
+                .as_ref()
+                .is_some_and(|economics| economics.premium_type.is_some());
             let has_bonus = owner
                 .economic_bonuses
                 .as_ref()
@@ -4037,6 +4097,7 @@ mod tests {
                 .is_some_and(|b| b.commander_points.is_some() && !b.upgrades.is_empty());
             let has_vp = data.players.iter().any(|p| !p.victory_points.is_empty());
             if has_grade
+                && has_premium_type
                 && has_bonus
                 && has_hits
                 && has_build
@@ -4053,7 +4114,7 @@ mod tests {
 
         let (rp, data) = chosen
             .or(fallback)
-            .expect("no clean 15.5 decode with owner economics found");
+            .expect("no usable 15.6 decode with owner economics found");
         let json = serde_json::to_string_pretty(&data).expect("serialize BattleData");
         std::fs::write(&out_path, &json).expect("write dump");
         eprintln!("DUMP wrote {} bytes to {}", json.len(), out_path.display());
@@ -4071,7 +4132,7 @@ mod tests {
             owner.map(|p| &p.main_hits_quality),
         );
         eprintln!(
-            "DUMP 1.7: builds={}/{} with_skills={} owner_cdr_points={:?} vp_players={}",
+            "DUMP 1.8: builds={}/{} with_skills={} owner_cdr_points={:?} vp_players={}",
             data.players.iter().filter(|p| p.build.is_some()).count(),
             data.players.len(),
             data.players

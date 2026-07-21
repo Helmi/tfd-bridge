@@ -12,5 +12,12 @@
   "kind": "permanent",
   "rarity": null,
   "modifiers": { "creditsFactor": 1.5, "expFactor": 2.0, "freeExpFactor": 2.0, "crewExpFactor": 2.0 }
+ },
+ "999003": {
+  "index": "PCEA012",
+  "name": "PCEA012_CRboost_2",
+  "kind": "booster",
+  "rarity": "Uncommon",
+  "modifiers": { "creditsFactor": 1.4 }
  }
 }
