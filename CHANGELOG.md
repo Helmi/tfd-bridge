@@ -11,6 +11,13 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.15.0] — 2026-07-21
+
+### Fixed
+- **Post-battle credit totals can now match the player's actual account result.** The replay API now includes whether the recording player used Warships Premium, allowing the Battle Monitor to apply the correct Premium multiplier and active economic bonuses before subtracting battle costs. Previously the API did not expose whether Premium was active and described the base credit amount as the final amount, which could make the detailed result image show an incorrect — sometimes negative — net total. The battle-result API schema is now 1.8.
+
+---
+
 ## [0.14.0] — 2026-07-17
 
 ### Added
@@ -323,7 +330,11 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/Helmi/tfd-bridge/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/Helmi/tfd-bridge/compare/v0.12.1...v0.14.0
+[0.12.1]: https://github.com/Helmi/tfd-bridge/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/Helmi/tfd-bridge/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Helmi/tfd-bridge/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/Helmi/tfd-bridge/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/Helmi/tfd-bridge/compare/v0.9.0...v0.10.0
