@@ -19,14 +19,14 @@ serde_json = "1"
 sha2 = "0.10"
 
 # wows-toolkit crates: the SAME git source + rev bridge-core uses
-# (Helmi/wows-toolkit @ 36c4e41) so the whole workspace resolves ONE copy of
+# (Helmi/wows-toolkit @ d1c317e) so the whole workspace resolves ONE copy of
 # wows-toolkit and its transitive deps. Both the scene decoder (here) and the
 # battle-result decoder (bridge-core) were unified onto this rev — bump BOTH
 # crates together and re-validate BOTH decodes. See docs/wows-toolkit-rev.md.
-wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc", features = ["arc", "parsing", "vfs"] }
+wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e", features = ["arc", "parsing", "vfs"] }
 # default-features=false avoids wowsunpack's heavy `bin`/`models` default; the
 # `json` path the decoder pulls in transitively (via wows_replays/parsing) builds
 # cleanly at this rev. vfs-mmap pulls vfs→parsing→arc (GameParams reading).
-wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc", default-features = false, features = ["arc", "parsing", "vfs-mmap"] }
-wows-battle-world = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc", features = ["vfs"] }
-wows_minimap_renderer = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc", default-features = false, features = ["rendering", "arc"] }
+wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e", default-features = false, features = ["arc", "parsing", "vfs-mmap"] }
+wows-battle-world = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e", features = ["vfs"] }
+wows_minimap_renderer = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e", default-features = false, features = ["rendering", "arc"] }

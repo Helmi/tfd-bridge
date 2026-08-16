@@ -17,12 +17,14 @@ percent-encoding = "2"
 sha2 = "0.10"
 hex = "0.4"
 # In-process WoWS replay parsing. Pinned to Helmi/wows-toolkit (a fork of
-# landaire/wows-toolkit, MIT, under our control). Bumped 50301ee → 36c4e41 to
-# share ONE rev with the scene-export decoder (the replay player needs an API
-# only present from 36c4e41). Re-validated the battle-result decode against this
-# rev — see docs/wows-toolkit-rev.md. Bump both crates together.
-wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc" }
-wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "f328397280f40582a0a16bd5b92923205968c1cc", default-features = false, features = ["vfs-mmap"] }
+# landaire/wows-toolkit, MIT, under our control). Shares ONE rev with the
+# scene-export decoder (the replay player needs an API only present from
+# 36c4e41). Current rev = f328397 + a cherry-pick of upstream 25d96db6, which
+# adds the FLOAT64 entity-spec type WoWS 15.7 introduced — without it the parser
+# panics on every 15.7 replay. See docs/wows-toolkit-rev.md. Bump both crates
+# together.
+wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e" }
+wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e", default-features = false, features = ["vfs-mmap"] }
 # In-process replay → battle-scene decoder for the hidden replay player. Runs
 # the decode in this process (no bundled sidecar / subprocess).
 scene-export = { path = "../scene-export" }

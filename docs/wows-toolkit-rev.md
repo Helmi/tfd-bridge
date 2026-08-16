@@ -18,9 +18,20 @@ transitive deps (`pickled`, `bevy_ecs`, …). They **must** be pinned to the sam
 `wows_replays` in the tree, which then force a single incompatible `pickled`
 version onto one of them and fail to build.
 
-**Current rev: `f328397280f40582a0a16bd5b92923205968c1cc`** (landaire main
-2026-07-09), served by `Helmi/wows-toolkit` by SHA (GitHub fork networks serve
-upstream commits by SHA, the same way the previous `50301ee` pin resolved).
+**Current rev: `d1c317e5e10b9e674fb352b159fe81c9cc6e652e`** — branch
+`tfd-bridge/float64-15.7` on `Helmi/wows-toolkit`. This is landaire main
+`f328397` (2026-07-09) plus a single cherry-pick of upstream `25d96db6`
+(FLOAT64 entity-spec support, see below). Earlier revs were served by
+`Helmi/wows-toolkit` by SHA (GitHub fork networks serve upstream commits by
+SHA); this one lives on a real branch in the fork, so it does not depend on
+upstream reachability.
+
+> **Upstream force-pushed `main`** (observed 2026-08-16:
+> `f3283972...040548ef main -> origin/main (forced update)`). Our old pin
+> `f328397` is no longer an ancestor of upstream `main`. It still resolves by
+> SHA today, but anything pinning a pre-rewrite upstream SHA is on borrowed
+> time — including `experiments/replay-web-player/exporter`, which still pins
+> `landaire/wows-toolkit @ f328397`.
 
 The fork's own `main` branch is intentionally stale and is **not** used — we pin
 explicit SHAs. "Bumping the fork" means moving these SHAs to a newer upstream
@@ -28,6 +39,24 @@ commit; the fork is not pinned for any special reason and can track upstream.
 
 ## History
 
+- Bumped to `d1c317e` on 2026-08-16 — **WoWS 15.7 broke replay decoding.** 15.7
+  introduced a `FLOAT64` type in the entity-definition specs; `parse_type` in
+  `wowsunpack/src/rpc/typedefs.rs` had no branch for it, so every 15.7 replay
+  fell through to a `panic!`. `catch_unwind` in `battle_result.rs` turned that
+  into `"replay parser panicked (incomplete or unsupported replay)"` — the
+  post-battle screen simply stopped appearing. Fixed by cherry-picking upstream
+  `25d96db6` (a two-line mapping; `PrimitiveType::Float64` was already fully
+  plumbed at our pin) onto `f328397` rather than bumping to upstream `main`.
+  Deliberate: the ~30 decode-relevant commits since our pin include a game-data
+  seam refactor, a typestate `ReplayFile`, and zero-copy metadata APIs, and
+  `25d96db6` sits *after* all of it — so pinning to it would carry the same
+  churn as jumping to the tip. Re-validated: workspace compiles with no code
+  changes, all 256 tests pass (battle-result schema unchanged), and 8/8
+  finished 15.7 replays decode with 24 players each. Ribbon sub-counts are
+  internally consistent (`MAIN_CALIBER 38 = PENETRATION 22 + NO_PENETRATION
+  16`), and `CLIENT_PUBLIC_RESULTS_INDICES` is identical between the bundled
+  and installed `constants.json` (538 keys, 0 diffs) — so 15.7 needs **no**
+  constants refresh.
 - Bumped to `f328397` (landaire main, 2026-07-09) on 2026-07-17 — routine
   catch-up to upstream (the intervening commits are armor-viewer / camouflage /
   texture-rendering work, none touching replay decoding). Re-validated: workspace
