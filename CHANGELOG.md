@@ -11,6 +11,13 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.15.1] — 2026-08-16
+
+### Fixed
+- **The post-battle screen works again on WoWS 15.7.** Game update 15.7 added a new value type to the game's internal battle-data definitions. The replay parser TFD Bridge builds on did not recognise it and crashed on every 15.7 replay, so no battle result was ever produced and the post-battle screen simply never appeared. The parser now handles the new type. Nothing about what TFD Bridge reads, stores, or sends has changed, and the battle-result API schema is unchanged at 1.8.
+
+---
+
 ## [0.15.0] — 2026-07-21
 
 ### Fixed
@@ -330,7 +337,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/Helmi/tfd-bridge/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/Helmi/tfd-bridge/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Helmi/tfd-bridge/compare/v0.12.1...v0.14.0
 [0.12.1]: https://github.com/Helmi/tfd-bridge/compare/v0.12.0...v0.12.1
