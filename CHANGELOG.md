@@ -11,6 +11,18 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.16.0] — 2026-09-05
+
+### Added
+- **Division markers in RePlayer.** Your division, including your own ship, is highlighted with yellow ship icons. The roster now shows division letters for both teams.
+- **Pink ship selection.** The selected ship is highlighted in pink instead of a white selection ring.
+
+### Fixed
+- **Shell flight now follows shell-specific ballistics.** Tracers use the projectile's speed, mass, caliber, and air resistance. Recorded impacts correct their arrival time and position, fixing shells that remained in flight after their target sank.
+- **More reliable hit tracking.** RePlayer no longer skips hit records when they arrive in consecutive replay packets.
+
+---
+
 ## [0.15.1] — 2026-08-16
 
 ### Fixed
@@ -337,7 +349,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/Helmi/tfd-bridge/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/Helmi/tfd-bridge/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/Helmi/tfd-bridge/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Helmi/tfd-bridge/compare/v0.12.1...v0.14.0

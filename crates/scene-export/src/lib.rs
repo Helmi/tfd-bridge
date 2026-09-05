@@ -1,3 +1,5 @@
+mod ballistics;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::fs::File;
@@ -15,9 +17,10 @@ use wows_minimap_renderer::MINIMAP_SIZE;
 use wows_minimap_renderer::assets::{load_map_image, load_map_info, load_powerup_icons};
 use wows_minimap_renderer::map_data::MapInfo;
 use wows_replays::ReplayFile;
+use wows_replays::analyzer::decoder::{DecodedPacketPayload, PacketDecoder};
 use wows_replays::game_constants::GameConstants;
 use wows_replays::nested_property_path::{PropertyNestLevel, UpdateAction};
-use wows_replays::packet2::{Packet, PacketType, PacketTypeId, RawPacketIterator};
+use wows_replays::packet2::{Packet, PacketType, PacketTypeId, Parser, RawPacketIterator};
 use wows_replays::types::{EntityId, GameClock, WorldPos};
 use wowsunpack::data::{ResourceLoader, Version};
 use wowsunpack::game_data;
@@ -108,6 +111,10 @@ struct EntityDescriptor {
     relation: String,
     player_name: String,
     clan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    division_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    division_label: Option<char>,
     ship_name: String,
     ship_code: String,
     species: String,
@@ -319,6 +326,17 @@ struct ShellEvent {
     target: Point,
     flight_ms: i64,
     speed: f32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    path: Vec<ShellSample>,
+    #[serde(skip)]
+    impact_recorded: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ShellSample {
+    t: i64,
+    x: f32,
+    y: f32,
 }
 
 #[derive(Debug, Serialize)]
@@ -384,7 +402,6 @@ struct SceneCollector<'a> {
     kills: Vec<KillEvent>,
     seen_kills: usize,
     hits: Vec<HitEvent>,
-    seen_hits: usize,
     smoke: Vec<SmokeSample>,
     last_smoke: HashMap<String, SmokeSample>,
     planes: Vec<PlaneSample>,
@@ -427,7 +444,6 @@ impl<'a> SceneCollector<'a> {
             kills: Vec::new(),
             seen_kills: 0,
             hits: Vec::new(),
-            seen_hits: 0,
             smoke: Vec::new(),
             last_smoke: HashMap::new(),
             planes: Vec::new(),
@@ -477,7 +493,10 @@ impl<'a> SceneCollector<'a> {
     fn collect_entities(&mut self, view: &BattleView<'_>) {
         for (entity_id, player) in view.player_entities() {
             let id = entity_id.to_string();
-            if self.entities.contains_key(&id) {
+            let state = player.initial_state();
+            let division_id = (state.division_id() > 0).then(|| state.division_id().to_string());
+            if let Some(entity) = self.entities.get_mut(&id) {
+                entity.division_id = division_id;
                 continue;
             }
             let state = player.initial_state();
@@ -502,6 +521,8 @@ impl<'a> SceneCollector<'a> {
                     relation,
                     player_name: state.username().to_string(),
                     clan,
+                    division_id,
+                    division_label: None,
                     ship_name: self
                         .metadata
                         .localized_name_from_param(player.vehicle())
@@ -893,12 +914,43 @@ impl<'a> SceneCollector<'a> {
                 .salvo
                 .shots
                 .iter()
-                .map(|shot| ShellEvent {
-                    id: shot.shot_id.to_string(),
-                    origin: self.project_world(shot.origin),
-                    target: self.project_world(shot.target),
-                    flight_ms: (shot.server_time_left.max(0.05) * 1_000.0).round() as i64,
-                    speed: shot.speed,
+                .map(|shot| {
+                    let origin = self.project_world(shot.origin);
+                    let target = self.project_world(shot.target);
+                    // Replay world distances use BigWorld units (30 metres).
+                    let dx = (shot.target.x - shot.origin.x) as f64;
+                    let dz = (shot.target.z - shot.origin.z) as f64;
+                    let range_m = dx.hypot(dz) * 30.0;
+                    let param =
+                        GameParamProvider::game_param_by_id(self.metadata, active.salvo.params_id);
+                    let projectile = param.as_ref().and_then(|param| param.projectile());
+                    let trajectory =
+                        projectile.and_then(|p| ballistics::trajectory(p, shot.pitch, range_m));
+                    let flight_seconds = trajectory
+                        .as_ref()
+                        .and_then(|points| points.last())
+                        .map(|p| p.0)
+                        .unwrap_or(
+                            shot.server_time_left.max(0.05) as f64 / ballistics::TIME_MULTIPLIER,
+                        );
+                    let path = trajectory
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(t, progress)| ShellSample {
+                            t: ms(active.fired_at) + (t * 1000.0).round() as i64,
+                            x: origin.x + (target.x - origin.x) * progress as f32,
+                            y: origin.y + (target.y - origin.y) * progress as f32,
+                        })
+                        .collect();
+                    ShellEvent {
+                        id: shot.shot_id.to_string(),
+                        origin,
+                        target,
+                        flight_ms: (flight_seconds.max(0.001) * 1_000.0).round() as i64,
+                        speed: shot.speed,
+                        path,
+                        impact_recorded: false,
+                    }
                 })
                 .collect();
             let ammo_type =
@@ -982,7 +1034,29 @@ impl<'a> SceneCollector<'a> {
     /// to an attacker + shell type + penetration quality. Appended like kills.
     fn collect_hits(&mut self, view: &BattleView<'_>) {
         let hits = view.shot_hits();
-        for hit in hits.iter().skip(self.seen_hits) {
+        for hit in hits {
+            // Toolkit hit records are per packet, not an accumulating log.
+            // Reconcile individual shells, including terrain impacts, before
+            // filtering the damage-panel events down to ship hits.
+            if let Some(salvo) = &hit.salvo {
+                let salvo_id = format!("{}:{}", salvo.owner_id.raw(), salvo.salvo_id);
+                let target = self.project_world(hit.hit.position);
+                if let Some(exported) = self
+                    .salvos
+                    .iter_mut()
+                    .rev()
+                    .find(|event| event.id == salvo_id)
+                {
+                    let fired_at = exported.t;
+                    if let Some(shell) = exported
+                        .projectiles
+                        .iter_mut()
+                        .find(|shell| shell.id == hit.hit.shot_id.to_string())
+                    {
+                        reconcile_shell_impact(shell, fired_at, ms(hit.clock), target);
+                    }
+                }
+            }
             // Only shells that actually struck a ship (not water/ground splashes).
             let collision_hits_ship = matches!(
                 hit.hit.hit_type.collision.known(),
@@ -1015,7 +1089,6 @@ impl<'a> SceneCollector<'a> {
                 quality: quality.to_string(),
             });
         }
-        self.seen_hits = hits.len();
     }
 
     fn collect_smoke(&mut self, now: i64, view: &BattleView<'_>) {
@@ -1289,6 +1362,13 @@ impl<'a> SceneCollector<'a> {
         normalize_caps(&mut self.caps, start);
         normalize_buffs(&mut self.buffs, start);
         normalize_vec(&mut self.salvos, start, |sample| &mut sample.t);
+        for salvo in &mut self.salvos {
+            for shell in &mut salvo.projectiles {
+                for sample in &mut shell.path {
+                    sample.t = (sample.t - start).max(0);
+                }
+            }
+        }
         normalize_vec(&mut self.kills, start, |sample| &mut sample.t);
         normalize_vec(&mut self.hits, start, |sample| &mut sample.t);
         normalize_grouped(
@@ -1381,7 +1461,10 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
             image::DynamicImage::ImageRgb8(image)
                 .write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
                 .context("encoding map image as PNG")?;
-            Some(format!("data:image/png;base64,{}", BASE64.encode(png_bytes)))
+            Some(format!(
+                "data:image/png;base64,{}",
+                BASE64.encode(png_bytes)
+            ))
         }
         None => None,
     };
@@ -1408,7 +1491,15 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
     collector.normalize_times(battle_start);
     let powerup_icons = powerup_icons_inline(&collector.buffs, &powerup_icon_images)?;
 
-    let entities: Vec<EntityDescriptor> = collector.entities.values().cloned().collect();
+    let mut entities: Vec<EntityDescriptor> = collector.entities.values().cloned().collect();
+    let division_labels = replay_division_labels(&replay, &game_params, &constants, version);
+    for entity in &mut entities {
+        entity.division_label = entity
+            .division_id
+            .as_deref()
+            .and_then(|id| id.parse::<i64>().ok())
+            .and_then(|id| division_labels.get(&id).copied());
+    }
     let self_entity = entities
         .iter()
         .find(|entity| entity.relation == "self")
@@ -1522,8 +1613,8 @@ pub struct ReplayMeta {
 pub fn read_replay_meta(replay_path: &Path) -> Result<ReplayMeta> {
     let bytes = fs::read(replay_path)
         .with_context(|| format!("reading replay {}", replay_path.display()))?;
-    let replay = ReplayFile::from_bytes(&bytes)
-        .map_err(|error| anyhow!("parsing replay: {error:?}"))?;
+    let replay =
+        ReplayFile::from_bytes(&bytes).map_err(|error| anyhow!("parsing replay: {error:?}"))?;
     let meta = &replay.meta;
     let complete = recording_complete(&replay.packet_data, &meta.clientVersionFromExe);
     Ok(ReplayMeta {
@@ -1664,6 +1755,219 @@ fn powerup_icons_inline(
         );
     }
     Ok(exported)
+}
+
+// Preserve the arena's player order: the first distinct division is A, then B,
+// across both teams. Verified against the supplied Lenin and Bismarck screenshots;
+// sorting IDs or restarting per team disagrees with those rosters.
+// The BattleView player HashMap loses this ordering, so decode just the initial
+// arena packet with the toolkit (no custom packet/pickle parsing).
+fn replay_division_labels(
+    replay: &ReplayFile,
+    params: &impl ResourceLoader,
+    constants: &GameConstants,
+    version: Version,
+) -> BTreeMap<i64, char> {
+    let decoder = PacketDecoder::builder()
+        .version(version)
+        .battle_constants(constants.battle())
+        .common_constants(constants.common())
+        .ships_constants(constants.ships())
+        .build();
+    let mut parser = Parser::with_version(params.entity_specs(), version);
+    let mut remaining = &replay.packet_data[..];
+    while let Ok(packet) = parser.parse_packet(&mut remaining) {
+        let decoded = decoder.decode(&packet);
+        if let DecodedPacketPayload::OnArenaStateReceived { player_states, .. } = decoded.payload {
+            let ids: Vec<_> = player_states
+                .iter()
+                .map(|player| player.division_id().to_string())
+                .collect();
+            return battle_division_labels(ids.iter().map(String::as_str));
+        }
+    }
+    // Missing arena data means unknown labels, not a guessed ordering.
+    BTreeMap::new()
+}
+
+fn battle_division_labels<'a>(ids: impl Iterator<Item = &'a str>) -> BTreeMap<i64, char> {
+    let mut labels = BTreeMap::new();
+    let mut alphabet = 'A'..='Z';
+    for id in ids
+        .filter_map(|id| id.parse::<i64>().ok())
+        .filter(|id| *id > 0)
+    {
+        if let std::collections::btree_map::Entry::Vacant(entry) = labels.entry(id)
+            && let Some(letter) = alphabet.next()
+        {
+            entry.insert(letter);
+        }
+    }
+    labels
+}
+
+#[cfg(test)]
+mod division_tests {
+    use super::battle_division_labels;
+
+    #[test]
+    fn screenshot_divisions_share_one_battle_wide_alphabet() {
+        // Arena order, including repeated members of the same division.
+        let labels = battle_division_labels(
+            [
+                "806560137",
+                "806560137",
+                "806624848",
+                "806560137",
+                "806624848",
+            ]
+            .into_iter(),
+        );
+        assert_eq!(labels.get(&806560137), Some(&'A'));
+        assert_eq!(labels.get(&806624848), Some(&'B'));
+        assert_eq!(labels.len(), 2);
+    }
+
+    #[test]
+    fn labels_preserve_arena_order_and_ignore_non_divisions() {
+        let labels = battle_division_labels(["10", "2", "0", "-1", "invalid"].into_iter());
+        assert_eq!(
+            labels.into_iter().collect::<Vec<_>>(),
+            vec![(2, 'B'), (10, 'A')]
+        );
+    }
+
+    #[test]
+    fn lenin_screenshot_letters_match_all_four_divisions() {
+        let labels = battle_division_labels(
+            [
+                "806560137",
+                "806560137",
+                "806560279",
+                "806501158",
+                "806560137",
+                "806501158",
+                "806560279",
+                "806445221",
+                "806445221",
+                "806560279",
+                "806445221",
+            ]
+            .into_iter(),
+        );
+        for (id, letter) in [
+            (806560137, 'A'),
+            (806560279, 'B'),
+            (806501158, 'C'),
+            (806445221, 'D'),
+        ] {
+            assert_eq!(labels.get(&id), Some(&letter));
+        }
+    }
+
+    #[test]
+    fn bismarck_screenshot_letters_match_all_four_divisions() {
+        let labels = battle_division_labels(
+            [
+                "806560137",
+                "806560137",
+                "806594458",
+                "940817706",
+                "806560137",
+                "806594452",
+                "940817706",
+                "806594458",
+                "806594452",
+            ]
+            .into_iter(),
+        );
+        for (id, letter) in [
+            (806560137, 'A'),
+            (806594458, 'B'),
+            (940817706, 'C'),
+            (806594452, 'D'),
+        ] {
+            assert_eq!(labels.get(&id), Some(&letter));
+        }
+    }
+}
+
+fn reconcile_shell_impact(shell: &mut ShellEvent, fired_at: i64, impact_at: i64, target: Point) {
+    if shell.impact_recorded
+        || impact_at <= fired_at
+        || !target.x.is_finite()
+        || !target.y.is_finite()
+    {
+        return;
+    }
+    let old_duration = shell.flight_ms.max(1) as f64;
+    let duration = impact_at - fired_at;
+    let dx = shell.target.x - shell.origin.x;
+    let dy = shell.target.y - shell.origin.y;
+    let length_squared = dx * dx + dy * dy;
+    for point in &mut shell.path {
+        let progress = if length_squared > 0.0 {
+            ((point.x - shell.origin.x) * dx + (point.y - shell.origin.y) * dy) / length_squared
+        } else {
+            0.0
+        }
+        .clamp(0.0, 1.0);
+        point.t = fired_at
+            + (((point.t - fired_at) as f64 / old_duration) * duration as f64).round() as i64;
+        point.x = shell.origin.x + (target.x - shell.origin.x) * progress;
+        point.y = shell.origin.y + (target.y - shell.origin.y) * progress;
+    }
+    if let Some(last) = shell.path.last_mut() {
+        last.t = impact_at;
+        last.x = target.x;
+        last.y = target.y;
+    }
+    shell.flight_ms = duration;
+    shell.target = target;
+    shell.impact_recorded = true;
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+
+    #[test]
+    fn lethal_impact_ends_tracer_and_preserves_ballistic_progress() {
+        let mut shell = ShellEvent {
+            id: "1".into(),
+            origin: Point { x: 0.0, y: 0.0 },
+            target: Point { x: 1.0, y: 0.0 },
+            flight_ms: 27000,
+            speed: 800.0,
+            impact_recorded: false,
+            path: vec![
+                ShellSample {
+                    t: 1000,
+                    x: 0.0,
+                    y: 0.0,
+                },
+                ShellSample {
+                    t: 14500,
+                    x: 0.6,
+                    y: 0.0,
+                },
+                ShellSample {
+                    t: 28000,
+                    x: 1.0,
+                    y: 0.0,
+                },
+            ],
+        };
+        reconcile_shell_impact(&mut shell, 1000, 9000, Point { x: 0.8, y: 0.2 });
+        assert_eq!(shell.flight_ms, 8000);
+        assert_eq!(shell.path[1].t, 5000);
+        assert!((shell.path[1].x - 0.48).abs() < 0.0001);
+        assert_eq!(shell.path.last().unwrap().t, 9000);
+        assert_eq!(shell.path.last().unwrap().x, 0.8);
+        // A later exit/ricochet record must not resurrect the projectile.
+        reconcile_shell_impact(&mut shell, 1000, 10000, Point { x: 1.0, y: 1.0 });
+        assert_eq!(shell.flight_ms, 8000);
+    }
 }
 
 fn build_teams(entities: &[EntityDescriptor]) -> Vec<TeamDescriptor> {

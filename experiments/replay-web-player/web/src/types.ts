@@ -25,6 +25,8 @@ export interface ShipDefinition {
   id: EntityId;
   teamId: TeamId;
   relation?: 'self' | 'ally' | 'enemy';
+  divisionId?: string;
+  divisionLabel?: string;
   playerName: string;
   clan?: string;
   shipName: string;
@@ -343,6 +345,8 @@ export interface ReplaySceneV1 {
     id: EntityId;
     teamId: TeamId;
     relation: 'self' | 'ally' | 'enemy';
+    divisionId?: string;
+    divisionLabel?: string;
     playerName: string;
     clan?: string;
     shipName: string;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { shipIconColor } from '../divisions';
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { evaluateScene } from '../engine/timeline';
 import { shipClassIconUrl, type ShipClass } from '../shipClassIcons';
@@ -391,13 +392,10 @@ function drawMap(runtime: Runtime): void {
     if (ship.knowledge === 'hidden') continue;
     const point = worldToScreen(scene, viewport, ship.displayPose);
     const color = teamColors[ship.definition.teamId];
+    const iconColor = shipIconColor(ship.definition, scene.ships, selectedShipId, color);
     const scale = shipScale(ship, viewport);
     const selected = ship.definition.id === selectedShipId;
     const alpha = ship.knowledge === 'last-known' ? 0.42 : ship.destroyed ? 0.3 : 1;
-
-    if (selected) {
-      graphics.circle(point.x, point.y, 18 * scale).fill({ color, alpha: 0.08 }).stroke({ color: '#ffffff', width: 1.7, alpha: 0.9 });
-    }
 
     if (ship.detectedByEnemy && ship.definition.relation !== 'enemy' && !ship.destroyed) {
       graphics.circle(point.x, point.y, 16 * scale).fill({ color: '#ffbd66', alpha: 0.14 });
@@ -411,12 +409,12 @@ function drawMap(runtime: Runtime): void {
       icon.width = icon.height * (texture.width / texture.height);
       icon.position.set(point.x, point.y);
       icon.rotation = (ship.displayPose.yaw * Math.PI) / 180;
-      icon.tint = color;
+      icon.tint = iconColor;
       icon.alpha = alpha;
       markers.addChild(icon);
     } else {
       const hull = transformedHull(point, ship.displayPose.yaw, scale);
-      graphics.poly(hull).fill({ color, alpha }).stroke({ color: '#eef4f1', width: selected ? 1.35 : 0.75, alpha: 0.8 * alpha });
+      graphics.poly(hull).fill({ color: iconColor, alpha }).stroke({ color: '#eef4f1', width: selected ? 1.35 : 0.75, alpha: 0.8 * alpha });
     }
 
     if (ship.knowledge === 'last-known') {

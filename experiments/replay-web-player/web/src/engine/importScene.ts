@@ -497,6 +497,8 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
         id: entity.id,
         teamId: entity.teamId,
         relation: entity.relation,
+        divisionId: entity.divisionId,
+        divisionLabel: entity.divisionLabel,
         playerName: entity.playerName,
         clan: entity.clan,
         shipName: entity.shipName,

@@ -429,3 +429,6 @@ h1 span { color: #aec1ba; font-weight: 520; }
   font-size: 13px;
   word-break: break-all;
 }
+.class-badge.division-mate img { filter: brightness(0) saturate(100%) invert(86%) sepia(61%) saturate(592%) hue-rotate(333deg) brightness(102%) contrast(101%); }
+.class-badge.selected-ship img { filter: brightness(0) saturate(100%) invert(57%) sepia(83%) saturate(1312%) hue-rotate(295deg) brightness(106%) contrast(101%); }
+.division-badge { display: inline-block; margin-right: 5px; padding: 0 3px; border: 1px solid currentColor; border-radius: 3px; font-size: 10px; line-height: 13px; vertical-align: 1px; }

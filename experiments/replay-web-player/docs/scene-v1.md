@@ -9,6 +9,19 @@ the top-left-origin `[0, 1]` tactical surface.
 - Replay identity, source SHA-256, game build, duration, perspective.
 - Map identity, projection size, optional image reference.
 - Entity/roster dictionary: player, clan, ship, species, team, relation, max HP.
+- Optional entity `divisionId` (string, preserving the full integer ID) and
+  `divisionLabel` (A, B, C...). Membership comes from wows-toolkit. Labels are
+  reconstructed across both teams in first-appearance order in the initial
+  arena player roster, decoded with the toolkit. Sorting IDs and the pinned
+  toolkit's per-team labels both disagree with the supplied screenshots.
+  Arena order matches all divisions in the 2026-09-04 Los Andes, Lenin, and
+  Bismarck '41 replays and the 2026-09-03 Libertad replay. The recording
+  player's division appears first (A) in all four; a universal
+  perspective-first rule is not independently verified.
+  Membership comparisons use team and ID, never the label. Older scenes may
+  omit both fields. The recording player's division, including the recorder,
+  gets yellow ship icons. Selection overrides the icon color with pink instead
+  of adding a white ring; labels and health indicators retain their normal colors.
 
 ## Continuous and stepwise tracks
 
@@ -39,7 +52,17 @@ each marker name to the matching inactive and active game icons.
 ## Events and lifecycles
 
 - Artillery salvo: fire time plus per-shell world-projected origin, target, and
-  expected flight time. The viewer derives tracer position at time `t`.
+  flight time. Optional projectile `path` contains absolute scene-time samples
+  `{t, x, y}` from toolkit-derived RK4 ballistics (projectile mass, caliber,
+  drag, muzzle velocity, replay pitch, and the toolkit's 2.75 game-time scale).
+  Horizontal progress therefore changes with velocity rather than moving at a
+  constant speed. The pinned toolkit's GUI-only integrator is adapted in
+  `crates/scene-export/src/ballistics.rs`, with its MIT license alongside it.
+  Matched replay impacts reconcile each shell's endpoint and arrival time while
+  preserving its ballistic progress curve. The first impact ends the tracer;
+  subsequent exit/ricochet records do not extend it. Without ballistic data,
+  the exporter falls back to time-scaled server flight time and a straight path.
+  Older scenes without `path` retain the existing linear interpolation.
 - Torpedo: launch/update samples plus end time. The viewer interpolates or
   extrapolates between authoritative updates.
 - Kills/deaths: timestamped killer, victim, and decoded cause.

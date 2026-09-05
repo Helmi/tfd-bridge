@@ -59,6 +59,24 @@ const payload: ReplaySceneV1 = {
 };
 
 describe('ReplayScene V1 adapter', () => {
+  it('plays ballistic progress and removes a shell after its recorded impact', () => {
+    const ballistic = structuredClone(payload);
+    ballistic.events.salvos = [{ id: 'lethal', ownerId: 'ship-1', t: 1000, projectiles: [{
+      id: '1', flightMs: 8000,
+      path: [{ t: 1000, x: 100, y: 100 }, { t: 5000, x: 580, y: 220 }, { t: 9000, x: 900, y: 300 }],
+    }] }];
+    const scene = loadReplayScene(ballistic);
+    expect(evaluateScene(scene, 5).ordnance[0].position).toMatchObject({ x: 580, y: 220 });
+    expect(evaluateScene(scene, 9).ordnance[0].position).toMatchObject({ x: 900, y: 300 });
+    expect(evaluateScene(scene, 9.001).ordnance).toHaveLength(0);
+  });
+  it('preserves optional division IDs and toolkit labels', () => {
+    const withDivision = structuredClone(payload);
+    withDivision.entities[0].divisionId = '9007199254740993';
+    withDivision.entities[0].divisionLabel = 'B';
+    expect(loadReplayScene(withDivision).ships[0]).toMatchObject({ divisionId: '9007199254740993', divisionLabel: 'B' });
+    expect(loadReplayScene(payload).ships[0].divisionId).toBeUndefined();
+  });
   it('normalizes exporter milliseconds and semantic tracks', () => {
     const scene = loadReplayScene(payload);
     expect(scene.replay.duration).toBe(90);

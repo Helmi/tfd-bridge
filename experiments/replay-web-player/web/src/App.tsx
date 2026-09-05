@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { DIVISION_COLOR, isDivisionMate, isOwnDivision } from './divisions';
 import { ReplayPicker, type LocalReplaySummary } from './components/ReplayPicker';
 import { TacticalMap } from './components/TacticalMap';
 import { sampleScene } from './data/sampleScene';
@@ -398,17 +399,27 @@ function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; 
                 <div className="roster-team-heading" style={{ color: team.color }}>{team.name}</div>
                 {state.ships.filter((ship) => ship.definition.teamId === team.id).map((ship) => {
                   const healthRatio = ship.health / ship.definition.maxHealth;
+                  const divisionMate = isDivisionMate(ship.definition, scene.ships);
                   return (
                     <button
                       className={`roster-row ${ship.definition.id === selectedShipId ? 'selected' : ''} ${ship.knowledge}`}
                       key={ship.definition.id}
                       onClick={() => setSelectedShipId(ship.definition.id)}
                     >
-                      <span className="class-badge" title={shipClassNames[ship.definition.shipClass]}>
+                      <span className={`class-badge ${isOwnDivision(ship.definition, scene.ships) ? 'division-mate' : ''} ${ship.definition.id === selectedShipId ? 'selected-ship' : ''}`} title={shipClassNames[ship.definition.shipClass]}>
                         <img src={shipClassIconUrl(ship.definition.shipClass)} alt={shipClassNames[ship.definition.shipClass]} />
                       </span>
                       <span className="roster-copy">
-                        <strong>{ship.definition.shipName}</strong>
+                        <strong>
+                          {ship.definition.divisionLabel && (
+                            <span
+                              className="division-badge"
+                              style={{ color: divisionMate || ship.definition.relation === 'self' ? DIVISION_COLOR : team.color }}
+                              title={`Division ${ship.definition.divisionLabel}${divisionMate ? ' · Your division' : ''}`}
+                            >{ship.definition.divisionLabel}</span>
+                          )}
+                          {ship.definition.shipName}
+                        </strong>
                         <small>{ship.definition.clan ? `[${ship.definition.clan}] ` : ''}{ship.definition.playerName}</small>
                         <i><b style={{ width: `${Math.max(0, healthRatio * 100)}%`, background: team.color }} /></i>
                       </span>
