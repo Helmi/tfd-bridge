@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { DIVISION_COLOR, isDivisionMate, isOwnDivision } from './divisions';
+import { useEffect, useRef, useState } from 'react';
 import { ReplayPicker, type LocalReplaySummary } from './components/ReplayPicker';
-import { TacticalMap } from './components/TacticalMap';
+import { ResponsiveBroadcast } from './components/ResponsiveBroadcast';
+import { advancePlayback, seekPlayback, ENDING_SECONDS } from './engine/ending';
+import { RenderProgressDialog } from './components/RenderProgressDialog';
+import { VideoSettingsDialog } from './components/VideoSettingsDialog';
+import { DEFAULT_LOCAL_VIDEO, type LocalVideoSettings } from './video/renderSettings';
 import { sampleScene } from './data/sampleScene';
-import { battleTypeLabel, formatWowsDateTime } from './battleMeta';
 import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
-import { evaluateScene } from './engine/timeline';
-import { shipClassIconUrl, shipClassNames } from './shipClassIcons';
 import { renderAndSave, webCodecsAvailable, type RenderProgress } from './video/encodeMp4';
-import type { DamageEvent, EvaluatedCaptureZone, ReplayScene, ShipKnowledge, TeamDefinition } from './types';
+import { renderInBridge } from './video/bridgeRender';
+import { useReplayShare } from './video/shareReplay';
+import type { ReplayScene } from './types';
 
 const speeds = [1, 2, 5, 10, 20, 40];
 
@@ -20,7 +22,7 @@ const PAGE_SIZE = 30;
 
 // "Render as video" is still a prototype (td-18bfca) — hidden until it ships.
 // Flip to true (with WebCodecs available) to bring the button back.
-const SHOW_RENDER_VIDEO = false;
+const SHOW_RENDER_VIDEO = true;
 
 // Set by vite.config.ts only for the `build:bridge` mode: talk to the
 // bridge's /player/api/replays + /v1/replays routes instead of the vite-dev
@@ -33,58 +35,12 @@ function formatClock(seconds: number): string {
   return `${Math.floor(whole / 60).toString().padStart(2, '0')}:${(whole % 60).toString().padStart(2, '0')}`;
 }
 
-function formatHealth(value: number): string {
-  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-}
-
-function knowledgeLabel(knowledge: ShipKnowledge): string {
-  if (knowledge === 'spotted') return 'Spotted';
-  if (knowledge === 'last-known') return 'Last known';
-  return 'Unspotted';
-}
-
-function humanizeConsumable(name: string): string {
-  return name.replace(/([a-z\d])([A-Z])/g, '$1 $2');
-}
-
-// One-line attribution for an HP loss: attacker + shell type/quality for gun
-// hits, "Fire" for damage-over-time ticks, "Unattributed" otherwise.
-function damageLabel(event: DamageEvent, nameOf: (id?: string) => string): string {
-  if (event.kind === 'shell') {
-    const detail = [event.ammoType, event.quality].filter(Boolean).join(' ') || 'shell hit';
-    const count = event.hits && event.hits > 1 ? ` ×${event.hits}` : '';
-    return `${nameOf(event.attackerId)} · ${detail}${count}`;
-  }
-  if (event.kind === 'fire') return 'Fire';
-  return 'Unattributed';
-}
-
-// Chat is colored by audience: own team green, division yellow, all/global
-// white, system muted. No channel label is shown.
-function chatChannelColor(channel: string): string {
-  if (channel === 'team') return '#4fe0a0';
-  if (channel === 'division') return '#ffd369';
-  if (channel === 'system') return '#7b9189';
-  return '#eef4f1';
-}
-
 function readableName(value: string): string {
   const segments = value.split(/[\\/]/);
   return (segments[segments.length - 1] ?? value)
     .replace(/^\d+_(?:(?:NE|OC)_)?/i, '')
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function captureSummary(zone: EvaluatedCaptureZone, teams: TeamDefinition[]) {
-  const owner = teams.find((team) => team.id === zone.owner);
-  const invader = teams.find((team) => team.id === zone.invader);
-  const capturing = zone.hasInvaders && Boolean(invader);
-  const blocked = capturing && zone.contested;
-  if (blocked) return { label: 'Blocked', ariaLabel: `${invader!.name} capture blocked at ${Math.round(zone.progress)}%`, color: '#ffbd66', phase: 'blocked' };
-  if (capturing) return { label: `Capping ${Math.round(zone.progress)}%`, ariaLabel: `${invader!.name} capturing at ${Math.round(zone.progress)}%`, color: invader!.color, phase: 'capturing' };
-  if (owner) return { label: '', ariaLabel: `${owner.name} held`, color: owner.color, phase: 'held' };
-  return { label: '', ariaLabel: 'Neutral', color: '#7b9189', phase: 'neutral' };
 }
 
 async function fetchGeneratedScene(cacheKey = ''): Promise<ReplayScene> {
@@ -119,6 +75,7 @@ export function App() {
   const [listError, setListError] = useState<string>();
   const [pickerOpen, setPickerOpen] = useState(isBridge);
   const [loadingReplayId, setLoadingReplayId] = useState<string>();
+  const [localReplayName, setLocalReplayName] = useState<string>();
   const [replayError, setReplayError] = useState<string>();
 
   useEffect(() => {
@@ -183,6 +140,7 @@ export function App() {
       if (isBridge) {
         // The bridge decodes and returns the scene JSON directly from one GET.
         setScene(await fetchBridgeScene(replay.id));
+        setLocalReplayName(replay.id);
       } else {
         const response = await fetch('/api/replays/load', {
           method: 'POST',
@@ -208,6 +166,7 @@ export function App() {
         <PlayerView
           key={scene.replay.id}
           scene={scene}
+          localReplayName={localReplayName}
           replayCount={replaysTotal || localReplays.length}
           onOpenPicker={() => setPickerOpen(true)}
         />
@@ -254,7 +213,8 @@ export function App() {
   );
 }
 
-function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; replayCount: number; onOpenPicker: () => void }) {
+function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { scene: ReplayScene; replayCount: number; onOpenPicker: () => void; localReplayName?: string }) {
+  const share=useReplayShare();
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(10);
@@ -264,27 +224,40 @@ function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; 
       ?? scene.ships[0].id,
   );
   const previousFrame = useRef<number | undefined>(undefined);
-  const state = useMemo(() => evaluateScene(scene, time), [scene, time]);
 
   // Experimental: render this replay to a 16:9 broadcast-layout mp4 (offline,
   // bridge-local). Prototype — see td-18bfca.
   const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [renderNote, setRenderNote] = useState<string>();
-  const onRenderVideo = async () => {
+  const [renderComparisons, setRenderComparisons] = useState<{settings:LocalVideoSettings;elapsedMs:number;bytes:number}[]>([]);
+  const [videoSettingsOpen, setVideoSettingsOpen] = useState(false);
+  const [videoSettings, setVideoSettings] = useState<LocalVideoSettings>(DEFAULT_LOCAL_VIDEO);
+  const renderAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => renderAbort.current?.abort(), []);
+  const sharingRenderActive=Boolean(share.renderProgress);
+  useEffect(()=>{if(sharingRenderActive)setPlaying(false);},[sharingRenderActive]);
+  const onRenderVideo = async (settings: LocalVideoSettings) => {
     if (renderProgress) return;
+    setVideoSettings(settings);
+    setVideoSettingsOpen(false);
     setRenderNote(undefined);
-    setRenderProgress({ frame: 0, total: 1 });
+    renderAbort.current = new AbortController();
+    setPlaying(false);
+    setRenderProgress({ frame: 0, total: 1, attempt: 1 });
     const base = (scene.replay.title || perspectiveShip?.shipName || 'replay')
       .replace(/[^\w.-]+/g, '_').slice(0, 60) + '_' + readableName(scene.map.name).replace(/[^\w.-]+/g, '_');
     try {
-      const saved = await renderAndSave(scene, base, (p) => setRenderProgress(p));
-      const secs = (saved.elapsedMs / 1000).toFixed(1);
-      const mb = (saved.bytes / 1_048_576).toFixed(1);
-      setRenderNote(`Rendered ${saved.frames} frames in ${secs}s → ${mb} MB${saved.path ? ` · ${saved.path}` : ' · downloaded'}`);
+      const native = isBridge && localReplayName
+        ? await renderInBridge(localReplayName,scene.replay.arenaUniqueId,setRenderProgress,renderAbort.current.signal,settings)
+        : undefined;
+      const started = performance.now();
+      const saved = native ?? await renderAndSave(scene, base, (p) => setRenderProgress(p), renderAbort.current.signal,settings);
+      setRenderComparisons(runs => [{settings:{...settings},elapsedMs:native ? saved.elapsedMs : performance.now()-started,bytes:saved.bytes},...runs].slice(0,2));
     } catch (reason) {
-      setRenderNote(`Render failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+      setRenderNote(renderAbort.current?.signal.aborted ? 'Video render cancelled.' : `Render failed: ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {
       setRenderProgress(null);
+      renderAbort.current = null;
     }
   };
 
@@ -298,7 +271,7 @@ function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; 
       const previous = previousFrame.current ?? now;
       previousFrame.current = now;
       const delta = Math.min(0.1, (now - previous) / 1000);
-      setTime((current) => Math.min(scene.replay.duration, current + delta * speed));
+      setTime((current) => advancePlayback(current, delta, scene.replay.duration, speed));
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
@@ -306,227 +279,80 @@ function PlayerView({ scene, replayCount, onOpenPicker }: { scene: ReplayScene; 
   }, [playing, scene.replay.duration, speed]);
 
   useEffect(() => {
-    if (time >= scene.replay.duration) setPlaying(false);
+    if (time >= scene.replay.duration + ENDING_SECONDS) setPlaying(false);
   }, [scene.replay.duration, time]);
 
-  const selected = state.ships.find((ship) => ship.definition.id === selectedShipId) ?? state.ships[0];
-  const perspectiveShip = scene.ships.find((ship) => ship.id === scene.replay.perspectiveEntityId)
-    ?? scene.ships.find((ship) => ship.relation === 'self');
-  const selectedDamage = scene.damage.filter((event) => event.targetId === selected.definition.id && event.t <= time).slice(-6).reverse();
-  const shipNameById = useMemo(() => new Map(scene.ships.map((ship) => [ship.id, ship.clan ? `[${ship.clan}] ${ship.shipName}` : ship.shipName])), [scene]);
-  const nameOf = (id?: string) => (id && shipNameById.get(id)) || 'Unknown';
-  const selectedConsumables = state.consumables.filter((activation) => activation.definition.shipId === selected.definition.id);
-  const visibleChat = (scene.chat ?? []).filter((message) => message.t <= time).slice(-40);
-  const sortedCaps = state.captureZones
-    .filter((zone) => zone.enabled)
-    .sort((left, right) => left.definition.label.localeCompare(right.definition.label));
+  const perspectiveShip = scene.ships.find(ship => ship.id === scene.replay.perspectiveEntityId) ?? scene.ships.find(ship => ship.relation === 'self');
 
-  const seek = (next: number) => setTime(Math.max(0, Math.min(scene.replay.duration, next)));
+  const seek = (next: number) => setTime(seekPlayback(next, scene.replay.duration));
   const togglePlayback = () => {
-    if (time >= scene.replay.duration) setTime(0);
+    if (time >= scene.replay.duration + ENDING_SECONDS) setTime(0);
     setPlaying((current) => !current);
   };
 
-  // #5: title eyebrow shows the battle type + date/time, and flags an
-  // incomplete recording (player left before the battle ended).
-  const typeLabel = battleTypeLabel(scene.replay.battleType);
-  const playedAt = formatWowsDateTime(scene.replay.dateTime);
-  const eyebrow = [typeLabel, playedAt].filter(Boolean).join(' · ') || 'Battle replay';
 
   return (
-    <main className="app-shell">
+    <main className="app-shell replay-player">
       <header className="topbar">
         <div className="brand-lockup">
           <BrandLogo />
-          <div>
-            <div className="eyebrow">
-              <span>{eyebrow}</span>
-              {scene.replay.complete === false && <span className="incomplete-badge" title="The player left before the battle ended — this recording is missing the end of the battle.">Incomplete</span>}
-            </div>
-            <h1>{perspectiveShip?.shipName ?? 'Replay'} <span>· {readableName(scene.map.name)}</span></h1>
-          </div>
+          <h1>RePlayer</h1>
         </div>
-        <div className="topbar-actions">
+        <div className="topbar-actions" aria-label="Replay actions">
+          <button className="choose-replay-button" onClick={onOpenPicker}>
+            <span>Choose replay</span><small>{replayCount || 'Local'}</small>
+          </button>
+          <div className="video-actions">
+          {isBridge && localReplayName && scene.replay.arenaUniqueId && <button
+            disabled={share.busy || Boolean(renderProgress)}
+            onClick={()=>{setPlaying(false);void share.start(localReplayName,scene.replay.arenaUniqueId!);}}
+            className="share-video-button"
+          >Share video</button>}
           {SHOW_RENDER_VIDEO && webCodecsAvailable() && (
             <button
               className="render-video-button"
-              onClick={onRenderVideo}
-              disabled={Boolean(renderProgress)}
-              title="Render this replay to a 16:9 broadcast-layout mp4 (experimental)"
+              onClick={()=>{setPlaying(false);setVideoSettingsOpen(true);}}
+              disabled={Boolean(renderProgress) || share.busy}
+              title="Save this replay as a local MP4"
             >
-              {renderProgress
-                ? `Rendering… ${Math.round((renderProgress.frame / renderProgress.total) * 100)}%`
-                : 'Render as video'}
+              Save video
             </button>
           )}
-          <button className="choose-replay-button" onClick={onOpenPicker}>
-            <span>Choose replay</span>
-            <small>{replayCount || 'Local'}</small>
-          </button>
+          </div>
         </div>
       </header>
-      {renderNote && <div className="render-note" role="status">{renderNote}</div>}
+      {share.label && !share.renderProgress && <div className="render-note" role="status">{share.label}
+        {share.authorizationUrl && <> · <a href={share.authorizationUrl} target="_blank" rel="noreferrer">Open Engine authorization</a></>}
+        {share.messageUrl && <> · <a href={share.messageUrl} target="_blank" rel="noreferrer">View on Discord</a></>}
+      </div>}
 
-      <section className="scoreboard" aria-label="Team score and capture points">
-        {scene.teams.map((team, index) => (
-          <div className={`score-team ${index === 1 ? 'enemy' : ''}`} key={team.id}>
-            <div className="score-name"><span className="team-dot" style={{ background: team.color }} />{team.name}</div>
-            <strong style={{ color: team.color }}>{state.scores[team.id]}</strong>
-          </div>
-        ))}
-        <div className="cap-strip">
-          {sortedCaps.map((zone) => {
-            const summary = captureSummary(zone, scene.teams);
-            return (
-              <div className={`cap-summary ${summary.phase}`} key={zone.definition.id} aria-label={`${zone.definition.label}: ${summary.ariaLabel}`}>
-                <span style={{ '--cap-color': summary.color } as React.CSSProperties}>{zone.definition.label}</span>
-                {summary.label && <small>{summary.label}</small>}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="workspace">
-        <aside className="panel roster-panel">
-          <div className="panel-heading">
-            <span>Battle roster</span>
-            <small>{scene.ships.length} ships</small>
-          </div>
-          <div className="rosters">
-            {scene.teams.map((team) => (
-              <div className="roster-team" key={team.id}>
-                <div className="roster-team-heading" style={{ color: team.color }}>{team.name}</div>
-                {state.ships.filter((ship) => ship.definition.teamId === team.id).map((ship) => {
-                  const healthRatio = ship.health / ship.definition.maxHealth;
-                  const divisionMate = isDivisionMate(ship.definition, scene.ships);
-                  return (
-                    <button
-                      className={`roster-row ${ship.definition.id === selectedShipId ? 'selected' : ''} ${ship.knowledge}`}
-                      key={ship.definition.id}
-                      onClick={() => setSelectedShipId(ship.definition.id)}
-                    >
-                      <span className={`class-badge ${isOwnDivision(ship.definition, scene.ships) ? 'division-mate' : ''} ${ship.definition.id === selectedShipId ? 'selected-ship' : ''}`} title={shipClassNames[ship.definition.shipClass]}>
-                        <img src={shipClassIconUrl(ship.definition.shipClass)} alt={shipClassNames[ship.definition.shipClass]} />
-                      </span>
-                      <span className="roster-copy">
-                        <strong>
-                          {ship.definition.divisionLabel && (
-                            <span
-                              className="division-badge"
-                              style={{ color: divisionMate || ship.definition.relation === 'self' ? DIVISION_COLOR : team.color }}
-                              title={`Division ${ship.definition.divisionLabel}${divisionMate ? ' · Your division' : ''}`}
-                            >{ship.definition.divisionLabel}</span>
-                          )}
-                          {ship.definition.shipName}
-                        </strong>
-                        <small>{ship.definition.clan ? `[${ship.definition.clan}] ` : ''}{ship.definition.playerName}</small>
-                        <i><b style={{ width: `${Math.max(0, healthRatio * 100)}%`, background: team.color }} /></i>
-                      </span>
-                      <span className={`visibility-dot ${ship.knowledge}`} title={knowledgeLabel(ship.knowledge)} />
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </aside>
-
-        <section className="viewer-column">
-          <div className="map-frame">
-            <TacticalMap
-              scene={scene}
-              time={time}
-              selectedShipId={selectedShipId}
-              onSelectShip={setSelectedShipId}
-            />
-            <div className="legend">
-              <span><i className="legend-spotted" /> Spotted</span>
-              <span><i className="legend-last" /> Last known</span>
-            </div>
-          </div>
-
+      <ResponsiveBroadcast scene={scene} time={time} selectedShipId={selectedShipId} onSelectShip={setSelectedShipId}/>
           <div className="transport">
             <div className="transport-buttons">
-              <button onClick={() => seek(time - 10)} aria-label="Back 10 seconds">−10</button>
+              <button onClick={() => seek(Math.min(time, scene.replay.duration) - 10)} aria-label="Back 10 seconds">−10</button>
               <button className="play-button" onClick={togglePlayback} aria-label={playing ? 'Pause' : 'Play'}>{playing ? 'Ⅱ' : '▶'}</button>
               <button onClick={() => seek(time + 10)} aria-label="Forward 10 seconds">+10</button>
             </div>
-            <span className="timecode current">{formatClock(time)}</span>
+            <span className="timecode current">{formatClock(Math.min(time, scene.replay.duration))}</span>
             <input
               aria-label="Replay position"
               type="range"
               min="0"
-              max={scene.replay.duration}
+              max={Math.ceil(scene.replay.duration / 0.05) * 0.05}
               step="0.05"
-              value={time}
+              value={Math.min(time, scene.replay.duration)}
               onChange={(event) => seek(Number(event.target.value))}
-              style={{ '--progress': `${(time / scene.replay.duration) * 100}%` } as React.CSSProperties}
+              style={{ '--progress': `${Math.min(100, time / scene.replay.duration * 100)}%` } as React.CSSProperties}
             />
             <span className="timecode">{formatClock(scene.replay.duration)}</span>
             <div className="speed-buttons" aria-label="Playback speed">
               {speeds.map((option) => <button key={option} className={speed === option ? 'active' : ''} onClick={() => setSpeed(option)}>{option}×</button>)}
             </div>
           </div>
-        </section>
 
-        <aside className="panel detail-panel">
-          <div className="panel-heading">
-            <span>Selected ship</span>
-            <span className={`status-tag ${selected.knowledge}`}>{knowledgeLabel(selected.knowledge)}</span>
-          </div>
-          <div className="ship-identity">
-            <span className="large-class"><img src={shipClassIconUrl(selected.definition.shipClass)} alt={shipClassNames[selected.definition.shipClass]} /></span>
-            <div>
-              <h2>{selected.definition.shipName}</h2>
-              <p>{selected.definition.clan ? `[${selected.definition.clan}] ` : ''}{selected.definition.playerName}</p>
-            </div>
-          </div>
-          <div className="health-card">
-            <div><span>Ship health</span><strong>{Math.round((selected.health / selected.definition.maxHealth) * 100)}%</strong></div>
-            <div className="large-health"><i style={{ width: `${Math.max(0, (selected.health / selected.definition.maxHealth) * 100)}%` }} /></div>
-            <small>{formatHealth(selected.health)} / {formatHealth(selected.definition.maxHealth)} HP</small>
-          </div>
-          <div className="metric-grid">
-            <div><span>Heading</span><strong>{Math.round(selected.pose.yaw).toString().padStart(3, '0')}°</strong></div>
-            <div><span>Visibility</span><strong>{knowledgeLabel(selected.knowledge)}</strong></div>
-            {selected.definition.relation === 'self' && (
-              <div className="wide-metric"><span>Spotted by enemy</span><strong className={selected.detectedByEnemy ? 'detected-copy' : ''}>{selected.detectedByEnemy ? 'Spotted' : 'Not spotted'}</strong></div>
-            )}
-          </div>
-          {selectedConsumables.length > 0 && (
-            <>
-              <div className="event-heading"><span>Active consumables</span><small>right now</small></div>
-              <div className="consumable-chips">
-                {selectedConsumables.map((activation) => (
-                  <span className="consumable-chip" key={activation.definition.id}>
-                    {humanizeConsumable(activation.definition.name)}
-                    <small>{Math.ceil(activation.remaining)}s</small>
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-          <div className="event-heading"><span>Recent damage taken</span><small>up to cursor</small></div>
-          <div className="event-list">
-            {selectedDamage.length ? selectedDamage.map((event) => (
-              <div className={`event-row damage-${event.kind}`} key={event.id}>
-                <span>{formatClock(event.t)}</span>
-                <div><strong>−{formatHealth(event.amount)} HP</strong><small>{damageLabel(event, nameOf)}</small></div>
-              </div>
-            )) : <div className="empty-event">No damage recorded yet.</div>}
-          </div>
-          <div className="event-heading"><span>Battle chat</span><small>up to cursor</small></div>
-          <div className="chat-log">
-            {visibleChat.length ? visibleChat.map((message) => (
-              <div className="chat-line" key={message.id} style={{ color: chatChannelColor(message.channel) }}>
-                <span className="chat-time">{formatClock(message.t)}</span>
-                <span className="chat-body"><b>{message.senderName}</b> {message.message}</span>
-              </div>
-            )) : <div className="empty-event">No chat yet.</div>}
-          </div>
-        </aside>
-      </section>
+      {renderNote && <div className="render-note render-result" role="status"><span>{renderNote}</span><button onClick={()=>setRenderNote(undefined)} aria-label="Dismiss video result">×</button></div>}
+      {videoSettingsOpen && <VideoSettingsDialog comparisons={renderComparisons} duration={scene.replay.duration} initial={videoSettings} native={isBridge} onClose={()=>setVideoSettingsOpen(false)} onRender={settings=>{void onRenderVideo(settings);}}/>}
+      {(renderProgress || share.renderProgress) && <RenderProgressDialog progress={(renderProgress ?? share.renderProgress)!} onCancel={()=>{if(renderProgress)renderAbort.current?.abort();else return share.cancelRender();}}/>}
     </main>
   );
 }

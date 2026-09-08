@@ -2,7 +2,10 @@ pub mod battle_result;
 pub mod config;
 pub mod detection;
 pub mod finalize;
+pub mod render_jobs;
 pub mod server;
+pub mod share_auth;
+pub mod share_service;
 pub mod vdf;
 
 pub fn version() -> &'static str {

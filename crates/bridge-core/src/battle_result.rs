@@ -1715,6 +1715,23 @@ fn status_from_checks(checks: &[DecodeCheck]) -> DecodeStatus {
 /// Build [`BattleData`] from a resolved `BattleResults` JSON value plus the
 /// replay meta object. Shared by the in-process decoder ([`extract_battle_results`])
 /// and the test-only JSONL helper ([`parse_jsonl_and_build`]).
+/// Resolve picker stats with the same constants and trust checks as the full
+/// results screen, but without scanning entity packets or extracting builds.
+pub(crate) fn picker_stats(meta: &scene_export::ReplayMeta, tables: &Tables) -> Option<serde_json::Value> {
+    let br = meta.battle_results.as_ref()?;
+    let data = build_battle_data(meta.header.clone(), br.clone(), String::new(), Path::new(""), tables, &HashMap::new()).ok()?;
+    if data.meta.decode_status == DecodeStatus::Unreliable { return None; }
+    let owner = data.players.iter().find(|p| p.is_self)?;
+    let winner = tables.common_results.iter().position(|name| name == "winner_team_id")
+        .and_then(|index| br.get("commonList")?.get(index)).and_then(to_i64_tolerant);
+    let outcome = match (winner, owner.team_id) {
+        (Some(-1), _) => Some("draw"),
+        (Some(w), Some(team)) if w >= 0 => Some(if w == team { "victory" } else { "defeat" }),
+        _ => None,
+    };
+    Some(serde_json::json!({"damage":owner.damage_dealt,"kills":owner.frags,"outcome":outcome}))
+}
+
 fn build_battle_data(
     meta_obj: Option<serde_json::Value>,
     br: serde_json::Value,
@@ -2478,6 +2495,22 @@ mod tests {
 
     fn battle_results_fixture_path() -> PathBuf {
         fixture_dir().join("battle_results_min.json")
+    }
+
+    #[test]
+    #[ignore = "requires a local replay supplied through TFD_PICKER_REPLAY"]
+    fn picker_real_replay_summary() {
+        let path = PathBuf::from(std::env::var("TFD_PICKER_REPLAY").expect("TFD_PICKER_REPLAY"));
+        let resources = constants_path().parent().unwrap().to_path_buf();
+        let tables = Tables::load(&constants_path(), &resources.join("ship_index.json"), &resources.join("achievement_index.json"), &resources.join("bonus_index.json")).unwrap();
+        let start = std::time::Instant::now();
+        let meta = scene_export::read_replay_meta(&path).unwrap();
+        let stats = picker_stats(&meta, &tables).expect("valid result stats");
+        assert!(meta.complete);
+        assert!(stats["damage"].as_i64().unwrap() >= 0);
+        assert!(stats["kills"].as_i64().unwrap() >= 0);
+        assert!(stats["outcome"].is_string());
+        println!("picker {:?}: {} ({:?})", meta.player_vehicle, stats, start.elapsed());
     }
 
     // ── Tables load ───────────────────────────────────────────────────────────

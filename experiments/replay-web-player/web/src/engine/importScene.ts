@@ -270,6 +270,7 @@ function consumableActivations(payload: ReplaySceneV1): ConsumableActivation[] {
     name: event.name,
     start: seconds(event.t),
     end: seconds(event.t + Math.max(0, event.durationMs)),
+    visual: event.visual,
   })).sort((left, right) => left.start - right.start);
 }
 
@@ -468,12 +469,14 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
     schema: 'rocks.tfd.replay-scene/v0',
     replay: {
       id: input.replay.id,
+      arenaUniqueId: input.replay.arenaUniqueId,
       title: input.replay.name,
       gameVersion: input.replay.gameBuild,
       gameVersionShort: input.replay.gameVersionShort,
       battleType: input.replay.battleType,
       dateTime: input.replay.dateTime,
       complete: input.replay.complete,
+      outcome: ['victory', 'defeat', 'draw'].includes(input.replay.outcome ?? '') ? input.replay.outcome : undefined,
       duration: seconds(input.replay.durationMs),
       perspectiveTeamId: view.teamId,
       perspectiveEntityId: view.entityId,
@@ -503,6 +506,7 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
         clan: entity.clan,
         shipName: entity.shipName,
         shipClass: entity.species === 'aircarrier' ? 'carrier' : entity.species,
+        tier: typeof entity.tier === 'number' && Number.isInteger(entity.tier) && entity.tier >= 1 && entity.tier <= 11 ? entity.tier : undefined,
         maxHealth: entity.maxHp,
         pose: track.map((sample, index) => {
           return {
@@ -532,6 +536,7 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
     wards: fighterWards(input),
     consumables: consumableActivations(input),
     chat: chatMessages(input),
+    kills: input.events.kills.map(event => ({ t: seconds(event.t), killerId: event.killerId ?? event.sourceId, victimId: event.victimId ?? event.targetId })),
     pickups: pickupEvents(input),
     assets: (Object.keys(powerupIcons).length || Object.keys(planeIcons).length)
       ? {
@@ -541,5 +546,10 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
       : undefined,
     ordnance: ordnanceEvents(input),
     damage: attributedDamage(input),
+    ownerStats: input.tracks.ownerStats?.map(({ t, ...value }) => ({ t: seconds(t), value })).sort((a, b) => a.t - b.t),
+    ribbonDefinitions: Object.fromEntries(Object.entries(input.assets?.ribbons ?? {}).map(([key, value]) => [key, {
+      ...value, imageUrl: resolveAsset(value.imageUrl, options.baseUrl),
+    }])),
+    ownerSilhouette: resolveAsset(input.assets?.ownerSilhouette, options.baseUrl),
   };
 }

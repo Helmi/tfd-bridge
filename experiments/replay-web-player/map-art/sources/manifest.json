@@ -1,0 +1,2526 @@
+{
+  "clientVersion": "15,7,0,13015811",
+  "mapCount": 54,
+  "maps": [
+    {
+      "id": "spaces/00_CO_ocean",
+      "land": {
+        "alphaOpaque": 0,
+        "alphaPartial": 0,
+        "alphaTransparent": 577600,
+        "bytes": 6095,
+        "height": 760,
+        "meanOpaqueRgb": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "path": "spaces/00_CO_ocean/minimap.png",
+        "pixelSha256": "818e65f21e6bba37af1aaf60f3c95dcda178340f8213d17ff511bf42c5df7f99",
+        "sha256": "004fa519e5343e86a03b63df123d12692c6f1ac2d8e2aea693cdbc2549c87454",
+        "uniformRgba": [
+          255,
+          255,
+          255,
+          0
+        ],
+        "width": 760
+      },
+      "sceneCompositeSha256": "5060863491ad3c6b870862ecdda7931122860c44eebadd9ea5ba1fa3e09becde",
+      "spaceSize": 1200,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/00_CO_ocean/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "4feaae35fbf91a692ae75a2e5833f03acacef911c7a0f1dd01adfc9956442599",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/01_solomon_islands",
+      "land": {
+        "alphaOpaque": 74810,
+        "alphaPartial": 2289,
+        "alphaTransparent": 500501,
+        "bytes": 194048,
+        "height": 760,
+        "meanOpaqueRgb": [
+          70.07666087421468,
+          77.68485496591364,
+          53.24861649512097
+        ],
+        "path": "spaces/01_solomon_islands/minimap.png",
+        "pixelSha256": "c5a77bee3f7887838db9893982289755a055386d4a5a84f63ae8c05a3f291196",
+        "sha256": "0be37c4be7c6a6fc129e596ed08da45b0b789a31911a8c4ca08da55647838be9",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "55989bd35388c7f697cf6812cc07f9e1ec47479284cd1c269f1c161634d2cfa3",
+      "spaceSize": 1000,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          5.0,
+          33.0,
+          55.0
+        ],
+        "path": "spaces/01_solomon_islands/minimap_water.png",
+        "pixelSha256": "a4314e461a878b41bea560f32c813749fe24d6933197a624a81cb51a35b61c33",
+        "sha256": "fa732417e6567f4bcdba3689f53288f3168d847fe3c6fb1a2819b7a7fa83f8af",
+        "uniformRgba": [
+          5,
+          33,
+          55,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/04_Archipelago",
+      "land": {
+        "alphaOpaque": 24934,
+        "alphaPartial": 3296,
+        "alphaTransparent": 549370,
+        "bytes": 95363,
+        "height": 760,
+        "meanOpaqueRgb": [
+          63.271035533809254,
+          64.76221224031443,
+          53.29714446137804
+        ],
+        "path": "spaces/04_Archipelago/minimap.png",
+        "pixelSha256": "978921e24d118c6cd03040564129126d55b19a8a2f58d797371de7584483c659",
+        "sha256": "14cde2c4a33739f3a26c623ccbf9e7fd3cac6b3b542b355b05cb01b8db1fc6c6",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "80088e6a450f3258a6635400f9e2a138de81fae0f627df6d55b1b9676de7bd07",
+      "spaceSize": 1000,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          21.0,
+          52.0,
+          70.0
+        ],
+        "path": "spaces/04_Archipelago/minimap_water.png",
+        "pixelSha256": "2a7a5b58f82ee168956b17c9b5c1826891f99c238383b6249b1acbac9d20b8d2",
+        "sha256": "bb0a2b8cac7575c74ba0217cbec834213bc586fe06246423efb1ab2f5463ef7e",
+        "uniformRgba": [
+          21,
+          52,
+          70,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/05_Ring",
+      "land": {
+        "alphaOpaque": 30507,
+        "alphaPartial": 4306,
+        "alphaTransparent": 542787,
+        "bytes": 112644,
+        "height": 760,
+        "meanOpaqueRgb": [
+          65.67020683777494,
+          65.30812600386797,
+          43.55210279607959
+        ],
+        "path": "spaces/05_Ring/minimap.png",
+        "pixelSha256": "4902ae42f4faa99ea1280871269b2ed4a9cd3b153e1d2dac3e7a8377371bbab0",
+        "sha256": "bc44da4eec24a8173699e40cb210801f276be7d818c0facc324308eb1b66e356",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "4367cac0ba5241da6397bda697ed75aabbfba08836395d02026e145a4b26d458",
+      "spaceSize": 1200,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          9.0,
+          46.0,
+          54.0
+        ],
+        "path": "spaces/05_Ring/minimap_water.png",
+        "pixelSha256": "44790225361a8785248e1d96968f0a649b2a19725c9cc755aae0ebde29d8842a",
+        "sha256": "fbba472ec5c33a8f4a6960dc7b6e8e3d7e5fc7747e22646b261da8492335f993",
+        "uniformRgba": [
+          9,
+          46,
+          54,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/08_NE_passage",
+      "land": {
+        "alphaOpaque": 66297,
+        "alphaPartial": 2700,
+        "alphaTransparent": 508603,
+        "bytes": 161513,
+        "height": 760,
+        "meanOpaqueRgb": [
+          53.67429898788784,
+          48.95885183341629,
+          40.4233374059158
+        ],
+        "path": "spaces/08_NE_passage/minimap.png",
+        "pixelSha256": "5c0dc830d6af8fd83127902f9bc4ff2781a01f1ed06aa736ac739a83e8107f28",
+        "sha256": "51e3d9d2235cd97e684ebebc8e41c5eaccf2ae9e87ec95888bc6cca33002d773",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "b992449b6818f1dcc086b67d58553380b49652db5f5343d5d01cb505d1a4f05b",
+      "spaceSize": 1200,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 7459,
+        "height": 760,
+        "meanOpaqueRgb": [
+          18.0,
+          40.0,
+          66.0
+        ],
+        "path": "spaces/08_NE_passage/minimap_water.png",
+        "pixelSha256": "7113c5a01309d28e78975e51f5ac42005f36a17efffba1109ef693dc5751c51a",
+        "sha256": "e0eb2888268c5bdcfc40be86812a931c20f7349b22846b25c90c96653788a9c9",
+        "uniformRgba": [
+          18,
+          40,
+          66,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/10_NE_big_race",
+      "land": {
+        "alphaOpaque": 124988,
+        "alphaPartial": 4093,
+        "alphaTransparent": 448519,
+        "bytes": 408516,
+        "height": 760,
+        "meanOpaqueRgb": [
+          56.30916567990527,
+          53.81021378052293,
+          47.581519825903285
+        ],
+        "path": "spaces/10_NE_big_race/minimap.png",
+        "pixelSha256": "629d9a0e02a1a1cd338dfdaa9d83b6fbca279115a4c531fe3184d5ba770af8f8",
+        "sha256": "bd1fdd5e025edb52e9ab9af0c85bb6289759ed351964f5c1e53637faf9e024ee",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "3fb235cf723ae6512f31e212aa23648fe79c601010ff1334a9b176b2c9ae69d6",
+      "spaceSize": 1000,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6099,
+        "height": 760,
+        "meanOpaqueRgb": [
+          1.0,
+          29.0,
+          44.0
+        ],
+        "path": "spaces/10_NE_big_race/minimap_water.png",
+        "pixelSha256": "777df650620e56eff731a8b84e1783ec036fa89ba6ea2c5b7b47a6cd191a5ebd",
+        "sha256": "074083053aab069db670e5320397c5a293509ff7a2bddaa52c9af3fd30537ac5",
+        "uniformRgba": [
+          1,
+          29,
+          44,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/13_OC_new_dawn",
+      "land": {
+        "alphaOpaque": 27963,
+        "alphaPartial": 15529,
+        "alphaTransparent": 534108,
+        "bytes": 114368,
+        "height": 760,
+        "meanOpaqueRgb": [
+          35.68615670707721,
+          35.837606837606835,
+          24.969423881557773
+        ],
+        "path": "spaces/13_OC_new_dawn/minimap.png",
+        "pixelSha256": "087f9010fc04effa8cdb8d03f4f37f94486392bf243895fb15d627d8f2d215b4",
+        "sha256": "9582eaa8c5bd0e4456938950e907c9a007c9b8b8e0057cc48e9ba532708a4fe8",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "66e2c0927d6b30b7384089d5477a35793f9b421093988dc7e1cd6eb7b25c69d5",
+      "spaceSize": 1200,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          14.0,
+          51.0,
+          71.0
+        ],
+        "path": "spaces/13_OC_new_dawn/minimap_water.png",
+        "pixelSha256": "8aee8b1779a9f9cf2c63196e87b2bf02e11399f7633226083832782f40da4915",
+        "sha256": "706ed5d53962cc0b27155fd392ba8a3a32c621fca515dfbf240c039d01ab4185",
+        "uniformRgba": [
+          14,
+          51,
+          71,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/14_Atlantic",
+      "land": {
+        "alphaOpaque": 35030,
+        "alphaPartial": 0,
+        "alphaTransparent": 542570,
+        "bytes": 92279,
+        "height": 760,
+        "meanOpaqueRgb": [
+          94.63245789323437,
+          92.83437053953755,
+          74.60365401084785
+        ],
+        "path": "spaces/14_Atlantic/minimap.png",
+        "pixelSha256": "7ddc2ca83eebbbac6562e0a84b75fc794206997a74449ca41862a821383692c6",
+        "sha256": "aaef0bea0693e67960836da06393851739d67be0ba525ad7737479e65bd29e9c",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "adaaec8bbba70813e72b03f93d38c4fadfc4548007bbcc5b79638c2629a60550",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6099,
+        "height": 760,
+        "meanOpaqueRgb": [
+          3.0,
+          45.0,
+          33.0
+        ],
+        "path": "spaces/14_Atlantic/minimap_water.png",
+        "pixelSha256": "2314dae0fafef979a5dfa34b788aee87aabb4b4b262fbd80d42dc842d50e668e",
+        "sha256": "55169a01384d42e4e62b0ff7fef521705af57aa360afe0e2ed5a9275bd09b0c9",
+        "uniformRgba": [
+          3,
+          45,
+          33,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/15_NE_north",
+      "land": {
+        "alphaOpaque": 26324,
+        "alphaPartial": 2161,
+        "alphaTransparent": 549115,
+        "bytes": 69641,
+        "height": 760,
+        "meanOpaqueRgb": [
+          43.308463759307095,
+          42.068492630299346,
+          37.73267740464975
+        ],
+        "path": "spaces/15_NE_north/minimap.png",
+        "pixelSha256": "05a436e76c261f8a12cdc6c27ed710a55d839e967c187c1d8027e6d8078a5e22",
+        "sha256": "014d34f4f8b15caa0012c044ab93d2a4079871bac023e05c7fcab27e0c79bcf2",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "284ad72ef1af1e9e572b39dbf17ba406def8ecb14460aacec2e61534fbb3ae8a",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          10.0,
+          24.0,
+          28.0
+        ],
+        "path": "spaces/15_NE_north/minimap_water.png",
+        "pixelSha256": "d25a2816602a70cccf31719e063241507a50a547c3214ffc6f7707f94926a055",
+        "sha256": "b6799edd3fac009e24a76c019f43147d626c4eefe5a8d7f3edb2faef18f5784e",
+        "uniformRgba": [
+          10,
+          24,
+          28,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/16_OC_bees_to_honey",
+      "land": {
+        "alphaOpaque": 29308,
+        "alphaPartial": 15,
+        "alphaTransparent": 548277,
+        "bytes": 78254,
+        "height": 760,
+        "meanOpaqueRgb": [
+          95.56247440971748,
+          83.05855056639825,
+          50.85580728811246
+        ],
+        "path": "spaces/16_OC_bees_to_honey/minimap.png",
+        "pixelSha256": "89976187882df9ab37281858fcf30269d188f9df014d15d3092581800fac6d19",
+        "sha256": "f57ea6b3eb8450fc8c961270f7bd0bc4690ff036440997f96c7c8b4d9bfa9140",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "6b53e7525f3466b9701d46937a3acdac4734fdafcc89457c2a1bf06d4038aa87",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6099,
+        "height": 760,
+        "meanOpaqueRgb": [
+          0.0,
+          22.0,
+          41.0
+        ],
+        "path": "spaces/16_OC_bees_to_honey/minimap_water.png",
+        "pixelSha256": "51b699ba00ab4fdc3308f241d2bd3f0f828cc149db0f201caa843697e5cba007",
+        "sha256": "fe3e5350c90b7adb588e6eca1af423035784c4be3d03de66ba7d77f581d7150a",
+        "uniformRgba": [
+          0,
+          22,
+          41,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/17_NA_fault_line",
+      "land": {
+        "alphaOpaque": 44492,
+        "alphaPartial": 4707,
+        "alphaTransparent": 528401,
+        "bytes": 168662,
+        "height": 760,
+        "meanOpaqueRgb": [
+          118.31434864694776,
+          111.27939854355839,
+          86.46444304594084
+        ],
+        "path": "spaces/17_NA_fault_line/minimap.png",
+        "pixelSha256": "79ed78c400c78e1aa3966f7f131b2ed753b63d2a0c063a74ce7318385636db4a",
+        "sha256": "7ad91f9864e55bb9206d050d260d718a08da75a134628f712338893e9c48f283",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "3fc57f92efeb4e5495cc76f57cf7350a81edb4b4d050ebd4a0b56f314e67eb1f",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          14.0,
+          41.0,
+          37.0
+        ],
+        "path": "spaces/17_NA_fault_line/minimap_water.png",
+        "pixelSha256": "3b84c6d4199c907daa8c3839c7ba38800621ba7f0018a40b6a397aa115dd0ce5",
+        "sha256": "3e417aca6f2975b8840d8c7189d7ac864bf53c5816a8faff35ff7c04a5b54411",
+        "uniformRgba": [
+          14,
+          41,
+          37,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/18_NE_ice_islands",
+      "land": {
+        "alphaOpaque": 23158,
+        "alphaPartial": 6,
+        "alphaTransparent": 554436,
+        "bytes": 58915,
+        "height": 760,
+        "meanOpaqueRgb": [
+          181.1202176353744,
+          186.76276016927196,
+          204.15238794369117
+        ],
+        "path": "spaces/18_NE_ice_islands/minimap.png",
+        "pixelSha256": "8033a45d08a176853a5b5847d228b26d6316aef60d72d57ce1a9c60210a70772",
+        "sha256": "8222ce12c73ec663ce724807d060633ff6035226970c2fcc808f1119e2ee574b",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "b91df530b8fef8663d1bb8570d55a89e10ce26b51671f100f7c1d27f846e333b",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          5.0,
+          15.0,
+          43.0
+        ],
+        "path": "spaces/18_NE_ice_islands/minimap_water.png",
+        "pixelSha256": "9357db1d7f910fc8a3b57bbb167115a4d57f9632df11be8ffc5e08392ed747ae",
+        "sha256": "03bb89709549d63eec2c3f55691df74d2713ac908604d49452cb61f3aeca03b5",
+        "uniformRgba": [
+          5,
+          15,
+          43,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/19_OC_prey",
+      "land": {
+        "alphaOpaque": 31539,
+        "alphaPartial": 2466,
+        "alphaTransparent": 543595,
+        "bytes": 95545,
+        "height": 760,
+        "meanOpaqueRgb": [
+          102.30955325152985,
+          102.71777798915629,
+          71.32908462538444
+        ],
+        "path": "spaces/19_OC_prey/minimap.png",
+        "pixelSha256": "ae695161893807f32aeb30fd2eeac2c02e04c776bb830ff642e31445f7dfbe77",
+        "sha256": "fa6874949b5f6699a7374535819daaabda87eb5b0770afb1da6fe8048011f74b",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "249e9a3074f96055b2253b61cf0effc3cc6fbde7c5197de2dd3d950f8ed547da",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          16.0,
+          60.0,
+          89.0
+        ],
+        "path": "spaces/19_OC_prey/minimap_water.png",
+        "pixelSha256": "60b5b5dca0ac80b847bffd5f3339c1258c5a7edfa175a7fd2f3507e78dfe59f4",
+        "sha256": "3511edffcd9be9f953e310d1b2759f9e52a5f5fdc5055e6ef503939a9ca0f024",
+        "uniformRgba": [
+          16,
+          60,
+          89,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/20_NE_two_brothers",
+      "land": {
+        "alphaOpaque": 46633,
+        "alphaPartial": 0,
+        "alphaTransparent": 530967,
+        "bytes": 120157,
+        "height": 760,
+        "meanOpaqueRgb": [
+          87.60461475778955,
+          88.27654236270452,
+          68.8837518495486
+        ],
+        "path": "spaces/20_NE_two_brothers/minimap.png",
+        "pixelSha256": "23ebaed3c8ee65f4424d02dd5ff56367a5bda676d9c7144fbd9aee5d259815f1",
+        "sha256": "ca417f406e866a655809c2a9d18e8a7ee822d29645f61e1b418bfe21689eded0",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "36208ad71de0093547f693a81d8bacc46d9588d0055b7d716f74694980383715",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6099,
+        "height": 760,
+        "meanOpaqueRgb": [
+          22.0,
+          60.0,
+          61.0
+        ],
+        "path": "spaces/20_NE_two_brothers/minimap_water.png",
+        "pixelSha256": "89b62977466d7332242f3f32fc30455bb6f5236ea33bb13e58eafc2a75f6b220",
+        "sha256": "805e9cab0300551d455ad3d7c588f73af7d4e3e99c5062be58cd441dacdfba6e",
+        "uniformRgba": [
+          22,
+          60,
+          61,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/22_tierra_del_fuego",
+      "land": {
+        "alphaOpaque": 21640,
+        "alphaPartial": 0,
+        "alphaTransparent": 555960,
+        "bytes": 70157,
+        "height": 760,
+        "meanOpaqueRgb": [
+          94.51381700554529,
+          70.09907578558226,
+          43.27883548983364
+        ],
+        "path": "spaces/22_tierra_del_fuego/minimap.png",
+        "pixelSha256": "dd08bd2b4fdb6c83723fbf03c1df91f0712dc9bf49ce743c3cf22d393d930fab",
+        "sha256": "7e8121118894ac18b4da066d19057aad89f7b77adec2e1428b0c3e717bcb25cc",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "02082d12f852d4c8affca08b1d39d545e00c576c5347c51a66bdb5a804573cea",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          27.0,
+          31.0,
+          39.0
+        ],
+        "path": "spaces/22_tierra_del_fuego/minimap_water.png",
+        "pixelSha256": "b2eaf3ad5bc30d56090eb0b4becdf781b191e6f9ff322096998a450619175353",
+        "sha256": "693ecf762a0f51aa274fdb3e6eb80e4e7e5e3c7532e057ed451b5334c6d4d007",
+        "uniformRgba": [
+          27,
+          31,
+          39,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/23_Shards",
+      "land": {
+        "alphaOpaque": 53330,
+        "alphaPartial": 0,
+        "alphaTransparent": 524270,
+        "bytes": 156910,
+        "height": 760,
+        "meanOpaqueRgb": [
+          118.88584286517907,
+          103.50461278829927,
+          79.6599287455466
+        ],
+        "path": "spaces/23_Shards/minimap.png",
+        "pixelSha256": "9b04ad4e6486ced0d6b122da477ffd326fd555a63218388f374c22f441d05587",
+        "sha256": "89cd4bcc32034a3d1dfbb71b358bedf8fea2890efb37042d74951b4fe25435de",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "b8fecf4384e613bc39c499b9fe665cbc4881e869f9bb96306b396bf06e7bd994",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6099,
+        "height": 760,
+        "meanOpaqueRgb": [
+          34.0,
+          62.0,
+          63.0
+        ],
+        "path": "spaces/23_Shards/minimap_water.png",
+        "pixelSha256": "c2b46c3ab0b4007385f2f550a50a9e52f18a5141ae166cb7576831a232fbd6f8",
+        "sha256": "03ff085ab0ca9af9561d0a615218bdac5072591f4e71ccbcdaca891c6a86dcc2",
+        "uniformRgba": [
+          34,
+          62,
+          63,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/25_sea_hope",
+      "land": {
+        "alphaOpaque": 29355,
+        "alphaPartial": 4502,
+        "alphaTransparent": 543743,
+        "bytes": 108021,
+        "height": 760,
+        "meanOpaqueRgb": [
+          60.00313404871402,
+          61.3190257196389,
+          31.723386135241014
+        ],
+        "path": "spaces/25_sea_hope/minimap.png",
+        "pixelSha256": "a575ec8444a52ef5e250063d69123c33b42a6bc594d8ac096b5b705dc07167f2",
+        "sha256": "1a3874abf06cbb4d21db053fd2f6cbcd1f9eeba4c0b66bd22f6c93727369d754",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "1a1fd689148cc3f38103a3e36a4b974b147cd1e5b38ec294018e76da068f2afc",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          7.0,
+          21.0,
+          35.0
+        ],
+        "path": "spaces/25_sea_hope/minimap_water.png",
+        "pixelSha256": "9ed7e46bd2973e1d747e6715d5e037ca67134ca58e78d2ae154f371dbf3fdf76",
+        "sha256": "3e14f635ce7c0830927199f4b1833a2e8a7ac9cc095c9564170e3e635327f938",
+        "uniformRgba": [
+          7,
+          21,
+          35,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/28_naval_mission",
+      "land": {
+        "alphaOpaque": 25564,
+        "alphaPartial": 1981,
+        "alphaTransparent": 550055,
+        "bytes": 82861,
+        "height": 760,
+        "meanOpaqueRgb": [
+          121.38100453763104,
+          95.02245345016429,
+          81.12056016272884
+        ],
+        "path": "spaces/28_naval_mission/minimap.png",
+        "pixelSha256": "a0f47acc40b8f629d0a602a29a59e5e2e85ddb2d2ea1032e8b4c01d8472bfa8f",
+        "sha256": "4ad092342efdcf0d645dbef82c095727fffd3ca7923e7b59d1d51e5120979cbb",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "ebd982ee45b50d20e872764dac1015352e4aea31f4bfd78a7469f24b021c7e72",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          16.0,
+          26.0,
+          38.0
+        ],
+        "path": "spaces/28_naval_mission/minimap_water.png",
+        "pixelSha256": "08ebcc7fcafa7f0c60a36a514ce981c0e94acca7740e7fd186da9dbb3a8a22f8",
+        "sha256": "0765223ba8f5c1ebcc0a3238d747ed2194acbef6ccfe9faf6503cc11e5f7f7fb",
+        "uniformRgba": [
+          16,
+          26,
+          38,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/33_new_tierra",
+      "land": {
+        "alphaOpaque": 22024,
+        "alphaPartial": 884,
+        "alphaTransparent": 554692,
+        "bytes": 68794,
+        "height": 760,
+        "meanOpaqueRgb": [
+          129.54817471848892,
+          141.7984017435525,
+          156.2970849981838
+        ],
+        "path": "spaces/33_new_tierra/minimap.png",
+        "pixelSha256": "363c44150f98697a3c02b5d4c2f1fc910cd48c2d7f3355afc96521b6834ed441",
+        "sha256": "4f51b0b74adc3724d89242b2c3cdb041ebcab215771724e50337ceb0a5e3feb2",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "f8386642a79404eab536afb351d13e2739911cc147b40d5d10a9780e6ba3f02b",
+      "spaceSize": 800,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          40.0,
+          61.0,
+          78.0
+        ],
+        "path": "spaces/33_new_tierra/minimap_water.png",
+        "pixelSha256": "c0cbc76d7722a159999f621f5cdc7752873c40fe91a2533aa4ef2edf5fa42459",
+        "sha256": "7c0380ab34aca12c073fe9a6b8986c96e6905115e935754d580987fa8b97cb71",
+        "uniformRgba": [
+          40,
+          61,
+          78,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/34_OC_islands",
+      "land": {
+        "alphaOpaque": 29678,
+        "alphaPartial": 7287,
+        "alphaTransparent": 540635,
+        "bytes": 95162,
+        "height": 760,
+        "meanOpaqueRgb": [
+          64.25891232562842,
+          58.48824044746951,
+          39.781487970887525
+        ],
+        "path": "spaces/34_OC_islands/minimap.png",
+        "pixelSha256": "5bb1679643b565babb94838af4790c14b1ee84ce8c3c236a3f78a54db9e39a79",
+        "sha256": "9fbe42000ad1416cbc510f346aeab76cd2e1f26f3a5d88fb8a196b0cd89ca6be",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "06f5b8df2f986a1e7750704e7f089cd60a5cf77b3062176bb2406839bcf59418",
+      "spaceSize": 800,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          7.0,
+          32.0,
+          36.0
+        ],
+        "path": "spaces/34_OC_islands/minimap_water.png",
+        "pixelSha256": "3c30570f67fd603d51a1a7b18bca54669f4a9d536ac6d3387726fb200eac0378",
+        "sha256": "51efe1c16da4c7e1bd2a548a741271166a80b414cf2a893bb051ab2b184f3e8d",
+        "uniformRgba": [
+          7,
+          32,
+          36,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/35_NE_north_winter",
+      "land": {
+        "alphaOpaque": 32342,
+        "alphaPartial": 2112,
+        "alphaTransparent": 543146,
+        "bytes": 97021,
+        "height": 760,
+        "meanOpaqueRgb": [
+          60.22892832848927,
+          64.9969698843609,
+          70.70954177230846
+        ],
+        "path": "spaces/35_NE_north_winter/minimap.png",
+        "pixelSha256": "f603c2e0033f9c37a78c04ffae3319227e2f5af0bd6a7a74802a2b032be928f8",
+        "sha256": "152eee4b58436a31aaf0f9fd034191377323f8380677428b98832e0e2079b8f0",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "840f4dd5007af9c0da15f676985be28a8596dc16cfe4ba1bb6e01607ab8fd266",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6098,
+        "height": 760,
+        "meanOpaqueRgb": [
+          1.0,
+          7.0,
+          19.0
+        ],
+        "path": "spaces/35_NE_north_winter/minimap_water.png",
+        "pixelSha256": "5994c0b3f125fb37cafa924a98b861f20277cbf97db029b2b06497002e5d2c6e",
+        "sha256": "9f395649680e6586a5f81912cb41722ce05df91afd3f503df12d72b352b9c65d",
+        "uniformRgba": [
+          1,
+          7,
+          19,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/37_Ridge",
+      "land": {
+        "alphaOpaque": 37769,
+        "alphaPartial": 2793,
+        "alphaTransparent": 537038,
+        "bytes": 105986,
+        "height": 760,
+        "meanOpaqueRgb": [
+          72.07784161614022,
+          68.28025629484497,
+          48.94082448568932
+        ],
+        "path": "spaces/37_Ridge/minimap.png",
+        "pixelSha256": "5be009be1aa00ec5665dc3dd06a29ada3c43d8d03da0bfc45da3d11b0b69ce8d",
+        "sha256": "a43c8c72de7b30867c2bb7bef0a8efb64cbc34740cf4f6162a395140c2223567",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "d3c19fb990734eab12559624313f4fb29280f093336a95ef240436c101c79b28",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          23.0,
+          52.0,
+          48.0
+        ],
+        "path": "spaces/37_Ridge/minimap_water.png",
+        "pixelSha256": "c5ef9a9491d4111f44bdbb68951458dcec60d4f9c531b5ee4a4dd1168065d299",
+        "sha256": "8196be687369f100fc2e56ba00e00c5aadec5ee101d2c2ddf1cc258d403050da",
+        "uniformRgba": [
+          23,
+          52,
+          48,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/38_Canada",
+      "land": {
+        "alphaOpaque": 26862,
+        "alphaPartial": 3382,
+        "alphaTransparent": 547356,
+        "bytes": 104710,
+        "height": 760,
+        "meanOpaqueRgb": [
+          88.75928821383367,
+          85.43206015933289,
+          63.1535254262527
+        ],
+        "path": "spaces/38_Canada/minimap.png",
+        "pixelSha256": "61a4073027774f4244f1089095318029d2eac9455e8aba57b20db99242ff4e5d",
+        "sha256": "877e75474def1f5975f7b3b88be2efbf1a0ba1a81ac48bfdbb76031786091a06",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "4872b06a827e3b6c304042bc8e37c8131f7aace369162479da1839882aff7c66",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          24.0,
+          53.0,
+          57.0
+        ],
+        "path": "spaces/38_Canada/minimap_water.png",
+        "pixelSha256": "4c805d6f3a8c1ee7a9c2ea94907ba69a6e7b5a44beb9dd728aa6a71cc08bdc61",
+        "sha256": "1471c934de261edbe42f38bb875bf5ff3df15a0a4af8fd9e58a926beaf3bbd8b",
+        "uniformRgba": [
+          24,
+          53,
+          57,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/40_Okinawa",
+      "land": {
+        "alphaOpaque": 71000,
+        "alphaPartial": 6739,
+        "alphaTransparent": 499861,
+        "bytes": 193432,
+        "height": 760,
+        "meanOpaqueRgb": [
+          79.83307042253522,
+          79.00481690140845,
+          53.5363661971831
+        ],
+        "path": "spaces/40_Okinawa/minimap.png",
+        "pixelSha256": "48437a1bd32a40b2c832bd3359b9b78471e646819839cacfa20387d2835c6baa",
+        "sha256": "22444592513ee44d7be41a128a03b47e488be5bcef1b0bed72a4b006bd936319",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "2e8e2b0046a3c51b709d44c8839a96f74b3b63f5096132f17b92430665755002",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          11.0,
+          56.0,
+          77.0
+        ],
+        "path": "spaces/40_Okinawa/minimap_water.png",
+        "pixelSha256": "01c520295fd937df8998b287fd6bb636b3129aa57287355530fd5d4f4a8a6e8c",
+        "sha256": "14341ee0ba03f2e38ace5f52c72135fdc624928674bfa7d35a6a1a44d020b3bc",
+        "uniformRgba": [
+          11,
+          56,
+          77,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/41_Conquest",
+      "land": {
+        "alphaOpaque": 29462,
+        "alphaPartial": 4125,
+        "alphaTransparent": 544013,
+        "bytes": 110593,
+        "height": 760,
+        "meanOpaqueRgb": [
+          76.85934424003801,
+          81.16068155590251,
+          57.61020976172697
+        ],
+        "path": "spaces/41_Conquest/minimap.png",
+        "pixelSha256": "915597fc3fe4354596b50d047a2eda687dd6d79c4d0241d72615d0322a479f8b",
+        "sha256": "961ce64bc62fd9699b11145694c6915e25498126bf4adfa806e0d2edafb3986b",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "14309b785f5aede577376601f3ba7166f55c4e020da23ba6b081d088a5d70a6d",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          17.0,
+          38.0,
+          59.0
+        ],
+        "path": "spaces/41_Conquest/minimap_water.png",
+        "pixelSha256": "35770c6b525251f78ba1942176b2857b9b14d0a179b44ab590520f099ce2e783",
+        "sha256": "0316fd050c447358c44e43f51e57bc485f681be2fd526a3e195afbcb0ddc7896",
+        "uniformRgba": [
+          17,
+          38,
+          59,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/42_Neighbors",
+      "land": {
+        "alphaOpaque": 99400,
+        "alphaPartial": 0,
+        "alphaTransparent": 478200,
+        "bytes": 249782,
+        "height": 760,
+        "meanOpaqueRgb": [
+          90.25274647887323,
+          90.93789738430584,
+          83.86116700201207
+        ],
+        "path": "spaces/42_Neighbors/minimap.png",
+        "pixelSha256": "4a3a3e14b039bfb14787c34c9c4aa780062d3dd0c304711a382860ad327dc794",
+        "sha256": "572f10812c21ef52d96c57cc67d074e47ec5b2e6cb76b930251fe52e51c8cdcf",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "0c7b8e9e78aa718d1f85766b0e32d8affc1bacda504cd3d9d476f975c343427a",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          11.0,
+          38.0,
+          59.0
+        ],
+        "path": "spaces/42_Neighbors/minimap_water.png",
+        "pixelSha256": "38f25f54a57da498e27741f4ebc6aa9737b5550a24e225ff1cbcfbe404052341",
+        "sha256": "e4ca0fc0903158a65a8ec7a4bfe98d7e014ee152b8bc90684b991e161bd9fa53",
+        "uniformRgba": [
+          11,
+          38,
+          59,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/44_Path_warrior",
+      "land": {
+        "alphaOpaque": 22530,
+        "alphaPartial": 1878,
+        "alphaTransparent": 553192,
+        "bytes": 70280,
+        "height": 760,
+        "meanOpaqueRgb": [
+          62.87385707944962,
+          57.60297381269419,
+          52.62250332889481
+        ],
+        "path": "spaces/44_Path_warrior/minimap.png",
+        "pixelSha256": "15c037fba67be652397b77e586a8729809833426e081e223e63c5302dd74efb8",
+        "sha256": "ca271f54fe2db7a82d7b3dcd9884a78d6ec4e47c430724bc7906c08d913b8066",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "20c6728079ade0d57c6f802c6bc65e84bd790b3aba448ba94cd0dc65778a871c",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6099,
+        "height": 760,
+        "meanOpaqueRgb": [
+          0.0,
+          16.0,
+          31.0
+        ],
+        "path": "spaces/44_Path_warrior/minimap_water.png",
+        "pixelSha256": "d8e0bf7a8d3bd808994d5d7221b4503fe0c22fdb91773dce13d2949d1eb1f198",
+        "sha256": "626383a4e6d1b7c8cde93f349fbbc218d525a57b5e92dacda0cf364aa4a159a7",
+        "uniformRgba": [
+          0,
+          16,
+          31,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/45_Zigzag",
+      "land": {
+        "alphaOpaque": 21440,
+        "alphaPartial": 11,
+        "alphaTransparent": 556149,
+        "bytes": 54821,
+        "height": 760,
+        "meanOpaqueRgb": [
+          100.34888059701493,
+          92.14081156716418,
+          77.62178171641791
+        ],
+        "path": "spaces/45_Zigzag/minimap.png",
+        "pixelSha256": "b1727ad022736bf0e8d38d467768daccfef699843d1fd284553c8d8e6ad220a2",
+        "sha256": "b0d5a349f4c0b700436e31fa51cbf718a2783bfca3f13318be9710f7bc506cbb",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "52707de5fcf953c80fc4734ef34c64b61e5d8300c93c9b3d815e05f30d336d9e",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          17.0,
+          40.0,
+          34.0
+        ],
+        "path": "spaces/45_Zigzag/minimap_water.png",
+        "pixelSha256": "214d11d1edf894969890fc64c9ea1f0e1b7ba7a42580fa0e206fb6b20801477c",
+        "sha256": "039cb5dc5ea4338439515aeb08579fae61bbe0c6188172dc3e8d457be912b118",
+        "uniformRgba": [
+          17,
+          40,
+          34,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/46_Estuary",
+      "land": {
+        "alphaOpaque": 49056,
+        "alphaPartial": 3329,
+        "alphaTransparent": 525215,
+        "bytes": 130220,
+        "height": 760,
+        "meanOpaqueRgb": [
+          61.307994944553165,
+          52.39622064579256,
+          41.546069797782124
+        ],
+        "path": "spaces/46_Estuary/minimap.png",
+        "pixelSha256": "a63ce2b2aa761aa07f270b43f01de8cc78f2b04150aa7ebfc0a1069d31d5f089",
+        "sha256": "7c09ab76e0e8d658d21f4f133ec20ad73dbb19a7f9775f5566dcf8ee3cab7bba",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "9599e39991759e94f3cfb3a1971b5579049eddf1be3e3a0d3dddd7db7576432f",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          21.0,
+          60.0,
+          65.0
+        ],
+        "path": "spaces/46_Estuary/minimap_water.png",
+        "pixelSha256": "d6a4f906ac1d6297715dbcfbe4973abc8f9e2feee60605a2cea1900378a89a74",
+        "sha256": "1be9dc5cea6d77afc0cb96a3cb5fd3d103b98d56b975c6f115673c44f3ef99a5",
+        "uniformRgba": [
+          21,
+          60,
+          65,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/47_Sleeping_Giant",
+      "land": {
+        "alphaOpaque": 34170,
+        "alphaPartial": 0,
+        "alphaTransparent": 543430,
+        "bytes": 94874,
+        "height": 760,
+        "meanOpaqueRgb": [
+          112.66101843722564,
+          101.20462393912788,
+          82.04392742171495
+        ],
+        "path": "spaces/47_Sleeping_Giant/minimap.png",
+        "pixelSha256": "b2d08e9dd7f61add8a288b2017556ff9e3b09a6f4ec6305a25085d172c5552c5",
+        "sha256": "c1a05f498975a38de1ba246c0dad9b0f5fca3eeb77c5e283a8e52722c5fdeb9b",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "d075c04b0ddbfe8f404ec4029fda2a15776a38e14695c17952f1c2ce4bc96bb1",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          29.0,
+          75.0,
+          90.0
+        ],
+        "path": "spaces/47_Sleeping_Giant/minimap_water.png",
+        "pixelSha256": "262c8cd153fb6c3e1116759e1515a1e04b9a49448fb0e993c848434547a54340",
+        "sha256": "c034acf9f2888e3c1dba042ce453df40cf06d4b88e1d68c1deb4690fe5f36de9",
+        "uniformRgba": [
+          29,
+          75,
+          90,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/50_Gold_harbor",
+      "land": {
+        "alphaOpaque": 31028,
+        "alphaPartial": 3965,
+        "alphaTransparent": 542607,
+        "bytes": 113906,
+        "height": 760,
+        "meanOpaqueRgb": [
+          77.49149155601393,
+          62.59791156374887,
+          39.092754931030036
+        ],
+        "path": "spaces/50_Gold_harbor/minimap.png",
+        "pixelSha256": "919e2c7eeffab6c8e83afb0f5e27e0fa57743777dc9777b2a1f01a1e858dd8a5",
+        "sha256": "cd8b803c886734b88795def88d1a21f011d0d385dff59716fcd5c90ad685a3d1",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "86334c9742a20883b8f68bfc2f5b50ea401576762fe2af2feb3962c8b11d78b1",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          10.0,
+          40.0,
+          50.0
+        ],
+        "path": "spaces/50_Gold_harbor/minimap_water.png",
+        "pixelSha256": "e2b76e0ff1169a33b842213f05df3c53897361ec808c2e50867ca8b3fb25764f",
+        "sha256": "72aaf3f2d6934ffcae9ea4a01aafec8eacb0d3b3b6d38e50bde3d90b701fa321",
+        "uniformRgba": [
+          10,
+          40,
+          50,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/51_Greece",
+      "land": {
+        "alphaOpaque": 28782,
+        "alphaPartial": 10,
+        "alphaTransparent": 548808,
+        "bytes": 74125,
+        "height": 760,
+        "meanOpaqueRgb": [
+          72.95323466055173,
+          66.36661802515461,
+          61.94777986241401
+        ],
+        "path": "spaces/51_Greece/minimap.png",
+        "pixelSha256": "d0cfc6f2c2c204a72318993a979ccf74677b7bb8ccd2ef43f9c783363e1df846",
+        "sha256": "ff8d1bf362bb2fa3216e7e52f22e2f5e93f0d2b5af68926028f1577c95cc94ff",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "95cb26fcb22fd8d823fd1edd041a57a3bccd3a0dbd16257e2be9872226d46465",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/51_Greece/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/52_Britain",
+      "land": {
+        "alphaOpaque": 42079,
+        "alphaPartial": 0,
+        "alphaTransparent": 535521,
+        "bytes": 103185,
+        "height": 760,
+        "meanOpaqueRgb": [
+          87.42424962570404,
+          92.88129470757384,
+          91.69685591387628
+        ],
+        "path": "spaces/52_Britain/minimap.png",
+        "pixelSha256": "1dc2dc849c4453c3875c74d23be127bfdae3de5b5d76c5e5f588b03405ec03fe",
+        "sha256": "7e65564eda0e27ad7384683eca0a511b20888c90713eec76a8cad5a34f80cfd9",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "5a8cb50e158e5a794f67ac423a0512b7d1eb822fa2fd2bf34a6b4607f6422be6",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/52_Britain/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/53_Shoreside",
+      "land": {
+        "alphaOpaque": 22125,
+        "alphaPartial": 3,
+        "alphaTransparent": 555472,
+        "bytes": 60196,
+        "height": 760,
+        "meanOpaqueRgb": [
+          79.46607909604519,
+          77.1217627118644,
+          72.12289265536724
+        ],
+        "path": "spaces/53_Shoreside/minimap.png",
+        "pixelSha256": "b530b4fc3b8c7ed59bfd144ff832721cdf043df3f3b362fdf8ec3ab72ef0a8d5",
+        "sha256": "11973d0223263ba65ce2de6ab0c404631d8bf26da0c00b06e11b1d899262208c",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "170bbc687605b8b79da490762645669e250db960d1cbb3eb66446a296abc915f",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/53_Shoreside/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/54_Faroe",
+      "land": {
+        "alphaOpaque": 123401,
+        "alphaPartial": 4539,
+        "alphaTransparent": 449660,
+        "bytes": 301672,
+        "height": 760,
+        "meanOpaqueRgb": [
+          72.59269373830034,
+          64.18225946305135,
+          56.851200557531946
+        ],
+        "path": "spaces/54_Faroe/minimap.png",
+        "pixelSha256": "05f6b744fd9d5827ec0da1e31c06c538630394a332d782b2a83688cfd4e2efb8",
+        "sha256": "1ef145be7bd0e1e331263de3b09feee036fe0cae7c900e114267f8a25d40ece1",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "91f4bb911f072f32a7e485f2aeee9d0bf40590081ebe577c788a7620878749eb",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 5130,
+        "height": 760,
+        "meanOpaqueRgb": [
+          14.0,
+          27.0,
+          36.0
+        ],
+        "path": "spaces/54_Faroe/minimap_water.png",
+        "pixelSha256": "472c8fbc51cad438ef95ad23d58dd982615f15e018a33cc80ddf0ae5af563091",
+        "sha256": "127cd0939af5dba5943d51bb80338f36e8f0adbefeb219a9f22522753fcec084",
+        "uniformRgba": [
+          14,
+          27,
+          36,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/55_Seychelles",
+      "land": {
+        "alphaOpaque": 21040,
+        "alphaPartial": 1313,
+        "alphaTransparent": 555247,
+        "bytes": 61492,
+        "height": 760,
+        "meanOpaqueRgb": [
+          64.41687262357415,
+          54.225998098859314,
+          38.62371673003802
+        ],
+        "path": "spaces/55_Seychelles/minimap.png",
+        "pixelSha256": "7c5b73843aade32726985bdf421a039e5ed85572a7a01dd967fb9f0b7152240e",
+        "sha256": "81bf360239c3df8e6f05acbabad0e6d4f389bcc4ef29ae9fbb4fc7ba4c49c45b",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "d5e56e1bc5210d69769926a6b5b16b07aa52df8f256468081247d1d59c837f67",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/55_Seychelles/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/56_AngelWings",
+      "land": {
+        "alphaOpaque": 41224,
+        "alphaPartial": 4100,
+        "alphaTransparent": 532276,
+        "bytes": 116130,
+        "height": 760,
+        "meanOpaqueRgb": [
+          55.17072579080148,
+          48.47334077236561,
+          38.21805259072385
+        ],
+        "path": "spaces/56_AngelWings/minimap.png",
+        "pixelSha256": "b35d9692ebfbbabaaa571458de18bf083c44eb312755b361c384bce6ea4c141b",
+        "sha256": "e04bfafcb472a80221766f2eabbeb5afa54f05a883951e7bae781b1a11cdcdb6",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "002c35d7eba0caf134d645c12d9c6517a63c354123fc150873d770972ce26b49",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 2856,
+        "height": 760,
+        "meanOpaqueRgb": [
+          28.0,
+          38.0,
+          47.0
+        ],
+        "path": "spaces/56_AngelWings/minimap_water.png",
+        "pixelSha256": "9c9ca67c784612638d84a7732dd334d4f3caab322080aaf12bfb72050c0d323c",
+        "sha256": "a56f126cbf89416cd5ac8bc74c34763e43e5fa92974a07fdaec091bbd73586ad",
+        "uniformRgba": [
+          28,
+          38,
+          47,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/58_RidgeNew",
+      "land": {
+        "alphaOpaque": 27848,
+        "alphaPartial": 6150,
+        "alphaTransparent": 543602,
+        "bytes": 89710,
+        "height": 760,
+        "meanOpaqueRgb": [
+          88.07928756104567,
+          84.37388681413387,
+          61.076163458776215
+        ],
+        "path": "spaces/58_RidgeNew/minimap.png",
+        "pixelSha256": "552615ca91eeb6d1d0bff74b4090326462183b14f94abb4d2a6f159ef594985e",
+        "sha256": "f08e930ff5c904d8d0ca0cb8d39f623e4a7dc97ad7e084732bc0391aa6c575f8",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "4d622e69eff59a08ec47ef492e3f0cbb60b2e205a2b68b83996c2e6fae512228",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          23.0,
+          52.0,
+          48.0
+        ],
+        "path": "spaces/58_RidgeNew/minimap_water.png",
+        "pixelSha256": "c5ef9a9491d4111f44bdbb68951458dcec60d4f9c531b5ee4a4dd1168065d299",
+        "sha256": "8196be687369f100fc2e56ba00e00c5aadec5ee101d2c2ddf1cc258d403050da",
+        "uniformRgba": [
+          23,
+          52,
+          48,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/Dock_BDAY2024",
+      "land": {
+        "alphaOpaque": 0,
+        "alphaPartial": 0,
+        "alphaTransparent": 577600,
+        "bytes": 2436,
+        "height": 760,
+        "meanOpaqueRgb": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "path": "spaces/Dock_BDAY2024/minimap.png",
+        "pixelSha256": "5bc7724c0f945b8eaec0da1b0dc5ca6e02d3c3350b58ec4a20ef1736b43d79b0",
+        "sha256": "8265aa5b9e770e33aa0069189397c0d9f16f3ed990de1ee4728f9a9cf904c308",
+        "uniformRgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "width": 760
+      },
+      "sceneCompositeSha256": "5060863491ad3c6b870862ecdda7931122860c44eebadd9ea5ba1fa3e09becde",
+      "spaceSize": 600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/Dock_BDAY2024/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/Dock_Kure",
+      "land": {
+        "alphaOpaque": 409845,
+        "alphaPartial": 6,
+        "alphaTransparent": 167749,
+        "bytes": 691233,
+        "height": 760,
+        "meanOpaqueRgb": [
+          37.93023216093889,
+          38.065851724432406,
+          23.254947602142273
+        ],
+        "path": "spaces/Dock_Kure/minimap.png",
+        "pixelSha256": "a8f35c0fcd5443b7d03d49df9fbce3a53712c8e2cbbfd74c4777f9313d1c7559",
+        "sha256": "5483df2f9b454365022bc451593e58abdc918d112376e683ae096357e7c28db5",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "147e1885115a8a1d342b56ecee0040f1f86215981828db82499317019fb20e11",
+      "spaceSize": 1200,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/Dock_Kure/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/Dock_StarTrek",
+      "land": {
+        "alphaOpaque": 280962,
+        "alphaPartial": 0,
+        "alphaTransparent": 296638,
+        "bytes": 499674,
+        "height": 760,
+        "meanOpaqueRgb": [
+          35.87231013446658,
+          18.81931008463778,
+          10.726632071240951
+        ],
+        "path": "spaces/Dock_StarTrek/minimap.png",
+        "pixelSha256": "3dab7efba6a9ff4e75f528c44afd93c1b9edcc84c0f9203616b305f793677263",
+        "sha256": "312032cc7804085929e69ee50e8344b2b858cdb9046598849b7a478601d40de6",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "767608abd9cb5d1e1f165e5f841263da3df9eae7efb2ce0be7b88b600219e83a",
+      "spaceSize": 600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/Dock_StarTrek/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/Dock_ocean",
+      "land": {
+        "alphaOpaque": 0,
+        "alphaPartial": 0,
+        "alphaTransparent": 577600,
+        "bytes": 2436,
+        "height": 760,
+        "meanOpaqueRgb": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "path": "spaces/Dock_ocean/minimap.png",
+        "pixelSha256": "5bc7724c0f945b8eaec0da1b0dc5ca6e02d3c3350b58ec4a20ef1736b43d79b0",
+        "sha256": "8265aa5b9e770e33aa0069189397c0d9f16f3ed990de1ee4728f9a9cf904c308",
+        "uniformRgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "width": 760
+      },
+      "sceneCompositeSha256": "5060863491ad3c6b870862ecdda7931122860c44eebadd9ea5ba1fa3e09becde",
+      "spaceSize": -200,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 4106,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/Dock_ocean/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "59f77d338ac4ac4589a0f7d240cf5260702052293676f72c55a094ca47c957e0",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/e14_ModernEra",
+      "land": {
+        "alphaOpaque": 11174,
+        "alphaPartial": 0,
+        "alphaTransparent": 566426,
+        "bytes": 57120,
+        "height": 760,
+        "meanOpaqueRgb": [
+          102.40656882047611,
+          108.4639341328083,
+          115.80105602291033
+        ],
+        "path": "spaces/e14_ModernEra/minimap.png",
+        "pixelSha256": "b7f6b3c3db135c396288570adc4fb3402e127a9c094563bebb524834908b364e",
+        "sha256": "f4153e80c3c278baaff3a9b740be9e0f80a215517b29e508db842c5f12e1e6cd",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "014d69aebd9c8321117a084ffd431b449c6764681becd83c05f9ed8c2fe92572",
+      "spaceSize": 3000,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          6.0,
+          39.0,
+          46.0
+        ],
+        "path": "spaces/e14_ModernEra/minimap_water.png",
+        "pixelSha256": "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16",
+        "sha256": "4feaae35fbf91a692ae75a2e5833f03acacef911c7a0f1dd01adfc9956442599",
+        "uniformRgba": [
+          6,
+          39,
+          46,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/r01_military_navigation",
+      "land": {
+        "alphaOpaque": 11798,
+        "alphaPartial": 2193,
+        "alphaTransparent": 563609,
+        "bytes": 48051,
+        "height": 760,
+        "meanOpaqueRgb": [
+          81.94795728089507,
+          74.0383115782336,
+          64.50084760128836
+        ],
+        "path": "spaces/r01_military_navigation/minimap.png",
+        "pixelSha256": "8f48f983cf140da87f4eac021fbb33a13b6644a99ce3128666fff60b852d727d",
+        "sha256": "724747b6e379ca5ecf78ed31f5c50c8cc433840568e5da4a6b2eb66197669773",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "481eb6bbcbe6aa4cf8330ebfd92d7c8df04d82a7552ccc5027cf470f3fd5c3bb",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 574564,
+        "alphaPartial": 3036,
+        "alphaTransparent": 0,
+        "bytes": 4109,
+        "height": 760,
+        "meanOpaqueRgb": [
+          7.0,
+          33.00527704485488,
+          53.00527704485488
+        ],
+        "path": "spaces/r01_military_navigation/minimap_water.png",
+        "pixelSha256": "346acaf2fac82259ae4d569d5424e42771062ecaae11c079f5fcf3a6f218f890",
+        "sha256": "d9c6eedb6a040ee5a498eee7873b9bb4fa43a7df15f9c2289f0db501ffbc0fe4",
+        "uniformRgba": null,
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s01_NavalBase",
+      "land": {
+        "alphaOpaque": 140081,
+        "alphaPartial": 6940,
+        "alphaTransparent": 430579,
+        "bytes": 444632,
+        "height": 760,
+        "meanOpaqueRgb": [
+          90.50312319300976,
+          88.26793069723945,
+          78.53397677058274
+        ],
+        "path": "spaces/s01_NavalBase/minimap.png",
+        "pixelSha256": "d8dd668b1107dc6ddd753e1f7b6271a6d03c810df3a870cf712c2af23664926b",
+        "sha256": "175df4403dd73151b791c734277242ef4cb294fc215b64789bfece596b7e62a1",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "4aa76076b6417b62ccf087b367881384a5a7da74289e4fad17c25a64d75b5b96",
+      "spaceSize": 1200,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          43.0,
+          61.0,
+          73.0
+        ],
+        "path": "spaces/s01_NavalBase/minimap_water.png",
+        "pixelSha256": "810de3632edcdafc7ac9ed07655435093e7cd21ddf63e7531d3b8cac8cca5f76",
+        "sha256": "c98fd11d5aa177db45ecc1943e4a845d9d20a7d4457ed1fd4b178e6bc147f79c",
+        "uniformRgba": [
+          43,
+          61,
+          73,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s02_Naval_Defense",
+      "land": {
+        "alphaOpaque": 57087,
+        "alphaPartial": 5753,
+        "alphaTransparent": 514760,
+        "bytes": 187911,
+        "height": 760,
+        "meanOpaqueRgb": [
+          79.41322893128033,
+          67.39185804123531,
+          35.126666316324204
+        ],
+        "path": "spaces/s02_Naval_Defense/minimap.png",
+        "pixelSha256": "74a280883f812a68ec6a478261b22b2f268b781203355121d9f19673670ad9f5",
+        "sha256": "1798b110508f6e7d6f4a1e5d1625dc33dfc17dd72a01dc2d9c09ab08d5d6ebfc",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "a77d927db9932e64b85703438de58079a3387aac4657b04af05e3ba44e5221d9",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          10.0,
+          45.0,
+          51.0
+        ],
+        "path": "spaces/s02_Naval_Defense/minimap_water.png",
+        "pixelSha256": "bd7bafb042f243732acc440b109e5f5d550ddfa16682764e93d9dd8dd5a752d3",
+        "sha256": "7108f44ff11ba0049cc2896f9b6fdcdabde40679ea1a463e63a27d344510d0b3",
+        "uniformRgba": [
+          10,
+          45,
+          51,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s03_Labyrinth",
+      "land": {
+        "alphaOpaque": 53377,
+        "alphaPartial": 791,
+        "alphaTransparent": 523432,
+        "bytes": 164235,
+        "height": 760,
+        "meanOpaqueRgb": [
+          151.67094441426082,
+          144.5914345129925,
+          115.22253030331416
+        ],
+        "path": "spaces/s03_Labyrinth/minimap.png",
+        "pixelSha256": "6f494873e5ed51f2e0677f8cd15e9d2917ef5c237216914537fe1e0fdd304845",
+        "sha256": "f74b8f71a6fab0f44823ea1fa8030ca6059a265917c889acea88e1b49b688e2a",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "ffd19cf56c2cd0b1a5b5391b497c122e4ba11de1da1074a80a1726e5a73520e2",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          29.0,
+          75.0,
+          90.0
+        ],
+        "path": "spaces/s03_Labyrinth/minimap_water.png",
+        "pixelSha256": "262c8cd153fb6c3e1116759e1515a1e04b9a49448fb0e993c848434547a54340",
+        "sha256": "c034acf9f2888e3c1dba042ce453df40cf06d4b88e1d68c1deb4690fe5f36de9",
+        "uniformRgba": [
+          29,
+          75,
+          90,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s06_Atoll",
+      "land": {
+        "alphaOpaque": 29025,
+        "alphaPartial": 2422,
+        "alphaTransparent": 546153,
+        "bytes": 77363,
+        "height": 760,
+        "meanOpaqueRgb": [
+          66.61598621877691,
+          60.44124031007752,
+          53.18583979328165
+        ],
+        "path": "spaces/s06_Atoll/minimap.png",
+        "pixelSha256": "0ca9649979df29020242e7db9dd5926fb0c90c29acaeb3caaa4049f504f9f604",
+        "sha256": "31b3c629da5ace407749676ce83a5d895ca46d8d40be8586fd377e75eaf6ef60",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "ef1fe1df930d99b4bd8fe2feb37cc137fd87a8f32f502f643bd301367fc9ebe4",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          14.0,
+          18.0,
+          27.0
+        ],
+        "path": "spaces/s06_Atoll/minimap_water.png",
+        "pixelSha256": "1acc6ac012f7fca16c70e54da21709de3a68b2dc77c91e74129e48b396e78d5c",
+        "sha256": "3c6e91a850675a7e7973e93b985f5c01f8e246f21e5a04c35e35c3da0b4499b0",
+        "uniformRgba": [
+          14,
+          18,
+          27,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s07_Advance",
+      "land": {
+        "alphaOpaque": 105719,
+        "alphaPartial": 459,
+        "alphaTransparent": 471422,
+        "bytes": 306228,
+        "height": 760,
+        "meanOpaqueRgb": [
+          75.54157719993567,
+          78.80688428759258,
+          75.48027317700698
+        ],
+        "path": "spaces/s07_Advance/minimap.png",
+        "pixelSha256": "b3063888788588e621cb4d8817c43c9a5247890ad48f50223bdd98a0f6b233c0",
+        "sha256": "b261df63047e52250b77ef046b0b9e178e601d24cf59c1ebec2bc5abc3c4f4c8",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "2e16f09755145865537f355e40d56ed4db446384fff9ae831e4c6c9bf87f9647",
+      "spaceSize": 1000,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          14.0,
+          41.0,
+          37.0
+        ],
+        "path": "spaces/s07_Advance/minimap_water.png",
+        "pixelSha256": "3b84c6d4199c907daa8c3839c7ba38800621ba7f0018a40b6a397aa115dd0ce5",
+        "sha256": "3e417aca6f2975b8840d8c7189d7ac864bf53c5816a8faff35ff7c04a5b54411",
+        "uniformRgba": [
+          14,
+          41,
+          37,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s09_LePVE",
+      "land": {
+        "alphaOpaque": 23485,
+        "alphaPartial": 4285,
+        "alphaTransparent": 549830,
+        "bytes": 78015,
+        "height": 760,
+        "meanOpaqueRgb": [
+          49.382542048115816,
+          43.47758143495848,
+          30.691845859058972
+        ],
+        "path": "spaces/s09_LePVE/minimap.png",
+        "pixelSha256": "cff8cd1dc376616dcc07c4749b56aa9ed748a15fd2bd854455bcd2e5a7745c6a",
+        "sha256": "ba2905b3deeb61a78aecace932a561fc0f7f90ffbb1eecb656e53bcef6ffd815",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "925eaead03e89452e2eb905d281c677e7d0ec22c7a3c4bcd3b858686cf53eb42",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          16.0,
+          24.0,
+          37.0
+        ],
+        "path": "spaces/s09_LePVE/minimap_water.png",
+        "pixelSha256": "c887990ef9fb9127e816b8aeccfabbfd202d1daf496a7d0c89523514cdc4815e",
+        "sha256": "378dbb9d05c1c8a9429a97ad41690e4db6d0bb25875adf788e9df0274c4907b4",
+        "uniformRgba": [
+          16,
+          24,
+          37,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s10_USS_CL",
+      "land": {
+        "alphaOpaque": 200301,
+        "alphaPartial": 1973,
+        "alphaTransparent": 375326,
+        "bytes": 359472,
+        "height": 760,
+        "meanOpaqueRgb": [
+          47.90693007024428,
+          42.6977249239894,
+          31.322185111407332
+        ],
+        "path": "spaces/s10_USS_CL/minimap.png",
+        "pixelSha256": "4d5a32b4251cd687905c918a7f778934dfe55d0f8a5d494dc51bb723cbd73c28",
+        "sha256": "7f6d7e318cef238843ef788a1307274a6d13241dac6abec53c9dd71d5a45ccc3",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "c286f18f9ef4ffda9c9e0be363d17cb6cbd4de185a0579b15ece3cad303ce341",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          14.0,
+          41.0,
+          37.0
+        ],
+        "path": "spaces/s10_USS_CL/minimap_water.png",
+        "pixelSha256": "3b84c6d4199c907daa8c3839c7ba38800621ba7f0018a40b6a397aa115dd0ce5",
+        "sha256": "3e417aca6f2975b8840d8c7189d7ac864bf53c5816a8faff35ff7c04a5b54411",
+        "uniformRgba": [
+          14,
+          41,
+          37,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s12_WW2_OP1",
+      "land": {
+        "alphaOpaque": 26340,
+        "alphaPartial": 2179,
+        "alphaTransparent": 549081,
+        "bytes": 74858,
+        "height": 760,
+        "meanOpaqueRgb": [
+          54.15478359908884,
+          50.982498101746394,
+          42.86268033409264
+        ],
+        "path": "spaces/s12_WW2_OP1/minimap.png",
+        "pixelSha256": "b9bd66a1ea38e7f067a6be7cb33c46673d21c8a4434b20811f719658a8ea5f1b",
+        "sha256": "ebc61d08ff6fd38fc57079c23259cc90963eca7b8ae761bcf14f132bb5ca0311",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "aab1dbcb884fbaf7e239bea3362019f4663dff55f953efe0a218481fc5a80b77",
+      "spaceSize": 1600,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6100,
+        "height": 760,
+        "meanOpaqueRgb": [
+          10.0,
+          24.0,
+          28.0
+        ],
+        "path": "spaces/s12_WW2_OP1/minimap_water.png",
+        "pixelSha256": "d25a2816602a70cccf31719e063241507a50a547c3214ffc6f7707f94926a055",
+        "sha256": "b6799edd3fac009e24a76c019f43147d626c4eefe5a8d7f3edb2faef18f5784e",
+        "uniformRgba": [
+          10,
+          24,
+          28,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s13_WW2_OP2",
+      "land": {
+        "alphaOpaque": 37494,
+        "alphaPartial": 2424,
+        "alphaTransparent": 537682,
+        "bytes": 96253,
+        "height": 760,
+        "meanOpaqueRgb": [
+          48.86640529151331,
+          41.467754840774525,
+          33.489198271723474
+        ],
+        "path": "spaces/s13_WW2_OP2/minimap.png",
+        "pixelSha256": "927aa014d640cbda2f0bd88340d3ff121e7934511e563fd3d0ce63e1ffbd3e0d",
+        "sha256": "fa19caa6413b3c731417536547c58fc981db9c878ec9e1574b8d3a9ed818b0a9",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "68db0d6db2820b706c9164e69c1d4d2e7b44f8af3671a7e9823cffce54ef15a9",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          17.0,
+          38.0,
+          59.0
+        ],
+        "path": "spaces/s13_WW2_OP2/minimap_water.png",
+        "pixelSha256": "35770c6b525251f78ba1942176b2857b9b14d0a179b44ab590520f099ce2e783",
+        "sha256": "0316fd050c447358c44e43f51e57bc485f681be2fd526a3e195afbcb0ddc7896",
+        "uniformRgba": [
+          17,
+          38,
+          59,
+          255
+        ],
+        "width": 760
+      }
+    },
+    {
+      "id": "spaces/s14_WW2_OP3",
+      "land": {
+        "alphaOpaque": 31726,
+        "alphaPartial": 2467,
+        "alphaTransparent": 543407,
+        "bytes": 91793,
+        "height": 760,
+        "meanOpaqueRgb": [
+          73.45763726911682,
+          71.70522599760449,
+          42.19350059887789
+        ],
+        "path": "spaces/s14_WW2_OP3/minimap.png",
+        "pixelSha256": "ac874831a5b726cea7d057f554d83c60002e5439b5c533e6b2e54fc5ebf7f044",
+        "sha256": "07fc0f912c07a0c74b4d5c79f3d9500df9048df14329ecb30c66a162ff0c0f89",
+        "uniformRgba": null,
+        "width": 760
+      },
+      "sceneCompositeSha256": "77da463aff18ebd17f06c92d2e16257221c185575e0501ee7599b26040fb8dd5",
+      "spaceSize": 1400,
+      "water": {
+        "alphaOpaque": 577600,
+        "alphaPartial": 0,
+        "alphaTransparent": 0,
+        "bytes": 6101,
+        "height": 760,
+        "meanOpaqueRgb": [
+          16.0,
+          60.0,
+          89.0
+        ],
+        "path": "spaces/s14_WW2_OP3/minimap_water.png",
+        "pixelSha256": "60b5b5dca0ac80b847bffd5f3339c1258c5a7edfa175a7fd2f3507e78dfe59f4",
+        "sha256": "3511edffcd9be9f953e310d1b2759f9e52a5f5fdc5055e6ef503939a9ca0f024",
+        "uniformRgba": [
+          16,
+          60,
+          89,
+          255
+        ],
+        "width": 760
+      }
+    }
+  ],
+  "source": "version-matched original game VFS",
+  "totalLayerBytes": 7980354,
+  "waterPixelGroups": {
+    "01c520295fd937df8998b287fd6bb636b3129aa57287355530fd5d4f4a8a6e8c": [
+      "spaces/40_Okinawa"
+    ],
+    "08ebcc7fcafa7f0c60a36a514ce981c0e94acca7740e7fd186da9dbb3a8a22f8": [
+      "spaces/28_naval_mission"
+    ],
+    "1acc6ac012f7fca16c70e54da21709de3a68b2dc77c91e74129e48b396e78d5c": [
+      "spaces/s06_Atoll"
+    ],
+    "214d11d1edf894969890fc64c9ea1f0e1b7ba7a42580fa0e206fb6b20801477c": [
+      "spaces/45_Zigzag"
+    ],
+    "2314dae0fafef979a5dfa34b788aee87aabb4b4b262fbd80d42dc842d50e668e": [
+      "spaces/14_Atlantic"
+    ],
+    "262c8cd153fb6c3e1116759e1515a1e04b9a49448fb0e993c848434547a54340": [
+      "spaces/47_Sleeping_Giant",
+      "spaces/s03_Labyrinth"
+    ],
+    "2a7a5b58f82ee168956b17c9b5c1826891f99c238383b6249b1acbac9d20b8d2": [
+      "spaces/04_Archipelago"
+    ],
+    "315d891a08317cad87fb2df6debdf0b29610f0ecda54da11fc04b154368c8d16": [
+      "spaces/00_CO_ocean",
+      "spaces/51_Greece",
+      "spaces/52_Britain",
+      "spaces/53_Shoreside",
+      "spaces/55_Seychelles",
+      "spaces/Dock_BDAY2024",
+      "spaces/Dock_Kure",
+      "spaces/Dock_StarTrek",
+      "spaces/Dock_ocean",
+      "spaces/e14_ModernEra"
+    ],
+    "346acaf2fac82259ae4d569d5424e42771062ecaae11c079f5fcf3a6f218f890": [
+      "spaces/r01_military_navigation"
+    ],
+    "35770c6b525251f78ba1942176b2857b9b14d0a179b44ab590520f099ce2e783": [
+      "spaces/41_Conquest",
+      "spaces/s13_WW2_OP2"
+    ],
+    "38f25f54a57da498e27741f4ebc6aa9737b5550a24e225ff1cbcfbe404052341": [
+      "spaces/42_Neighbors"
+    ],
+    "3b84c6d4199c907daa8c3839c7ba38800621ba7f0018a40b6a397aa115dd0ce5": [
+      "spaces/17_NA_fault_line",
+      "spaces/s07_Advance",
+      "spaces/s10_USS_CL"
+    ],
+    "3c30570f67fd603d51a1a7b18bca54669f4a9d536ac6d3387726fb200eac0378": [
+      "spaces/34_OC_islands"
+    ],
+    "44790225361a8785248e1d96968f0a649b2a19725c9cc755aae0ebde29d8842a": [
+      "spaces/05_Ring"
+    ],
+    "472c8fbc51cad438ef95ad23d58dd982615f15e018a33cc80ddf0ae5af563091": [
+      "spaces/54_Faroe"
+    ],
+    "4c805d6f3a8c1ee7a9c2ea94907ba69a6e7b5a44beb9dd728aa6a71cc08bdc61": [
+      "spaces/38_Canada"
+    ],
+    "51b699ba00ab4fdc3308f241d2bd3f0f828cc149db0f201caa843697e5cba007": [
+      "spaces/16_OC_bees_to_honey"
+    ],
+    "5994c0b3f125fb37cafa924a98b861f20277cbf97db029b2b06497002e5d2c6e": [
+      "spaces/35_NE_north_winter"
+    ],
+    "60b5b5dca0ac80b847bffd5f3339c1258c5a7edfa175a7fd2f3507e78dfe59f4": [
+      "spaces/19_OC_prey",
+      "spaces/s14_WW2_OP3"
+    ],
+    "7113c5a01309d28e78975e51f5ac42005f36a17efffba1109ef693dc5751c51a": [
+      "spaces/08_NE_passage"
+    ],
+    "777df650620e56eff731a8b84e1783ec036fa89ba6ea2c5b7b47a6cd191a5ebd": [
+      "spaces/10_NE_big_race"
+    ],
+    "810de3632edcdafc7ac9ed07655435093e7cd21ddf63e7531d3b8cac8cca5f76": [
+      "spaces/s01_NavalBase"
+    ],
+    "89b62977466d7332242f3f32fc30455bb6f5236ea33bb13e58eafc2a75f6b220": [
+      "spaces/20_NE_two_brothers"
+    ],
+    "8aee8b1779a9f9cf2c63196e87b2bf02e11399f7633226083832782f40da4915": [
+      "spaces/13_OC_new_dawn"
+    ],
+    "9357db1d7f910fc8a3b57bbb167115a4d57f9632df11be8ffc5e08392ed747ae": [
+      "spaces/18_NE_ice_islands"
+    ],
+    "9c9ca67c784612638d84a7732dd334d4f3caab322080aaf12bfb72050c0d323c": [
+      "spaces/56_AngelWings"
+    ],
+    "9ed7e46bd2973e1d747e6715d5e037ca67134ca58e78d2ae154f371dbf3fdf76": [
+      "spaces/25_sea_hope"
+    ],
+    "a4314e461a878b41bea560f32c813749fe24d6933197a624a81cb51a35b61c33": [
+      "spaces/01_solomon_islands"
+    ],
+    "b2eaf3ad5bc30d56090eb0b4becdf781b191e6f9ff322096998a450619175353": [
+      "spaces/22_tierra_del_fuego"
+    ],
+    "bd7bafb042f243732acc440b109e5f5d550ddfa16682764e93d9dd8dd5a752d3": [
+      "spaces/s02_Naval_Defense"
+    ],
+    "c0cbc76d7722a159999f621f5cdc7752873c40fe91a2533aa4ef2edf5fa42459": [
+      "spaces/33_new_tierra"
+    ],
+    "c2b46c3ab0b4007385f2f550a50a9e52f18a5141ae166cb7576831a232fbd6f8": [
+      "spaces/23_Shards"
+    ],
+    "c5ef9a9491d4111f44bdbb68951458dcec60d4f9c531b5ee4a4dd1168065d299": [
+      "spaces/37_Ridge",
+      "spaces/58_RidgeNew"
+    ],
+    "c887990ef9fb9127e816b8aeccfabbfd202d1daf496a7d0c89523514cdc4815e": [
+      "spaces/s09_LePVE"
+    ],
+    "d25a2816602a70cccf31719e063241507a50a547c3214ffc6f7707f94926a055": [
+      "spaces/15_NE_north",
+      "spaces/s12_WW2_OP1"
+    ],
+    "d6a4f906ac1d6297715dbcfbe4973abc8f9e2feee60605a2cea1900378a89a74": [
+      "spaces/46_Estuary"
+    ],
+    "d8e0bf7a8d3bd808994d5d7221b4503fe0c22fdb91773dce13d2949d1eb1f198": [
+      "spaces/44_Path_warrior"
+    ],
+    "e2b76e0ff1169a33b842213f05df3c53897361ec808c2e50867ca8b3fb25764f": [
+      "spaces/50_Gold_harbor"
+    ]
+  }
+}

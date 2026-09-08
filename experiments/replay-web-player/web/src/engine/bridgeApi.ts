@@ -19,6 +19,12 @@ export interface BridgeReplayEntry {
   dateTime?: string;
   /** False when the recording ended before the battle did (early exit). */
   complete?: boolean;
+  mapName?: string;
+  playerVehicle?: string;
+  shipName?: string;
+  damage?: number;
+  kills?: number;
+  outcome?: 'victory' | 'defeat' | 'draw';
 }
 
 interface BridgeReplayListResponse {
@@ -51,8 +57,8 @@ function titleCase(value: string): string {
 export function replayEntryToSummary(entry: BridgeReplayEntry): LocalReplaySummary {
   const segments = entry.name.split('/');
   const filename = segments[segments.length - 1] ?? entry.name;
-  const match = filename.match(/^(\d{8})_(\d{6})_([A-Z0-9]+)-(.+?)_(\d+)_([^.]*)\.wowsreplay$/i);
-  const typeCode = match?.[3]?.slice(2, 4).toUpperCase();
+  const match = filename.match(/^(\d{8})_(\d{6})_([A-Z0-9]+)-(.+?)_([A-Z]?\d+)_([^.]*)\.wowsreplay$/i);
+  const typeCode = (entry.playerVehicle || match?.[3])?.slice(2, 4).toUpperCase();
   const shipClass: LocalReplaySummary['shipClass'] = typeCode === 'SD' ? 'destroyer'
     : typeCode === 'SC' ? 'cruiser'
       : typeCode === 'SA' ? 'carrier'
@@ -71,9 +77,9 @@ export function replayEntryToSummary(entry: BridgeReplayEntry): LocalReplaySumma
   return {
     id: entry.name,
     filename,
-    shipName: titleCase(match?.[4] ?? filename.replace(/\.wowsreplay$/i, '')),
+    shipName: entry.shipName?.trim() || titleCase(match?.[4] ?? filename.replace(/\.wowsreplay$/i, '')),
     shipClass,
-    mapName: titleCase((match?.[6] ?? 'Unknown map').replace(/^(?:NE|OC)_/i, '')),
+    mapName: titleCase((entry.mapName?.replace(/^spaces\//i, '').replace(/^[A-Z]?\d+_/i, '') || match?.[6] || 'Unknown map').replace(/^(?:NE|OC)_/i, '')),
     playedAt,
     modifiedAt: modified.toISOString(),
     size: entry.size,
@@ -81,6 +87,9 @@ export function replayEntryToSummary(entry: BridgeReplayEntry): LocalReplaySumma
     battleType: entry.battleType,
     gameVersion: entry.gameVersionShort,
     complete: entry.complete,
+    damage: entry.damage,
+    kills: entry.kills,
+    outcome: entry.outcome,
   };
 }
 

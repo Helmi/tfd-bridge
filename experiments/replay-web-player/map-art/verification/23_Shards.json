@@ -1,0 +1,369 @@
+{
+  "mapId": "spaces/23_Shards",
+  "recipeVersion": 2,
+  "sourceLandSha256": "89cd4bcc32034a3d1dfbb71b358bedf8fea2890efb37042d74951b4fe25435de",
+  "generatedLandSha256": "6dbda5213128292b1d6fb36611e65a5d75b17a0fe9d163399a07edd84e080236",
+  "generatedWaterSha256": "a94b7dd8f4cc7d494825c0f36dddc1a61aa4aac3f59d2fb18dcab4ae0db69d08",
+  "landSha256": "c297e9eb57b248eeacc8db26dbe35150052deb18e3c3f6b238be56d5ec0499da",
+  "waterSha256": "c6c5e51ec6a10567e5cecf8ae112b420056dc9756e73041852faa4f47cfbf46c",
+  "landBytes": 126314,
+  "waterBytes": 246868,
+  "width": 1520,
+  "height": 1520,
+  "generatedLandSize": [
+    1254,
+    1254
+  ],
+  "generatedWaterSize": [
+    1254,
+    1254
+  ],
+  "alphaMismatches": 0,
+  "keyContaminationPixels": 0,
+  "sourceCoveredPixels": 213320,
+  "fallbackPixels": 0,
+  "extendedPixels": 18105,
+  "fallbackFraction": 0,
+  "originalComponents": 26,
+  "paintedComponents": 26,
+  "registrations": [
+    {
+      "originalArea": 28108,
+      "paintArea": 25162,
+      "originalCenter": [
+        61.15404866941796,
+        1418.013305820407
+      ],
+      "paintCenter": [
+        59.23793816071854,
+        1424.651458548605
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 26232,
+      "paintArea": 23199,
+      "originalCenter": [
+        1460.14043915828,
+        97.95684659957304
+      ],
+      "paintCenter": [
+        1463.729427992586,
+        92.84012241906979
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 14264,
+      "paintArea": 11044,
+      "originalCenter": [
+        435.921200224341,
+        1244.035053280987
+      ],
+      "paintCenter": [
+        436.80668236146323,
+        1244
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 12900,
+      "paintArea": 9804,
+      "originalCenter": [
+        424.37162790697676,
+        215.24480620155038
+      ],
+      "paintCenter": [
+        424.16156670746636,
+        214.29487964096288
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 12000,
+      "paintArea": 8960,
+      "originalCenter": [
+        1076.916,
+        290.072
+      ],
+      "paintCenter": [
+        1077.8013392857142,
+        288.14587053571427
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 11400,
+      "paintArea": 8339,
+      "originalCenter": [
+        264.18350877192984,
+        1133.9322807017543
+      ],
+      "paintCenter": [
+        265.17747931406643,
+        1133.0695527041612
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 9960,
+      "paintArea": 7027,
+      "originalCenter": [
+        898.337751004016,
+        800.4630522088354
+      ],
+      "paintCenter": [
+        898.2069161804468,
+        799.5601252312509
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 9892,
+      "paintArea": 6705,
+      "originalCenter": [
+        620.0972503032754,
+        705.9969672462596
+      ],
+      "paintCenter": [
+        622.938553318419,
+        705.9910514541388
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 8836,
+      "paintArea": 6482,
+      "originalCenter": [
+        1090.2229515617926,
+        1356.576052512449
+      ],
+      "paintCenter": [
+        1091.0243751928417,
+        1356.2457574822586
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 7588,
+      "paintArea": 5215,
+      "originalCenter": [
+        1236.347127042699,
+        339.884290985767
+      ],
+      "paintCenter": [
+        1236.6331735378715,
+        339.5386385426654
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 7388,
+      "paintArea": 4965,
+      "originalCenter": [
+        1252.5693015701138,
+        173.89685977260422
+      ],
+      "paintCenter": [
+        1254.5701913393757,
+        172.8612286002014
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 6936,
+      "paintArea": 4548,
+      "originalCenter": [
+        123.47347174163784,
+        994.0640138408304
+      ],
+      "paintCenter": [
+        124.10949868073878,
+        993.2812225153914
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 6284,
+      "paintArea": 4159,
+      "originalCenter": [
+        1393.664863144494,
+        413.9525779758116
+      ],
+      "paintCenter": [
+        1395.0716518393845,
+        413.97523443135367
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 5520,
+      "paintArea": 3693,
+      "originalCenter": [
+        524.5057971014493,
+        1144.1188405797102
+      ],
+      "paintCenter": [
+        523.7297590035201,
+        1143.9252640129976
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 5168,
+      "paintArea": 3181,
+      "originalCenter": [
+        1094.171826625387,
+        713.9102167182663
+      ],
+      "paintCenter": [
+        1095.065388242691,
+        712.9981138006916
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4976,
+      "paintArea": 2918,
+      "originalCenter": [
+        545.9983922829582,
+        979.3858520900321
+      ],
+      "paintCenter": [
+        546.2309801233722,
+        978.3684030157642
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4972,
+      "paintArea": 3208,
+      "originalCenter": [
+        944.6367658889783,
+        370.20072405470637
+      ],
+      "paintCenter": [
+        945.5018703241896,
+        369.7150872817955
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4356,
+      "paintArea": 2531,
+      "originalCenter": [
+        834.4136822773187,
+        1139.232782369146
+      ],
+      "paintCenter": [
+        835.8036349269064,
+        1138.966811536942
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4056,
+      "paintArea": 2221,
+      "originalCenter": [
+        676.888560157791,
+        384.7544378698225
+      ],
+      "paintCenter": [
+        677.3196758217019,
+        386.0072039621792
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4052,
+      "paintArea": 2139,
+      "originalCenter": [
+        964.464461994077,
+        467.0370187561698
+      ],
+      "paintCenter": [
+        964.5876577840112,
+        466.737260402057
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3712,
+      "paintArea": 2192,
+      "originalCenter": [
+        1080.094827586207,
+        544.0387931034483
+      ],
+      "paintCenter": [
+        1081.7951642335765,
+        543.5743613138686
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3616,
+      "paintArea": 1853,
+      "originalCenter": [
+        601.1017699115044,
+        1067.0973451327434
+      ],
+      "paintCenter": [
+        601.7253103076093,
+        1066.5412844036698
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3184,
+      "paintArea": 1895,
+      "originalCenter": [
+        452.0527638190955,
+        968.9974874371859
+      ],
+      "paintCenter": [
+        452.2295514511873,
+        968.2116094986808
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3028,
+      "paintArea": 1550,
+      "originalCenter": [
+        393.55151915455747,
+        741.4511228533686
+      ],
+      "paintCenter": [
+        395.1890322580645,
+        740.1767741935483
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 2916,
+      "paintArea": 1545,
+      "originalCenter": [
+        763.7647462277092,
+        752.8100137174212
+      ],
+      "paintCenter": [
+        763.8899676375405,
+        752.3022653721683
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 1976,
+      "paintArea": 837,
+      "originalCenter": [
+        1011.6457489878543,
+        539.7995951417004
+      ],
+      "paintCenter": [
+        1012.4958183990442,
+        538.8506571087216
+      ],
+      "fallback": false
+    }
+  ]
+}

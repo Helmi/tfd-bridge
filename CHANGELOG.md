@@ -9,6 +9,34 @@ Versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+Planned for **0.18.0**.
+
+### Added
+- **Observed consumables now appear on the replay map and exported video.** Radar and hydro use configured ranges, faint circles and original game icons; hydro distinguishes ship and torpedo detection. Spotter/fighter activations gain small ship-side icons without invented patrol areas. Aircraft ownership now uses the toolkit ship-owner ID. Effects follow recorded timing and visible living ships.
+- **Map labels identify your division.** A small dot precedes own-division ship names, including the recorder when in a valid division. Names and dots match the ship icon colour, including selected pink, and sit slightly closer to the icons. Each name and dot stays centred and edge-clamped together; ship glyphs have no dot.
+- **Optional 2× map anti-aliasing for local exports.** Supersample the map and downsample to the chosen video resolution. The Save Video dialog keeps the last two export times, sizes and settings for comparison.
+- **Replay picker battle stats.** Damage, kills and win/loss come from the final result packet without decoding the full replay scene; missing or untrustworthy results remain unavailable.
+- **Battle ending screen.** RePlayer and exported videos show the recorded Victory, Defeat, or Draw over a soft tinted overlay for three seconds, fade to black for one second, then hold black for half a second. Closing timing stays at normal speed; unknown or partial recordings use a neutral message.
+- **RPF chat sectors.** Direction reports such as `RPF: ESE~SE` draw a subtle sector from the sender to the map edge in RePlayer and videos, following the ship until the next report.
+- **Local replay videos.** Export the shared replay layout as H.264 MP4, with 1080p presets at 30 or 60 fps and adjustable resolution, bitrate and playback speed. The save dialog shows the destination folder and estimated file size.
+- **Bundled map artwork.** Bees to Honey, Two Brothers, Ice Islands, and Shards have detailed terrain, softer coast colours, and separate textured water. Original land masks preserve every shoreline; enhancements apply only to matching game assets and work offline in RePlayer and videos.
+
+### Changed
+- **Balanced replay and video presentation.** A more compact header keeps health readable; the combined feed shows game class icons, ship names and quieter player identities, including chat senders. Sinking uses a red X and “sunk”; wrapped lines scroll smoothly with the whole feed. Living roster player names use the same soft gray.
+- **Actual ship names in the replay picker.** Names resolve from the installed game's language catalog instead of internal replay filenames such as France for République.
+- **Player fits the window.** The replay scales to the available width and height so playback controls remain visible without scrolling. Removed the bottom render-completion summary.
+- **Cleaner RePlayer heading and health display.** The header simply says RePlayer; the health bar and value are larger with more space above the ribbon divider.
+- **Operation replay names.** The picker recognizes operation map filenames and uses replay-header map and ship-class metadata.
+- **Refreshed RePlayer layout.** Ship silhouettes, recorded ribbons, team class icons and a combined battle-event/chat feed share the layout used for video export. Selecting a ship updates the right-hand panel.
+- **Ribbons fit the available width.** Ribbon images and count badges shrink only as much as needed to stay in one row.
+- **Clearer loading and rendering feedback.** Replay preparation has an animated activity bar and concise status text. Video rendering uses a blocking progress dialog with cancellation.
+- **Faster video frame capture.** The renderer copies the map canvas directly and reuses unchanged HUD images, avoiding repeated PNG conversions and style calculations.
+
+### Fixed
+- Order team icons and rosters by ship class (CV, BB, CA, DD, SS), then descending tier and ship name, retaining positions when ships sink. Mirror the right team's top icon strip so carriers sit at the outer edges.
+- Hide hit subribbons while retaining the main-hit counter and original ribbon graphics.
+- Align the replay toolbar controls and keep render progress outside the toolbar.
+
 ---
 
 ## [0.16.0] — 2026-09-05

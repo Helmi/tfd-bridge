@@ -179,9 +179,17 @@ impl DecodeContext {
 /// `/player/*` and `/v1/replays/{name}/scene` routes both return 404.
 #[derive(Clone)]
 pub struct PlayerConfig {
+    pub share_service: Option<Arc<dyn crate::share_service::ShareService>>,
     /// Absolute path to the bundled player web dist (contains index.html).
     pub player_dist: PathBuf,
+    pub render_dispatcher: Option<RenderDispatcher>,
 }
+
+pub type RenderDispatcher = Arc<dyn Fn(u16, crate::render_jobs::WorkerLease,
+    Arc<Mutex<crate::render_jobs::RenderJobs>>) -> Result<(), String> + Send + Sync>;
+
+mod render_routes;
+mod share_routes;
 
 /// Bounded (≤16 entries) FIFO cache mapping a replay's `FileKey` directly to
 /// its exported scene JSON body. Unlike `ResultCache` there is no
@@ -227,6 +235,8 @@ impl SceneCache {
 /// `Option<PlayerConfig>` at startup, mirroring how `Option<Arc<DecodeContext>>`
 /// is threaded for the `/result` routes.
 struct PlayerState {
+    share_auth: Mutex<crate::share_auth::ShareAuthorization>,
+    jobs: Arc<Mutex<crate::render_jobs::RenderJobs>>,
     config: PlayerConfig,
     cache: Mutex<SceneCache>,
     /// Held across the (slow) in-process decode so two concurrent requests for
@@ -242,6 +252,8 @@ struct PlayerState {
 impl PlayerState {
     fn new(config: PlayerConfig) -> Self {
         Self {
+            share_auth: Mutex::new(crate::share_auth::ShareAuthorization::default()),
+            jobs: Arc::new(Mutex::new(crate::render_jobs::RenderJobs::default())),
             config,
             cache: Mutex::new(SceneCache::new(16)),
             decode_lock: Mutex::new(()),
@@ -575,6 +587,10 @@ fn handle_requests(
         // forbid. Currently the only POST endpoint is the player's render-save.
         if request.method() == &tiny_http::Method::Post {
             let response = match path_no_qs {
+                p if p.starts_with("/v1/share/") || (p == "/v1/render/jobs" && origin.as_deref() == Some("https://engine.tfd.rocks") && player.is_some_and(|s|s.config.share_service.is_some())) =>
+                    share_routes::post(&mut request, replays_dir, player, port, p),
+                p if p == "/v1/render/jobs" || p.starts_with("/v1/render/jobs/") =>
+                    render_routes::post(&mut request, replays_dir, player, port, p),
                 "/player/api/render" => handle_player_render_save(&mut request, &path, player),
                 _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
             };
@@ -587,7 +603,9 @@ fn handle_requests(
 
         let response = match request.method() {
             tiny_http::Method::Get => match path_no_qs {
-                "/v1/health" => handle_health(decode_ctx),
+                p if p.starts_with("/v1/share/status/") => share_routes::status(player, p),
+                p if p.starts_with("/v1/render/jobs/") => render_routes::get(player, p),
+                "/v1/health" => handle_health(decode_ctx, player),
                 "/v1/replays" => handle_list(replays_dir, generation),
                 // /result routes MUST be matched BEFORE the generic /latest and /{name} fetch routes.
                 "/v1/replays/latest/result" => handle_latest_result(replays_dir, decode_ctx),
@@ -621,12 +639,18 @@ fn handle_requests(
                 }
                 // Enriched picker list — matched before the static catch-all.
                 "/player/api/replays" => {
-                    handle_player_replays(replays_dir, generation, player, &path)
+                    handle_player_replays(replays_dir, generation, player, decode_ctx, &path)
                 }
                 p if p == "/player" || p.starts_with("/player/") => {
                     handle_player_static(player, p)
                 }
                 _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
+            },
+            tiny_http::Method::Options if (path_no_qs.starts_with("/v1/share/") || path_no_qs == "/v1/render/jobs") && origin.as_deref() == Some("https://engine.tfd.rocks") => {
+                make_json_response(StatusCode(204), "", None)
+                    .with_header(Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, OPTIONS").unwrap())
+                    .with_header(Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap())
+                    .with_header(Header::from_bytes("Access-Control-Allow-Private-Network", "true").unwrap())
             },
             tiny_http::Method::Options => make_json_response(StatusCode(204), "", None),
             _ => make_json_response(StatusCode(405), r#"{"error":"method not allowed"}"#, None),
@@ -642,7 +666,7 @@ fn handle_requests(
 
 // ── Endpoint handlers ─────────────────────────────────────────────────────────
 
-fn handle_health(decode_ctx: Option<&Arc<DecodeContext>>) -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_health(decode_ctx: Option<&Arc<DecodeContext>>, player: Option<&Arc<PlayerState>>) -> Response<std::io::Cursor<Vec<u8>>> {
     #[derive(Serialize)]
     struct Health<'a> {
         name: &'static str,
@@ -661,6 +685,13 @@ fn handle_health(decode_ctx: Option<&Arc<DecodeContext>>) -> Response<std::io::C
     ];
     if decode_ctx.is_some() {
         caps.push("battle-result-v1".to_string());
+    }
+    if player.is_some_and(|state| state.config.render_dispatcher.is_some()) {
+        // This is local rendering, not authorization or readiness for Discord.
+        caps.push("local-render-jobs-v1".to_string());
+    }
+    if player.is_some_and(|state| state.config.share_service.is_some()) {
+        caps.push("replay-video-share-v1".to_string());
     }
     let body = serde_json::to_string(&Health {
         name: "tfd-bridge",
@@ -1064,6 +1095,7 @@ fn handle_player_replays(
     replays_dir: &Path,
     generation: &AtomicU64,
     player: Option<&Arc<PlayerState>>,
+    decode: Option<&Arc<DecodeContext>>,
     url: &str,
 ) -> Response<std::io::Cursor<Vec<u8>>> {
     let state = match player {
@@ -1103,6 +1135,16 @@ fn handle_player_replays(
             // Failures (unreadable/odd header) degrade gracefully to no meta.
             if let Some(meta) = state.meta_for(replays_dir, &entry.name) {
                 let object = value.as_object_mut().expect("json object");
+                if let Some(stats) = decode.and_then(|ctx| crate::battle_result::picker_stats(&meta, &ctx.tables)) {
+                    if let Some(stats) = stats.as_object() {
+                        object.extend(stats.iter().filter(|(_, value)| !value.is_null()).map(|(key, value)| (key.clone(), value.clone())));
+                    }
+                }
+                object.insert("mapName".to_string(), meta.map_name.into());
+                if let Some(name) = replays_dir.parent().and_then(|game_dir| scene_export::ship_display_name(game_dir, &meta.player_vehicle)) {
+                    object.insert("shipName".to_string(), name.into());
+                }
+                object.insert("playerVehicle".to_string(), meta.player_vehicle.into());
                 if let Some(battle_type) = meta.battle_type {
                     object.insert("battleType".to_string(), battle_type.into());
                 }
@@ -1151,6 +1193,11 @@ fn handle_player_render_save(
     if player.is_none() {
         return make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None);
     }
+    let host = request.headers().iter().find(|h| h.field.equiv("Host")).map(|h| h.value.as_str());
+    let origin = request.headers().iter().find(|h| h.field.equiv("Origin")).map(|h| h.value.as_str());
+    if !host.zip(origin).is_some_and(|(host, origin)| origin == format!("http://{host}")) {
+        return make_json_response(StatusCode(403), r#"{"error":"same-origin player required"}"#, None);
+    }
     // Extract + sanitise the ?name= query into a bare, safe *.mp4 basename.
     let raw = full_path
         .split_once('?')
@@ -1167,23 +1214,52 @@ fn handle_player_render_save(
     }
 
     let mut bytes = Vec::new();
-    if request.as_reader().read_to_end(&mut bytes).is_err() {
+    const MAX_VIDEO_BYTES: u64 = 512 * 1024 * 1024;
+    if request.as_reader().take(MAX_VIDEO_BYTES + 1).read_to_end(&mut bytes).is_err() {
         return make_json_response(StatusCode(400), r#"{"error":"read error"}"#, None);
     }
     if bytes.is_empty() {
         return make_json_response(StatusCode(400), r#"{"error":"empty body"}"#, None);
+    }
+    if bytes.len() as u64 > MAX_VIDEO_BYTES {
+        return make_json_response(StatusCode(413), r#"{"error":"video exceeds 512 MiB"}"#, None);
+    }
+    if bytes.get(4..8) != Some(b"ftyp") {
+        return make_json_response(StatusCode(400), r#"{"error":"expected MP4 container"}"#, None);
     }
 
     let dir = render_output_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return make_json_response(StatusCode(500), &format!(r#"{{"error":"mkdir: {e}"}}"#), None);
     }
-    let out = dir.join(&safe);
-    if let Err(e) = std::fs::write(&out, &bytes) {
-        return make_json_response(StatusCode(500), &format!(r#"{{"error":"write: {e}"}}"#), None);
-    }
+    let out = match persist_render(&dir, &safe, &bytes) {
+        Ok(path) => path,
+        Err(error) => return make_json_response(StatusCode(500), &serde_json::json!({"error":format!("save: {error}")}).to_string(), None),
+    };
     let body = serde_json::json!({ "path": out.display().to_string(), "bytes": bytes.len() }).to_string();
     make_json_response(StatusCode(200), &body, None)
+}
+
+/// Persist a new render without replacing any existing local video.
+fn persist_render(dir: &Path, safe: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let mut out = dir.join(safe);
+    let mut attempt = 0;
+    let mut file = loop {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&out) {
+            Ok(file) => break file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 1000 => {
+                attempt += 1;
+                out = dir.join(format!("{}-{attempt}.mp4", &safe[..safe.len()-4]));
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    if let Err(error) = std::io::Write::write_all(&mut file, bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(&out);
+        return Err(error);
+    }
+    Ok(out)
 }
 
 /// GET /player/  and  GET /player/{path} — serve static files from the
@@ -1253,6 +1329,7 @@ fn mime_for_extension(ext: Option<&str>) -> &'static str {
         Some("css") => "text/css; charset=utf-8",
         Some("json") => "application/json",
         Some("png") => "image/png",
+        Some("webp") => "image/webp",
         Some("svg") => "image/svg+xml",
         Some("woff2") => "font/woff2",
         Some("wasm") => "application/wasm",
@@ -1451,7 +1528,9 @@ fn attach_cors(
     if let Some(origin) = allowed_origin {
         let acao = Header::from_bytes(b"Access-Control-Allow-Origin", origin.as_bytes()).unwrap();
         let acam = Header::from_bytes(b"Access-Control-Allow-Methods", b"GET, OPTIONS").unwrap();
-        response.with_header(acao).with_header(acam)
+        if response.headers().iter().any(|h|h.field.equiv("Access-Control-Allow-Methods")) {
+            response.with_header(acao)
+        } else { response.with_header(acao).with_header(acam) }
     } else {
         response
     }
@@ -2895,11 +2974,93 @@ mod tests {
     /// static-file / 404-shape tests below don't decode any replay (only the
     /// scene route runs the in-process decoder).
     fn start_bridge_with_player(tmp: &TempDir, player_dist: &Path) -> Bridge {
-        let config = PlayerConfig {
+        let config = PlayerConfig { share_service: None,
             player_dist: player_dist.to_path_buf(),
+            render_dispatcher: None,
         };
         start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, None, Some(config))
             .expect("bridge start failed")
+    }
+
+    #[test]
+    fn video_files_are_saved_without_overwriting_existing_render() {
+        let dir = TempDir::new().unwrap();
+        let first = persist_render(dir.path(), "battle.mp4", b"first encoded video").unwrap();
+        let second = persist_render(dir.path(), "battle.mp4", b"second encoded video").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(fs::read(first).unwrap(), b"first encoded video");
+        assert_eq!(fs::read(second).unwrap(), b"second encoded video");
+    }
+
+    #[test]
+    fn render_job_routes_require_a_dispatcher_and_local_origin() {
+        let tmp = TempDir::new().unwrap();
+        let disabled = start_bridge_with_player(&tmp, tmp.path());
+        let origin = format!("http://127.0.0.1:{}", disabled.port());
+        let response = ureq::post(&format!("{origin}/v1/render/jobs"))
+            .set("Origin", &origin).send_string("{}").unwrap_err();
+        assert!(matches!(response, ureq::Error::Status(404, _)));
+        let (_, health, _) = get(&format!("{origin}/v1/health"));
+        assert!(!health.contains("local-render-jobs-v1"));
+        disabled.stop();
+
+        let bridge = start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, None,
+            Some(PlayerConfig { share_service: None,player_dist:tmp.path().into(),render_dispatcher:Some(Arc::new(|_,_,_|panic!("must not dispatch invalid request")))})).unwrap();
+        let origin = format!("http://127.0.0.1:{}", bridge.port());
+        let (_, health, _) = get(&format!("{origin}/v1/health"));
+        assert!(health.contains("local-render-jobs-v1"));
+        for remote in ["https://engine.tfd.rocks", "https://untrusted.example"] {
+            let response = ureq::post(&format!("{origin}/v1/render/jobs"))
+                .set("Origin", remote).send_string("{}").unwrap_err();
+            assert!(matches!(response, ureq::Error::Status(403, _)));
+        }
+        let response = ureq::post(&format!("{origin}/v1/render/jobs"))
+            .send_string("{}").unwrap_err();
+        assert!(matches!(response, ureq::Error::Status(403, _)));
+        bridge.stop();
+    }
+
+    #[test]
+    fn render_job_start_rejects_missing_live_unsafe_and_unauthorized_inputs() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("temp.wowsreplay"), b"incomplete").unwrap();
+        let bridge = start_on_ports_full(tmp.path().to_path_buf(), None, &[0], None, None,
+            Some(PlayerConfig { share_service: None,player_dist:tmp.path().into(),render_dispatcher:Some(Arc::new(|_,_,_|panic!("must not dispatch invalid request")))})).unwrap();
+        let origin = format!("http://127.0.0.1:{}", bridge.port());
+        for (body, expected) in [
+            (r#"{}"#,400),
+            (r#"{"replay_name":"missing.wowsreplay"}"#,404),
+            (r#"{"replay_name":"../outside.wowsreplay"}"#,400),
+            (r#"{"replay_name":"temp.wowsreplay"}"#,409),
+            (r#"{"replay_name":"anything.wowsreplay","share_id":"not-an-authorization"}"#,409),
+        ] {
+            match ureq::post(&format!("{origin}/v1/render/jobs")).set("Origin",&origin).send_string(body) {
+                Err(ureq::Error::Status(status,_))=>assert_eq!(status,expected,"{body}"),
+                other=>panic!("unexpected response: {other:?}"),
+            }
+        }
+        let large = " ".repeat(16_385);
+        assert!(matches!(ureq::post(&format!("{origin}/v1/render/jobs")).set("Origin",&origin).send_string(&large),Err(ureq::Error::Status(413,_))));
+        bridge.stop();
+    }
+
+    #[test]
+    fn video_save_rejects_external_origin_and_invalid_container() {
+        use std::io::Write;
+        use std::net::TcpStream;
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_bridge_with_player(&tmp, tmp.path());
+        let local_origin = format!("http://127.0.0.1:{}", bridge.port());
+        for (origin, expected) in [("https://engine.tfd.rocks", 403), (local_origin.as_str(), 400)] {
+            let mut stream = TcpStream::connect(("127.0.0.1", bridge.port())).unwrap();
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            write!(stream, "POST /player/api/render?name=test.mp4 HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: {origin}\r\nContent-Type: video/mp4\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnotvideo", bridge.port()).unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            let status: u16 = response.split_whitespace().nth(1).unwrap().parse().unwrap();
+            assert_eq!(status, expected, "{response}");
+        }
+        bridge.stop();
     }
 
     /// /v1/replays/{name}/scene must return 404 when `player` is `None`

@@ -17,6 +17,9 @@ export interface LocalReplaySummary {
   gameVersion?: string;
   /** False when the recording ended before the battle did (early exit). */
   complete?: boolean;
+  damage?: number;
+  kills?: number;
+  outcome?: 'victory' | 'defeat' | 'draw';
 }
 
 interface Props {
@@ -63,7 +66,7 @@ export function ReplayPicker({
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return replays;
-    return replays.filter((replay) => `${replay.shipName} ${replay.mapName} ${replay.filename}`.toLocaleLowerCase().includes(needle));
+    return replays.filter((replay) => `${replay.shipName} ${replay.mapName} ${replay.filename} ${replay.outcome ?? ''}`.toLocaleLowerCase().includes(needle));
   }, [query, replays]);
   const busy = Boolean(loadingId);
   const decoding = loadingId ? replays.find((replay) => replay.id === loadingId) : undefined;
@@ -82,6 +85,7 @@ export function ReplayPicker({
           <input
             autoFocus
             type="search"
+            disabled={busy}
             placeholder="Search ship, map, or filename"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -124,6 +128,11 @@ export function ReplayPicker({
                   )}
                 </span>
                 <span className="replay-option-meta">
+                  <span className="replay-battle-stats">
+                    <span>{replay.damage == null ? '—' : replay.damage.toLocaleString()} <em>DMG</em></span>
+                    <span>{replay.kills == null ? '—' : replay.kills} <em>kills</em></span>
+                    <b className={replay.outcome ?? 'unknown'}>{replay.outcome ?? 'No result'}</b>
+                  </span>
                   <time>{dateFormatter.format(new Date(replay.playedAt))}</time>
                   <small>{preparing ? 'Preparing replay…' : active ? 'Currently loaded' : `${(replay.size / 1_048_576).toFixed(1)} MB`}</small>
                 </span>
@@ -151,10 +160,14 @@ export function ReplayPicker({
 
         {loadingId && (
           <div className="picker-decoding" role="status" aria-live="polite">
-            <span className="picker-spinner picker-spinner-lg" aria-hidden="true" />
-            <strong>Decoding replay…</strong>
-            {decoding && <span className="picker-decoding-name">{decoding.shipName} · {decoding.mapName}</span>}
-            <small>Reading the full battle from the replay file — this takes a few seconds.</small>
+            <div className="picker-decoding-content">
+              <strong>Preparing replay</strong>
+              {decoding && <span className="picker-decoding-name">{decoding.shipName} · {decoding.mapName}</span>}
+              <div className="picker-decode-progress" role="progressbar" aria-label="Decoding replay" aria-valuetext="In progress">
+                <span aria-hidden="true" />
+              </div>
+              <small>Reading battle data from your replay.</small>
+            </div>
           </div>
         )}
       </section>

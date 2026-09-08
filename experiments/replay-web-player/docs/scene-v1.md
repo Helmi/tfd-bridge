@@ -7,8 +7,13 @@ the top-left-origin `[0, 1]` tactical surface.
 ## Static data
 
 - Replay identity, source SHA-256, game build, duration, perspective.
+- Optional `replay.outcome`: `victory`, `defeat`, or `draw`, relative to the recording player. Scene export uses wows-battle-world's winning team; absent means unknown, never an inferred loss. Playback duration remains battle-only. The shared player/video presentation adds a 4.5-second ending in screen time (3-second result hold, 1-second fade, 0.5-second black hold).
 - Map identity, projection size, optional image reference.
 - Entity/roster dictionary: player, clan, ship, species, team, relation, max HP.
+- Optional entity `tier` is a JSON number from 1 through 11 (superships use 11),
+  read from the toolkit ship parameter's vehicle `level()`. Missing vehicle
+  metadata and values outside this range omit the field. Consumers must also
+  accept older scenes without it; ship codes and names are not tier sources.
 - Optional entity `divisionId` (string, preserving the full integer ID) and
   `divisionLabel` (A, B, C...). Membership comes from wows-toolkit. Labels are
   reconstructed across both teams in first-appearance order in the initial
@@ -24,6 +29,19 @@ the top-left-origin `[0, 1]` tactical surface.
   of adding a white ring; labels and health indicators retain their normal colors.
 
 ## Continuous and stepwise tracks
+
+`tracks.ownerStats` contains sparse absolute snapshots of the recording player's
+`damage`, `potentialDamage`, `spottingDamage`, and `ribbons` (translation key to
+count). The toolkit's current battle view supplies these values; they are not
+final results copied into the opening frame. Hold each snapshot until the next
+one, including on backward seeks. Before the first snapshot, or for older scenes
+without this track, statistics are unavailable. An observed empty ribbon map means
+no ribbons have been earned yet.
+
+`assets.ribbons` maps the same keys to `label`, `iconKey`, `isSubribbon`, and an
+optional inline `imageUrl` loaded from the game. Only icons used by the replay
+are embedded. `assets.ownerSilhouette` optionally contains the recording ship's
+original PNG silhouette. Both assets are consumed by the shared HTML/video frame.
 
 Ship samples contain:
 
@@ -63,6 +81,10 @@ each marker name to the matching inactive and active game icons.
   subsequent exit/ricochet records do not extend it. Without ballistic data,
   the exporter falls back to time-scaled server flight time and a straight path.
   Older scenes without `path` retain the existing linear interpolation.
+  `impactRecorded` distinguishes reconciled collisions from predicted endpoints.
+  Optional `impactTargetGuessId` is diagnostic only: the pinned toolkit estimates
+  the victim from the salvo's aim location and may get it wrong. Never use this
+  guess to snap an impact onto a ship, or to turn a miss into a hit.
 - Torpedo: launch/update samples plus end time. The viewer interpolates or
   extrapolates between authoritative updates.
 - Kills/deaths: timestamped killer, victim, and decoded cause.
@@ -94,6 +116,10 @@ Since 2026-07-12 the exporter also emits:
   name, duration).
 - `events.chat`: full battle chat (clock, sender, division/team/global/system
   channel, message). Countdown banter is clamped to `t = 0`, not dropped.
+  RePlayer derives RPF sectors from complete compass-range messages such as
+  `RPF: ESE~SE`, retaining the latest report per sender at the replay clock.
+  The sector follows the sender's displayed position, disappears when hidden
+  or sunk, and remains in the chat feed. It adds no inferred enemy position.
 - `events.pickups`: Arms Race collections attributed to the collecting ship.
   The `drop.picked` message carries no zone id, so the exporter matches the
   pick to the nearest active zone with the same Drop param and ends that zone
@@ -111,3 +137,17 @@ that client received. In particular:
 
 The player must display stale/unknown state honestly rather than imply
 omniscience. A future merged scene should list every contributing replay/team.
+
+### Observed consumable visualization (0.18 local iteration)
+
+Each `events.consumables[]` may include optional `visual` metadata:
+
+- `iconKey`: game PCY ability name; frontend uses bundled original artwork with a supported-type fallback.
+- `abilityVariant`: matched game ability category when unambiguous.
+- `source`: `equipped-ability`, `ship-definition`, `ship-range-fallback`, or `ambiguous-ability`. All metadata comes from the replay build's toolkit GameParams. Missing equipment does not become claimed equipped data.
+- `shipRangeMeters`, `torpedoRangeMeters`: distinct detection ranges. These do not reveal enemy entities or imply all targets in the circle are observed.
+- `shipRadius`, `torpedoRadius`: fraction of full map width, converted with toolkit unit types and MapInfo. These are NOT raw BigWorld units or metres. Radii are omitted when missing, invalid or ambiguous; other supported observations remain icon-only.
+
+Timing remains `t` + packet-supplied `durationMs`; no config duration replaces it. Radar/hydro rendering skips dead, hidden and last-known ships. Solid circles indicate ship detection; the faint dashed hydro inner circle indicates torpedo detection. When hydro ranges coincide, one boundary represents both. Replayer and video use the same layer, clipped to the map behind ship markers.
+
+Aircraft descriptors now obtain `ownerId` through toolkit `PlaneId.owner_id()`, not the packet-recipient field. Existing observed aircraft tracks and ward geometry remain authoritative. Fighter/spotter activation alone never synthesizes a patrol/detection circle. Unknown consumable types remain unvisualized.

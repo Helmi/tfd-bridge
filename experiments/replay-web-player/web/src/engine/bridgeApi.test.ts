@@ -3,6 +3,26 @@ import type { ReplaySceneV1 } from '../types';
 import { fetchBridgeScene, listBridgeReplays, replayEntryToSummary } from './bridgeApi';
 
 describe('replayEntryToSummary', () => {
+  it('prefers the game display name over an internal filename name', () => {
+    expect(replayEntryToSummary({
+      name: '20260901_120000_PFSB110-France_23_Shards.wowsreplay',
+      playerVehicle: 'PFSB110-France', shipName: 'République', size: 0, modified_ms: 0,
+    })).toMatchObject({shipName: 'République', shipClass: 'battleship'});
+  });
+  it('recognizes operation maps and uses authoritative header metadata', () => {
+    const summary = replayEntryToSummary({
+      name: '20260905_211245_PVSC710-Almirante-Irizar_P01_Military_Naval_Base.wowsreplay',
+      size: 123, modified_ms: 0, playerVehicle: 'PVSC710',
+      mapName: 'spaces/P01_Military_Naval_Base', damage: 73319, kills: 2, outcome: 'victory',
+    });
+    expect(summary).toMatchObject({shipName: 'Almirante Irizar', shipClass: 'cruiser', mapName: 'Military Naval Base', damage: 73319, kills: 2, outcome: 'victory'});
+  });
+  it('keeps unavailable results distinct from a zero-damage defeat', () => {
+    const summary = replayEntryToSummary({name: 'test.wowsreplay', size: 0, modified_ms: 0, complete: false});
+    expect(summary.damage).toBeUndefined();
+    expect(summary.kills).toBeUndefined();
+    expect(summary.outcome).toBeUndefined();
+  });
   it('parses the WoWS replay filename convention, including a nested patch-folder id', () => {
     const summary = replayEntryToSummary({
       name: '13.1.0/20260615_201530_PBSD110-Daring_51_NE_north.wowsreplay',

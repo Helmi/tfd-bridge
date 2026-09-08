@@ -59,6 +59,15 @@ const payload: ReplaySceneV1 = {
 };
 
 describe('ReplayScene V1 adapter', () => {
+  it('preserves game tiers including superships and tolerates older scenes without tiers', () => {
+    for (const tier of [1, 8, 10, 11, undefined, 0, 12, 8.5, NaN]) {
+      const withTier = structuredClone(payload);
+      withTier.entities[0].tier = tier;
+      expect(loadReplayScene(withTier).ships[0].tier).toBe(
+        [1, 8, 10, 11].includes(tier!) ? tier : undefined,
+      );
+    }
+  });
   it('plays ballistic progress and removes a shell after its recorded impact', () => {
     const ballistic = structuredClone(payload);
     ballistic.events.salvos = [{ id: 'lethal', ownerId: 'ship-1', t: 1000, projectiles: [{
@@ -194,4 +203,41 @@ describe('ReplayScene V1 adapter', () => {
     expect(scene.map.image?.href).toBe('http://127.0.0.1:4173/generated/map.png?v=replay-2');
     expect(scene.assets?.powerupIcons?.reload_inactive.href).toBe('http://127.0.0.1:4173/generated/powerups/reload.png?v=replay-2');
   });
+});
+
+describe('owner ribbon and damage timeline', () => {
+  it('uses recorded absolute counters at their timestamps and rewinds without future leakage', () => {
+    const input = structuredClone(payload);
+    input.tracks.ownerStats = [
+      { t: 0, damage: 0, potentialDamage: 0, spottingDamage: 0, ribbons: {} },
+      { t: 12_500, damage: 3400, potentialDamage: 10000, spottingDamage: 700, ribbons: { RIBBON_BURN: 1 } },
+      { t: 18_000, damage: 4800, potentialDamage: 20000, spottingDamage: 700, ribbons: { RIBBON_BURN: 2 } },
+    ];
+    input.assets!.ribbons = { RIBBON_BURN: { label: 'Set on fire', iconKey: 'ribbon_burn', isSubribbon: false, imageUrl: './fire.png' } };
+    const scene = loadReplayScene(input, { baseUrl: 'https://example.test/replay/scene.json' });
+    expect(evaluateScene(scene, 0).ownerStats?.ribbons).toEqual({});
+    expect(evaluateScene(scene, 12.499).ownerStats?.damage).toBe(0);
+    expect(evaluateScene(scene, 12.5).ownerStats).toEqual({damage: 3400, potentialDamage: 10000, spottingDamage: 700, ribbons: {RIBBON_BURN: 1}});
+    expect(evaluateScene(scene, 90).ownerStats?.ribbons.RIBBON_BURN).toBe(2);
+    expect(evaluateScene(scene, 13).ownerStats?.ribbons.RIBBON_BURN).toBe(1);
+    expect(scene.ribbonDefinitions?.RIBBON_BURN.imageUrl).toBe('https://example.test/replay/fire.png');
+  });
+  it('keeps legacy, empty and not-yet-observed owner stats unavailable', () => {
+    expect(evaluateScene(loadReplayScene(payload), 90).ownerStats).toBeUndefined();
+    const input = structuredClone(payload);
+    input.tracks.ownerStats = [];
+    expect(evaluateScene(loadReplayScene(input), 90).ownerStats).toBeUndefined();
+    input.tracks.ownerStats = [{ t: 20000, damage: 100, potentialDamage: 200, spottingDamage: 300, ribbons: { RIBBON_FRAG: 1 } }];
+    expect(evaluateScene(loadReplayScene(input), 19).ownerStats).toBeUndefined();
+  });
+});
+it('imports optional consumable metadata without replacing observed timing', () => {
+  const input = structuredClone(payload);
+  input.events.consumables = [{t:5000,shipId:'ship-1',name:'Radar',durationMs:27000,
+    visual:{source:'ship-definition',iconKey:'PCY020_RLSSearchPremium',shipRangeMeters:9000,shipRadius:.25}}];
+  const scene = loadReplayScene(input);
+  expect(scene.consumables?.[0].visual).toEqual(input.events.consumables[0].visual);
+  expect(scene.consumables?.[0].end).toBe(32);
+  expect(evaluateScene(scene,31.999).consumables).toHaveLength(1);
+  expect(evaluateScene(scene,32).consumables).toHaveLength(0);
 });

@@ -16,6 +16,7 @@ walkdir = "2"
 percent-encoding = "2"
 sha2 = "0.10"
 hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
 # In-process WoWS replay parsing. Pinned to Helmi/wows-toolkit (a fork of
 # landaire/wows-toolkit, MIT, under our control). Shares ONE rev with the
 # scene-export decoder (the replay player needs an API only present from

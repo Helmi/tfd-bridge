@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "id": "16_OC_bees_to_honey",
+  "mapId": "spaces/16_OC_bees_to_honey",
+  "tool": "built-in image_gen.imagegen",
+  "sourceCompositeSha256": "6b53e7525f3466b9701d46937a3acdac4734fdafcc89457c2a1bf06d4038aa87",
+  "styleReferenceSha256": "24a64bd958060269aaf054b0b1a4daea61a2815a68df95300808cbef35732522",
+  "geometry": "Only generated RGB paint is used; final land alpha must be restored from original game layer.",
+  "land": {
+    "prompt": "Use case: style-transfer. Create the LAND RGB PAINT layer for 16_OC_bees_to_honey. Image 1 is the authoritative original land geometry and biome. Image 2 gives only the desired softness, painted satellite terrain detail and restrained finish; do NOT copy its islands or turn snow/desert into green. Straight-down orthographic tactical game map covering approximately 35–40 kilometres. Preserve the exact square framing, normalized coordinates, scale, north-up orientation and edge crops. No perspective, camera tilt, zoom, padding, labels, text, grid, ships, buildings, roads, map symbols or watermark. All detail must read at this enormous aerial scale, not giant individual trees or close-up waves. Match EVERY island silhouette, location, size, rotation and water gap from image 1, including tiny rocks and cropped land at the edges. No landmass may be added, removed, moved, enlarged, merged or split. Preserve this map's own terrain, snow/ice, vegetation, rock, sand and climate from image 1. Improve the terrain artwork with believable fine relief and texture, soft natural coast colours and MUCH lower-contrast coastline edging; no bright gold outlines or glow. Outside land, use one completely FLAT SOLID MAGENTA colour RGB(255,0,255), including all water gaps. This is an intermediate colour-keyed paint layer, NOT a finished map: no water, no transparency, no checkerboard. The final transparent land layer will use the original game's exact alpha mask. Output a 1520x1520 square PNG.",
+    "references": [
+      "experiments/replay-web-player/map-art/sources/spaces/16_OC_bees_to_honey/minimap.png",
+      "experiments/replay-web-player/map-art/style-reference.png"
+    ],
+    "generatedFile": "experiments/replay-web-player/map-art/generated/16_OC_bees_to_honey/land.png",
+    "sha256": "30d622694b85f8ccd8900e7ca707e12b2ce4d045b2f733d6de512398271efb6f",
+    "requestedSize": [
+      1520,
+      1520
+    ],
+    "actualSize": [
+      1254,
+      1254
+    ],
+    "toolOutputFile": "exec-82e8b822-fd63-4442-ba8a-36cba4a4f4a2.png",
+    "review": "Olive and rocky biome retained, magenta background, softened shore paint. Geometry must use original alpha rather than generated silhouette."
+  },
+  "water": {
+    "prompt": "Use case: precise-object-edit / background-extraction. Asset type: square OPAQUE WATER-ONLY layer for a top-down tactical map covering roughly 35–40 kilometres. The supplied image is the user's approved style reference and edit target. Remove ALL visible islands/land/rocks, including land touching canvas edges, and seamlessly reconstruct ocean in their places. Preserve the image's attractive subtle deep navy-blue ocean texture and fine diffuse ripples at a believable 35–40 km aerial scale; keep restrained teal depth variation and the spatial pattern of the surrounding water. Much quieter detail than close-up waves: no large surf, foam bands, whitecaps, clouds or giant wave crests. Retain the exact square framing and orientation without cropping, zooming, padding or rotation. Full 2048x2048 opaque RGB ocean, water covers every pixel; no land anywhere, no islands, boats, land silhouettes, map grid, labels, text or watermark. This background will go underneath a separate land layer with the original silhouettes.",
+    "generatedFile": "experiments/replay-web-player/map-art/generated/16_OC_bees_to_honey/water.png",
+    "sha256": "578b3dce1b4cb23cfc92bb36d09dd6270c5ba53c4607b9d2e75142c1422ba518",
+    "actualSize": [
+      1254,
+      1254
+    ],
+    "review": "Opaque navy ocean with fine texture; no visible land, ice, rocks, boats, ghost island silhouettes or large foam bands.",
+    "toolOutputFile": "exec-69aabed0-a527-45fb-845a-ef6514306793.png",
+    "references": [
+      "experiments/replay-web-player/map-art/style-reference.png"
+    ],
+    "requestedSize": [
+      2048,
+      2048
+    ],
+    "reuseNote": "Reuses the earlier water-only draft generated from the style reference; its exact prompt and tool output filename are preserved here."
+  },
+  "referencePathBase": "repository-root",
+  "authoringStatus": "Generated inputs archived; final composed visual review is separate from this record.",
+  "sourceLayers": {
+    "land": {
+      "path": "experiments/replay-web-player/map-art/sources/spaces/16_OC_bees_to_honey/minimap.png",
+      "sha256": "f57ea6b3eb8450fc8c961270f7bd0bc4690ff036440997f96c7c8b4d9bfa9140"
+    },
+    "water": {
+      "path": "experiments/replay-web-player/map-art/sources/spaces/16_OC_bees_to_honey/minimap_water.png",
+      "sha256": "fe3e5350c90b7adb588e6eca1af423035784c4be3d03de66ba7d77f581d7150a"
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "gameBuild": "15.7.0.0-b13015811",
+  "source": "Original local game gui/consumables assets; copied unchanged, no generated artwork",
+  "files": [
+    {
+      "file": "consumable_PCY004_Fighter.png",
+      "sha256": "5e875aa0f440cf00bd1dec3f1a99778be938405c9b3f0bed5298db8ad0d83e13"
+    },
+    {
+      "file": "consumable_PCY005_Spotter.png",
+      "sha256": "de64f326b2851f0cf3cf67687086f202b20cdecc815d328c1d7b4e57f20d667e"
+    },
+    {
+      "file": "consumable_PCY008_SonarSearch.png",
+      "sha256": "b007922a98e34804b2a462999b71d4bfed8b87e2e34b029124625520c2d93c27"
+    },
+    {
+      "file": "consumable_PCY012_FighterPremium.png",
+      "sha256": "21fd7d7702398ef7344395c196d079b2f4aac0306781738dd1aa64ba05021bd8"
+    },
+    {
+      "file": "consumable_PCY013_SpotterPremium.png",
+      "sha256": "03308f74b89c390fe1fc73002fda1be4ed3eab578ad437e8c00db078881da040"
+    },
+    {
+      "file": "consumable_PCY013_Spotter_Circle_Premium.png",
+      "sha256": "3de3bc91156648f01afebe511061c403c0a510eda4c9b4bc761ba9626d5fee27"
+    },
+    {
+      "file": "consumable_PCY016_SonarSearchPremium.png",
+      "sha256": "45abef2df6c47212db59c004dda143c81b42db584109c26392c4b7303c96d538"
+    },
+    {
+      "file": "consumable_PCY016_SonarSearch_Short_Premium.png",
+      "sha256": "705fb0f9009a1a19a412f175034e7885d565eaeac6a5f2f42b001afba568c955"
+    },
+    {
+      "file": "consumable_PCY019_RLSSearch.png",
+      "sha256": "9651df8931d4a268e6a990e1b9b02212027b8d6bdd4aa309d1194fcdd0f52544"
+    },
+    {
+      "file": "consumable_PCY020_RLSSearchPremium.png",
+      "sha256": "09880a84b6948e917b32f9d45ef79b1d04d5907b9ca7a08f98089d0e73798596"
+    },
+    {
+      "file": "consumable_PCY026_FighterSuper.png",
+      "sha256": "4016afbf6fb81a796b417b5acc398d2e9bdc5f955c970d7a5bdd2d57f28609ec"
+    },
+    {
+      "file": "consumable_PCY027_SpotterSuper.png",
+      "sha256": "73358274ace667e4a86530f892345ac81bd5978c61374020eb74c87ba395c4a0"
+    },
+    {
+      "file": "consumable_PCY030_SonarSearchSuper.png",
+      "sha256": "3157598e0babc8bad54e5088c6d52a128597a2bcc9de42c8895a11077ff2f8e9"
+    },
+    {
+      "file": "consumable_PCY032_RLSSearchSuper.png",
+      "sha256": "5151fbeb8c7e77845c14438eec4dcd96b1c8c26c9ff645abf276d0a46979f6da"
+    },
+    {
+      "file": "consumable_PCY035_CallFighters.png",
+      "sha256": "2aa87635a083ad17553da3229bff3297303a6a46c92ea55f6e0feae7abf9a773"
+    },
+    {
+      "file": "consumable_PCY035_CallFighters_Ambush.png",
+      "sha256": "c224c3ba83ff62c9e9bf7f09cf324ad106ba31ea59831bd82e189f9b440dac92"
+    },
+    {
+      "file": "consumable_PCY035_CallFighters_Upgrade.png",
+      "sha256": "e6941c154ea313223281615e07d50b6a6acdb7ce52d29ebd1e616d1911c4151f"
+    },
+    {
+      "file": "consumable_PCY038_FighterAuto.png",
+      "sha256": "e6941c154ea313223281615e07d50b6a6acdb7ce52d29ebd1e616d1911c4151f"
+    },
+    {
+      "file": "consumable_PCY061_FighterPremium_TimeBased.png",
+      "sha256": "21fd7d7702398ef7344395c196d079b2f4aac0306781738dd1aa64ba05021bd8"
+    },
+    {
+      "file": "consumable_PCY062_SpotterPremium_TimeBased.png",
+      "sha256": "03308f74b89c390fe1fc73002fda1be4ed3eab578ad437e8c00db078881da040"
+    },
+    {
+      "file": "consumable_PCY065_SonarSearchPremium_TimeBased.png",
+      "sha256": "45abef2df6c47212db59c004dda143c81b42db584109c26392c4b7303c96d538"
+    },
+    {
+      "file": "consumable_PCY066_RLSSearchPremium_TimeBased.png",
+      "sha256": "09880a84b6948e917b32f9d45ef79b1d04d5907b9ca7a08f98089d0e73798596"
+    },
+    {
+      "file": "consumable_PCY069_CallFighters_TimeBased.png",
+      "sha256": "2aa87635a083ad17553da3229bff3297303a6a46c92ea55f6e0feae7abf9a773"
+    },
+    {
+      "file": "consumable_PCY078_PlaneTacticalFighters.png",
+      "sha256": "b8129d44a716569c5f0ee9d952984eb7fbeb02125384a2898c07b33ed4244925"
+    },
+    {
+      "file": "consumable_PCY078_PlaneTacticalFighters_Upgrade.png",
+      "sha256": "210cfbbf13cbbc4b7f38f663a4ad942c885b3582941bcd83dc6a9b035f1b372d"
+    }
+  ]
+}

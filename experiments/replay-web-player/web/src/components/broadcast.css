@@ -1,0 +1,88 @@
+.broadcast{font-family:'Space Grotesk',sans-serif;color:#edf3ef;background:#070e0c;font-synthesis:none;--muted:#839b90;--line:#26392f;--green:#67d9a3;--red:#fa8274;--gold:#e6b855}.broadcast *{box-sizing:border-box}.broadcast button,.broadcast input{font:inherit}.broadcast button{color:#dce9e1;background:#13241c;border:1px solid #304b3c;border-radius:6px;padding:9px 16px;cursor:pointer}.broadcast button:hover{border-color:var(--gold)}.broadcast{position:absolute;top:0;left:0;width:1920px;height:1080px;transform-origin:top left;display:grid;grid-template-columns:1080px 840px;background:#0b1711;overflow:hidden}.broadcast .map-panel{position:relative;background:#091810}.broadcast .map-host{width:1080px;height:1080px}.broadcast .map-host canvas{display:block}.broadcast .scoreboard{position:absolute;left:22px;right:22px;top:18px;display:grid;grid-template-columns:1fr 190px 1fr;align-items:start;padding:15px 24px 20px;background:linear-gradient(#091610f5,#091610e8);border:1px solid #53775b38;border-radius:5px;box-shadow:0 8px 35px #0005}.broadcast .friendly{color:var(--green)}.broadcast .enemy{color:var(--red)}.broadcast .score-number{font:600 56px/1 'JetBrains Mono',monospace;letter-spacing:-3px}.broadcast .team-score{display:flex;flex-direction:column;align-items:center;gap:13px}.broadcast .ship-icon{display:inline-block;width:24px;height:24px;background:currentColor;mask-mode:luminance;mask-size:contain;mask-position:center;mask-repeat:no-repeat;flex-shrink:0}.broadcast .survivors{display:flex;gap:4px}.broadcast .survivors .ship-icon{width:25px;height:23px}.broadcast .ship-icon.dead{background:#68766d;opacity:.45}.broadcast .battle-clock{text-align:center;color:#d9e4db}.broadcast .battle-clock>span{font-size:12px;letter-spacing:2px;color:#9bb3a3}.broadcast .battle-clock strong{display:block;font:500 27px/1.5 'JetBrains Mono',monospace}.broadcast .caps{display:flex;justify-content:center;gap:12px}.broadcast .caps>span{font-weight:600;font-size:17px;border:1px solid currentColor;width:25px;height:25px;line-height:23px;border-radius:50%}.broadcast .intel{padding:34px 34px 22px;border-left:1px solid #35523f;display:flex;flex-direction:column;overflow:hidden}.broadcast .player{position:relative;flex:0 0 224px}.broadcast .identity{position:relative;z-index:1}.broadcast .eyebrow{color:var(--gold);font-size:15px;letter-spacing:1.5px}.broadcast h1{margin:3px 0 8px;font-size:34px;line-height:1.1;font-weight:600;letter-spacing:-.8px}.broadcast .ship-title{display:flex;align-items:center;gap:10px;color:var(--gold);font-size:21px}.broadcast .ship-title .ship-icon{width:25px;height:20px}.broadcast .ship-title small{font-size:12px;color:var(--muted);letter-spacing:1px;margin-left:8px}.broadcast .silhouette{position:absolute;right:0;top:8px;width:310px;height:95px;object-fit:contain;opacity:.85;filter:brightness(0) invert(.85)}.broadcast .stats{display:grid;grid-template-columns:1.3fr 1fr .85fr;align-items:end;gap:20px;margin-top:21px}.broadcast .stats>div{display:flex;flex-direction:column;gap:4px}.broadcast .stats strong{font:500 25px 'JetBrains Mono',monospace;letter-spacing:-.8px}.broadcast .stats .primary-stat strong{font-size:43px;line-height:1;color:#f5f1df;letter-spacing:-2px}.broadcast .stats span{font-size:12px;letter-spacing:1.8px;color:#9ab0a2}.broadcast .owner-hp{display:flex;align-items:center;gap:18px;margin-top:20px;color:var(--muted);font:12px 'JetBrains Mono',monospace}.broadcast .owner-hp b{color:var(--green);font-weight:500}.broadcast .health-track{height:5px;background:#253d30;display:block;overflow:hidden}.broadcast .health-track i{height:100%;display:block;background:currentColor}.broadcast .owner-hp>.health-track{width:320px;color:var(--green)}.broadcast h2,.broadcast h3{font-weight:500;font-size:13px;letter-spacing:2px;margin:0;color:#a5b9ac}.broadcast h2>span{float:right;font-size:11px;letter-spacing:1px;color:#637f6e}.broadcast .ribbons{border-top:1px solid var(--line);padding:18px 0 20px;flex:0 0 144px}.broadcast .ribbon-list{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-top:13px}.broadcast .ribbon{display:flex;flex-direction:column;align-items:center;gap:3px}.broadcast .ribbon img{width:104px;height:40px;object-fit:contain}.broadcast .ribbon strong{font:500 22px 'JetBrains Mono',monospace}.broadcast .ribbon>span{color:var(--muted);font-size:12px}.broadcast .feed{border-top:1px solid var(--line);padding:18px 0 15px;flex:0 0 211px}.broadcast .feed-lines{margin-top:12px}.broadcast .feed-row{display:grid;grid-template-columns:57px 21px 1fr;gap:10px;align-items:baseline;min-height:33px;line-height:1.35;font-size:18px}.broadcast .feed-row time{font:12px 'JetBrains Mono',monospace;color:#789180}.broadcast .event-symbol{color:#9eaf9f;font-size:22px;line-height:1}.broadcast .kill .event-symbol{color:var(--gold)}.broadcast .feed-row b{font-weight:500}.broadcast .chat-message{margin-left:12px;color:#c8d6cc}.broadcast .event-verb{color:#799383;margin:0 7px;font-size:14px}.broadcast .feed-row>div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.broadcast .empty{color:var(--muted)}.broadcast .fleets{border-top:1px solid var(--line);padding-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:28px;flex:1;min-height:0}.broadcast .fleet h3{color:currentColor;margin-bottom:14px;font-size:12px}.broadcast .fleet+.fleet{border-left:1px solid var(--line);padding-left:24px}.broadcast .roster-row{height:31px;display:flex;gap:10px;align-items:center;position:relative}.broadcast .roster-row .ship-icon{width:22px;height:18px}.broadcast .roster-name{display:flex;flex:1;min-width:0;align-items:baseline;gap:8px}.broadcast .roster-name strong{font-size:18px;font-weight:500;color:#e1e9e2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.broadcast .roster-name>span{display:none}.broadcast .roster-row .health-track{width:72px;flex-shrink:0;height:4px}.broadcast .roster-row.sunk{opacity:.35}.broadcast .roster-row.self:before{content:'';position:absolute;left:-9px;top:4px;height:23px;width:2px;background:var(--gold)}.broadcast .roster-row.self strong{color:var(--gold)}
+
+/* Revision 2: compact broadcast overlays and identifiable fleets. */
+.broadcast .ship-icon{transform:rotate(90deg)}
+.broadcast .scoreboard{left:28px;right:28px;top:28px;grid-template-columns:1fr 160px 1fr;padding:12px 10px 14px;background:rgba(5,17,12,.46);border:0;border-radius:4px;box-shadow:none}
+.broadcast .score-number{font-size:44px;letter-spacing:-2px;text-shadow:0 2px 8px #0008}
+.broadcast .team-score{gap:10px}.broadcast .survivors{gap:3px}.broadcast .survivors .ship-icon{width:27px;height:25px}
+.broadcast .battle-clock>span{font-size:11px}.broadcast .battle-clock strong{font-size:23px}.broadcast .caps{gap:9px}.broadcast .caps>span{width:21px;height:21px;font-size:14px;line-height:19px}
+.broadcast .ribbons{padding:18px 0;flex:0 0 80px}
+/* Fit the actual ribbon count in one row. Flex only shrinks when required;
+   local container units keep badges proportional without an async resize. */
+.broadcast .ribbon-list{display:flex;flex-wrap:nowrap;align-items:center;gap:12px;margin:0;min-width:0;height:42px}
+.broadcast .ribbon{position:relative;display:block;flex:0 1 108px;min-width:0;width:108px;height:auto;aspect-ratio:108/42;container-type:inline-size}
+.broadcast .ribbon img{display:block;width:100%;height:100%;object-fit:contain}
+.broadcast .ribbon strong{position:absolute;right:0;bottom:clamp(-3px,-2.78cqw,-1px);min-width:clamp(18px,25cqw,27px);padding:clamp(1px,1.85cqw,2px) clamp(2px,4.63cqw,5px);border:1px solid #71827277;border-radius:3px;background:#07110fee;color:#f1f5ec;font-size:clamp(11px,15.74cqw,17px);line-height:1.18;text-align:center}
+.broadcast .feed{flex:0 0 184px;padding:12px 0}.broadcast .feed-lines{margin:0}.broadcast .feed-row{font-size:18px;min-height:31px}.broadcast .fleets{padding-top:14px;gap:28px}.broadcast .roster-row{height:42px;gap:9px}.broadcast .roster-row .ship-icon{width:24px;height:24px}.broadcast .roster-name{flex-direction:column;align-items:flex-start;gap:2px}.broadcast .roster-name strong{max-width:100%;line-height:1.1;font-size:18px}.broadcast .roster-name>span{display:block;max-width:100%;color:#92aa9b;font-size:13px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.broadcast .roster-row .health-track{width:58px}.broadcast .roster-row.self:before{top:6px;height:29px}.broadcast .roster-row.sunk{opacity:.42}
+/* Fine sizing and spacing after reviewing the moving frame. */
+.broadcast .player{flex-basis:212px}
+.broadcast .roster-row{height:44px}
+.broadcast .roster-name strong{font-size:16px}
+.broadcast .roster-name{gap:3px}
+@media (prefers-reduced-motion:reduce){.broadcast .feed-row.chat>div{transform:none!important;opacity:1!important}}
+/* Scroll the whole event/chat stack through a five-line viewport. */
+.broadcast .feed-window{position:relative;height:155px;overflow:hidden}
+.broadcast .feed-lines{position:absolute;left:0;right:0;bottom:0;will-change:transform}
+.broadcast .feed-row{height:31px;min-height:31px}
+@media (prefers-reduced-motion:reduce){.broadcast .feed-lines{transform:none!important}}
+.broadcast .ribbon-fallback{font-size:10px;display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.broadcast .division-letter{display:inline-block;margin-right:7px;font:600 13px "JetBrains Mono",monospace}.broadcast .roster-row.self:before{background:#ff69b4}.broadcast .roster-row.self strong{color:#ff69b4}
+.broadcast .roster-row{min-height:0;padding:0;border:0;border-radius:0;transition:none}.broadcast .scoreboard{height:auto;min-height:0;margin:0}.broadcast .stats{padding:0;border:0}.broadcast .owner-hp .health-track{flex:none}.broadcast .roster-row[role="button"]{cursor:pointer}.broadcast .roster-row[role="button"]:focus-visible{outline:2px solid #e6b855}
+.broadcast .selected-metrics { grid-template-columns:.8fr 1.2fr 1fr; }
+.broadcast .selected-metrics strong { font-size:26px; line-height:43px; white-space:nowrap; }
+.broadcast .selected-metrics span { font-size:11px; letter-spacing:1px; }
+.broadcast .selected-consumables { display:flex; align-items:center; gap:10px; min-height:42px; flex-wrap:wrap; font-size:16px; }
+.broadcast .selected-consumables > span:not(.muted) { padding:7px 10px; border:1px solid #344d40; border-radius:4px; }
+.broadcast .selected-consumables b { color:#e6b855; font:500 13px 'JetBrains Mono',monospace; margin-left:8px; }
+.broadcast .selected-consumables .muted { color:var(--muted); font-size:14px; }
+
+/* Clock-driven closing screen shared by interactive playback and offline frames.
+   Soft gradients work in both the browser and SVG/foreignObject capture. */
+.broadcast .battle-ending{position:absolute;inset:0;z-index:20;display:grid;place-items:center;isolation:isolate;--ending-rgb:116,139,149;pointer-events:auto}
+.broadcast .battle-ending.victory{--ending-rgb:61,177,126}
+.broadcast .battle-ending.defeat{--ending-rgb:194,65,66}
+.broadcast .ending-fog{position:absolute;inset:0;background:radial-gradient(ellipse at 25% 40%,rgba(var(--ending-rgb),.48),transparent 65%),radial-gradient(ellipse at 75% 70%,rgba(var(--ending-rgb),.35),transparent 60%),radial-gradient(ellipse at center,rgba(var(--ending-rgb),.5),rgba(3,10,9,.92));box-shadow:inset 0 0 230px 70px #02080788}
+.broadcast .ending-title{position:relative;color:#f0f7f2;font:600 100px/1.15 'Space Grotesk',sans-serif;letter-spacing:.08em;text-transform:uppercase;text-align:center;text-shadow:0 4px 40px #0009}
+.broadcast .ending-black{position:absolute;inset:0;background:#000}
+/* Readable health with breathing room above the ribbon divider. */
+.broadcast .player{flex-basis:238px}
+.broadcast .owner-hp{margin-top:22px;gap:20px;font-size:16px;line-height:26px}
+.broadcast .owner-hp>.health-track{width:350px;height:8px}
+.broadcast .owner-hp b{font-size:21px;font-weight:500}
+.broadcast .player{flex-basis:248px}
+/* Four feed lines leave the complete twelve-ship rosters visible. */
+.broadcast .feed{flex-basis:150px}
+.broadcast .feed-window{height:124px}
+
+/* Accepted 0.18 layout: preserve the map and fleet origins, redistribute the
+   header's 28px saving to the feed, and retain breathing room around health. */
+.broadcast .player{flex-basis:220px}
+.broadcast .identity .eyebrow{font-size:12px;line-height:18px}
+.broadcast .identity h1{font-size:29px}
+.broadcast .ship-title{font-size:18px}
+.broadcast .silhouette{height:84px}
+.broadcast .stats{margin-top:19px}
+.broadcast .stats strong{font-size:21px}
+.broadcast .stats .primary-stat strong{font-size:36px}
+.broadcast .owner-hp{font-size:18px;margin-top:20px;line-height:25px}
+.broadcast .owner-hp b{font-size:18px;line-height:25px}
+.broadcast .selected-metrics strong{font-size:21px;line-height:36px}
+.broadcast .feed{flex-basis:178px;min-height:0;padding:11px 0}
+.broadcast .feed-window{height:156px}
+.broadcast .feed-lines{display:flex;flex-direction:column;gap:2px;margin:0}
+.broadcast .feed-lines.is-empty{top:0;bottom:auto}
+.broadcast .feed,.broadcast .feed *{-webkit-text-fill-color:currentColor}
+.broadcast .feed-row{grid-template-columns:33px 16px minmax(0,1fr);column-gap:12px;height:auto;min-height:24px;align-items:start;font-size:15px;line-height:22px}
+.broadcast .feed-row time{display:block;width:33px;min-width:33px;height:22px;font:11px/22px 'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;letter-spacing:0;white-space:nowrap;color:#83988b}
+.broadcast .feed-row>.event-symbol{width:16px;height:22px;display:flex;align-items:center;justify-content:center}
+.broadcast .feed-row>.event-symbol svg{width:16px;height:16px;stroke-width:1.8}
+.broadcast .kill>.event-symbol{color:var(--red)}
+.broadcast .feed-row>.feed-content{overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;font-size:15px;line-height:22px}
+.broadcast .feed-row .participant{display:inline;white-space:normal}
+.broadcast .feed-row .participant.unknown{color:#b8c2bc}
+.broadcast .feed-row .ship-label{display:inline-flex;align-items:center;gap:3px;max-width:100%;vertical-align:top}
+.broadcast .feed-row .feed-class-icon{display:inline-block;width:16px;height:16px;flex:none;background:currentColor;mask-mode:luminance;mask-size:contain;mask-position:center;mask-repeat:no-repeat;transform:rotate(90deg)}
+.broadcast .feed-row .player-handle{font-size:14px;font-weight:400;color:#b8c2bc}
+.broadcast .feed-row .event-verb{font-size:13px;margin:0 7px;color:#8ca296}
+.broadcast .feed-row .chat-message{font-size:15px}
+.broadcast .roster-row:not(.sunk) .roster-name>span{color:#b8c2bc;-webkit-text-fill-color:#b8c2bc}

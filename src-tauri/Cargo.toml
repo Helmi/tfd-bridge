@@ -1,6 +1,6 @@
 [package]
 name = "tfd-bridge"
-version = "0.16.0"
+version = "0.18.0"
 description = "TFD Bridge — local companion app for the TFD World of Warships community"
 authors = []
 license = "MIT"
@@ -42,6 +42,7 @@ semver = "1"
 # dependency tree — zero new packages in the lock.
 sha2 = "0.10"
 hex = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # Local mock engine for src/engine.rs + src/uploader.rs tests (no live

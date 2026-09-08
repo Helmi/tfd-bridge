@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "maps": [
+    {
+      "land": "assets/maps/coastal-v1/16_OC_bees_to_honey/land.webp",
+      "water": "assets/maps/coastal-v1/16_OC_bees_to_honey/water.webp",
+      "id": "spaces/16_OC_bees_to_honey",
+      "width": 1520,
+      "sourceCompositeSha256": "6b53e7525f3466b9701d46937a3acdac4734fdafcc89457c2a1bf06d4038aa87",
+      "height": 1520
+    },
+    {
+      "land": "assets/maps/coastal-v1/18_NE_ice_islands/land.webp",
+      "water": "assets/maps/coastal-v1/18_NE_ice_islands/water.webp",
+      "id": "spaces/18_NE_ice_islands",
+      "width": 1520,
+      "sourceCompositeSha256": "b91df530b8fef8663d1bb8570d55a89e10ce26b51671f100f7c1d27f846e333b",
+      "height": 1520
+    },
+    {
+      "land": "assets/maps/coastal-v1/20_NE_two_brothers/land.webp",
+      "water": "assets/maps/coastal-v1/20_NE_two_brothers/water.webp",
+      "id": "spaces/20_NE_two_brothers",
+      "width": 1520,
+      "sourceCompositeSha256": "36208ad71de0093547f693a81d8bacc46d9588d0055b7d716f74694980383715",
+      "height": 1520
+    },
+    {
+      "land": "assets/maps/coastal-v1/23_Shards/land.webp",
+      "water": "assets/maps/coastal-v1/23_Shards/water.webp",
+      "id": "spaces/23_Shards",
+      "width": 1520,
+      "sourceCompositeSha256": "b8fecf4384e613bc39c499b9fe665cbc4881e869f9bb96306b396bf06e7bd994",
+      "height": 1520
+    }
+  ],
+  "style": "coastal-v1"
+}

@@ -669,6 +669,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tiny_http",
  "ureq",
+ "uuid",
  "walkdir",
  "wows_replays",
  "wowsunpack",
@@ -5543,9 +5544,10 @@ dependencies = [
 
 [[package]]
 name = "tfd-bridge"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bridge-core",
+ "chrono",
  "hex",
  "log",
  "reqwest",

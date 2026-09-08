@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Replay video validation</title>
+<style>body{margin:20px;background:#101915;color:#eee;font:16px sans-serif}canvas,video{width:100%;height:auto}button{padding:12px;margin:10px}</style></head><body>
+<button id="frame">Render frame at 10:40</button><button id="clip">Encode 2-second opening clip</button><button id="full">Encode full battle</button><button id="budget">Encode full battle under 20 MiB</button><p id="status">Ready</p><div id="output"></div>
+<script type="module">
+import {loadReplayScene} from '/src/engine/importScene.ts';
+import {SharedFrameRenderer} from '/src/video/sharedFrameRenderer.tsx';
+import {renderSceneToMp4} from '/src/video/encodeMp4.ts';
+const status=document.querySelector('#status'),output=document.querySelector('#output');
+async function scene(){const url=new URL('/generated/timeline-scene.json',location.href).href;return loadReplayScene(await (await fetch(url)).json(),{baseUrl:url});}
+document.querySelector('#frame').onclick=async()=>{let renderer;try{status.textContent='Rendering shared frame…';renderer=await SharedFrameRenderer.create(await scene());await renderer.renderFrame(640);output.replaceChildren(renderer.canvas);status.textContent='Shared frame rendered successfully';}catch(e){status.textContent=String(e);}finally{renderer?.destroy();}};
+async function encode(full=false,maxBytes){try{status.textContent='Encoding…';const source=await scene();if(!full)source.replay.duration=20;const result=await renderSceneToMp4(source,{maxBytes,fps:full?30:10,resolution:'1080',onProgress:p=>status.textContent=`Encoding ${p.frame}/${p.total}`});const url=URL.createObjectURL(new Blob([result.mp4],{type:'video/mp4'}));const video=document.createElement('video');video.controls=true;video.src=url;const save=document.createElement('a');save.href=url;save.download='replay-validation.mp4';save.textContent='Save validation MP4';output.replaceChildren(video,save);status.textContent=`Encoded ${result.frames} frames, ${result.mp4.length} bytes in ${Math.round(result.elapsedMs)}ms`;}catch(e){status.textContent=String(e);}};
+document.querySelector('#clip').onclick=()=>encode(false);document.querySelector('#full').onclick=()=>encode(true);
+document.querySelector('#budget').onclick=()=>encode(true,20*1024*1024);
+</script></body></html>

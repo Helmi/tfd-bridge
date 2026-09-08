@@ -1,4 +1,5 @@
 import type {
+  EvaluatedShip,
   EvaluatedOrdnance,
   EvaluatedPlane,
   Pose,
@@ -9,6 +10,7 @@ import type {
   TrajectoryPoint,
   WorldPoint,
 } from '../types';
+import { evaluateRpfSectors } from './rpfSignals';
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -122,28 +124,30 @@ function evaluatePlanes(scene: ReplayScene, t: number): EvaluatedPlane[] {
 
 export function evaluateScene(scene: ReplayScene, requestedTime: number): SceneState {
   const t = clamp(requestedTime, 0, scene.replay.duration);
+  const ships: EvaluatedShip[] = scene.ships.map((definition) => {
+    const pose = samplePose(definition.pose, t);
+    // Enemy tracks begin when that ship is first observed. Sampling the first
+    // value before its timestamp leaks a future position into the opening.
+    const beforeFirstEnemyObservation = definition.relation === 'enemy' && t < definition.knowledge[0].t;
+    const knowledge = beforeFirstEnemyObservation ? 'hidden' : sampleStep(definition.knowledge, t);
+    const lastSeen = knowledge === 'last-known' ? lastKnownSince(definition, t) : undefined;
+    const displayPose = lastSeen === undefined ? pose : samplePose(definition.pose, lastSeen);
+    const health = sampleStep(definition.health, t);
+    return {
+      definition,
+      pose,
+      displayPose,
+      health,
+      knowledge,
+      detectedByEnemy: definition.detectedByEnemy ? sampleStep(definition.detectedByEnemy, t) : false,
+      submerged: definition.submerged ? sampleStep(definition.submerged, t) : false,
+      destroyed: health <= 0,
+    };
+  });
   return {
     t,
-    ships: scene.ships.map((definition) => {
-      const pose = samplePose(definition.pose, t);
-      // Enemy tracks begin when that ship is first observed. Sampling the first
-      // value before its timestamp leaks a future position into the opening.
-      const beforeFirstEnemyObservation = definition.relation === 'enemy' && t < definition.knowledge[0].t;
-      const knowledge = beforeFirstEnemyObservation ? 'hidden' : sampleStep(definition.knowledge, t);
-      const lastSeen = knowledge === 'last-known' ? lastKnownSince(definition, t) : undefined;
-      const displayPose = lastSeen === undefined ? pose : samplePose(definition.pose, lastSeen);
-      const health = sampleStep(definition.health, t);
-      return {
-        definition,
-        pose,
-        displayPose,
-        health,
-        knowledge,
-        detectedByEnemy: definition.detectedByEnemy ? sampleStep(definition.detectedByEnemy, t) : false,
-        submerged: definition.submerged ? sampleStep(definition.submerged, t) : false,
-        destroyed: health <= 0,
-      };
-    }),
+    ships,
+    rpfSectors: evaluateRpfSectors(scene, ships, t),
     ordnance: evaluateOrdnance(scene, t),
     captureZones: scene.captureZones.map((definition) => ({
       definition,
@@ -191,5 +195,8 @@ export function evaluateScene(scene: ReplayScene, requestedTime: number): SceneS
       .filter((definition) => t >= definition.start && t < definition.end)
       .map((definition) => ({ definition, remaining: definition.end - t })),
     scores: Object.fromEntries(scene.teams.map((team) => [team.id, sampleStep(team.score, t)])),
+    // Unlike sampleStep's first-value fallback, never reveal future counters.
+    ownerStats: scene.ownerStats?.length && t >= scene.ownerStats[0].t
+      ? sampleStep(scene.ownerStats, t) : undefined,
   };
 }

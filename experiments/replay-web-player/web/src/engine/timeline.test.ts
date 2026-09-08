@@ -25,6 +25,47 @@ const scene: ReplayScene = {
 };
 
 describe('timeline evaluator', () => {
+  it('follows each RPF sender, retains reports until updated, and rewinds without future bearings', () => {
+    const rpfScene: ReplayScene = {...scene,
+      ships:[{...ship,knowledge:[{t:0,value:'spotted'}]},
+        {...ship,id:'other',playerName:'Other',knowledge:[{t:0,value:'spotted'}]}],
+      chat:[
+        {id:'new',t:7,senderId:'ship',senderName:'Tester',channel:'team',message:'RPF: NNW~N'},
+        {id:'old',t:2,senderId:'ship',senderName:'Tester',channel:'team',message:'RPF: ESE~SE'},
+        {id:'second',t:3,senderId:'other',senderName:'Other',channel:'team',message:'RPF: NW~NE'},
+        {id:'normal',t:5,senderId:'ship',senderName:'Tester',channel:'team',message:'Thanks!'},
+      ]};
+    expect(evaluateScene(rpfScene,1).rpfSectors).toEqual([]);
+    const initial = evaluateScene(rpfScene,2).rpfSectors;
+    expect(initial).toEqual([{shipId:'ship',reportedAt:2,position:{x:20,y:10},startBearing:112.5,endBearing:135}]);
+    const moved = evaluateScene(rpfScene,6).rpfSectors;
+    expect(moved).toHaveLength(2);
+    expect(moved[0]).toMatchObject({position:{x:60,y:30},startBearing:112.5,endBearing:135});
+    expect(moved[1]).toMatchObject({shipId:'other',startBearing:315,endBearing:405});
+    expect(evaluateScene(rpfScene,7).rpfSectors[0]).toMatchObject({reportedAt:7,startBearing:337.5,endBearing:360});
+    expect(evaluateScene(rpfScene,2).rpfSectors).toEqual(initial);
+    expect(evaluateScene(rpfScene,1).rpfSectors).toEqual([]);
+  });
+
+  it('anchors RPF to visible or last-known positions and hides it for hidden or sunk senders', () => {
+    const rpfScene: ReplayScene = {...scene,chat:[
+      {id:'rpf',t:1,senderId:ship.id,senderName:ship.playerName,channel:'team',message:'RPF: E~ESE'},
+    ]};
+    expect(evaluateScene(rpfScene,6).rpfSectors[0].position).toEqual({x:40,y:20});
+    expect(evaluateScene(rpfScene,8).rpfSectors).toEqual([]);
+    const sunk: ReplayScene = {...rpfScene,ships:[{...ship,health:[{t:0,value:100},{t:5,value:0}]}]};
+    expect(evaluateScene(sunk,5).rpfSectors).toEqual([]);
+  });
+
+  it('uses a unique username for older chat records but never guesses ambiguous or invalid senders', () => {
+    const rpfScene: ReplayScene = {...scene,chat:[
+      {id:'rpf',t:1,senderName:ship.playerName,channel:'team',message:'RPF: E~ESE'},
+    ]};
+    expect(evaluateScene(rpfScene,2).rpfSectors[0].shipId).toBe(ship.id);
+    expect(evaluateScene({...rpfScene,ships:[ship,{...ship,id:'duplicate'}]},2).rpfSectors).toEqual([]);
+    expect(evaluateScene({...rpfScene,chat:[{...rpfScene.chat![0],senderId:'unknown'}]},2).rpfSectors).toEqual([]);
+  });
+
   it('interpolates yaw over the shortest arc', () => {
     expect(lerpAngle(350, 10, 0.5)).toBe(0);
     expect(samplePose(ship.pose, 5)).toMatchObject({ x: 50, y: 25, yaw: 0, speed: 15 });

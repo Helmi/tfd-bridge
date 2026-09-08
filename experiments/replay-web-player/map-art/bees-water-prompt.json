@@ -1,0 +1,6 @@
+{
+  "prompt": "Use case: precise-object-edit / background-extraction. Asset type: square OPAQUE WATER-ONLY layer for a top-down tactical map covering roughly 35–40 kilometres. The supplied image is the user's approved style reference and edit target. Remove ALL visible islands/land/rocks, including land touching canvas edges, and seamlessly reconstruct ocean in their places. Preserve the image's attractive subtle deep navy-blue ocean texture and fine diffuse ripples at a believable 35–40 km aerial scale; keep restrained teal depth variation and the spatial pattern of the surrounding water. Much quieter detail than close-up waves: no large surf, foam bands, whitecaps, clouds or giant wave crests. Retain the exact square framing and orientation without cropping, zooming, padding or rotation. Full 2048x2048 opaque RGB ocean, water covers every pixel; no land anywhere, no islands, boats, land silhouettes, map grid, labels, text or watermark. This background will go underneath a separate land layer with the original silhouettes.",
+  "tool": "built-in image_gen",
+  "reference": "style-reference.png",
+  "generatedFilename": "exec-69aabed0-a527-45fb-845a-ef6514306793.png"
+}

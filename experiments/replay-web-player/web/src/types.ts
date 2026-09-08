@@ -31,6 +31,8 @@ export interface ShipDefinition {
   clan?: string;
   shipName: string;
   shipClass: 'destroyer' | 'cruiser' | 'battleship' | 'carrier' | 'submarine';
+  /** Game tier 1–11 (11 = supership); absent in older scenes. */
+  tier?: number;
   maxHealth: number;
   pose: TimedValue<Pose>[];
   health: TimedValue<number>[];
@@ -117,6 +119,17 @@ export interface FighterWard {
   removedAt?: Seconds;
 }
 
+export interface ConsumableVisual {
+  iconKey?: string;
+  abilityVariant?: string;
+  source: 'equipped-ability' | 'ship-definition' | 'ship-range-fallback' | 'ambiguous-ability';
+  shipRangeMeters?: number;
+  torpedoRangeMeters?: number;
+  /** Radius as a fraction of full map width, resolved by the toolkit. */
+  shipRadius?: number;
+  torpedoRadius?: number;
+}
+
 export interface ConsumableActivation {
   id: string;
   shipId: EntityId;
@@ -124,6 +137,7 @@ export interface ConsumableActivation {
   name: string;
   start: Seconds;
   end: Seconds;
+  visual?: ConsumableVisual;
 }
 
 export interface ChatMessage {
@@ -184,11 +198,25 @@ export interface DamageEvent {
   hits?: number;
 }
 
+export interface OwnerStats {
+  damage: number;
+  potentialDamage: number;
+  spottingDamage: number;
+  ribbons: Record<string, number>;
+}
+export interface RibbonDefinition {
+  label: string;
+  iconKey: string;
+  isSubribbon: boolean;
+  imageUrl?: string;
+}
+
 /** Renderer-neutral output expected from replay decoding. */
 export interface ReplayScene {
   schema: 'rocks.tfd.replay-scene/v0';
   replay: {
     id: string;
+    arenaUniqueId?: string;
     title: string;
     gameVersion: string;
     /** Short "major.minor" client version, e.g. "15.5". */
@@ -199,6 +227,7 @@ export interface ReplayScene {
     dateTime?: string;
     /** False when the recording ended before the battle did (early exit). */
     complete?: boolean;
+    outcome?: 'victory' | 'defeat' | 'draw';
     duration: Seconds;
     perspectiveTeamId: TeamId;
     perspectiveEntityId?: EntityId;
@@ -221,6 +250,7 @@ export interface ReplayScene {
   wards?: FighterWard[];
   consumables?: ConsumableActivation[];
   chat?: ChatMessage[];
+  kills?: Array<{ t: Seconds; killerId?: EntityId; victimId?: EntityId }>;
   pickups?: PickupEvent[];
   assets?: {
     powerupIcons?: Record<string, { href: string }>;
@@ -228,6 +258,9 @@ export interface ReplayScene {
   };
   ordnance: OrdnanceEvent[];
   damage: DamageEvent[];
+  ownerStats?: TimedValue<OwnerStats>[];
+  ribbonDefinitions?: Record<string, RibbonDefinition>;
+  ownerSilhouette?: string;
 }
 
 export interface EvaluatedShip {
@@ -297,9 +330,18 @@ export interface EvaluatedConsumable {
   remaining: Seconds;
 }
 
+export interface EvaluatedRpfSector {
+  shipId: EntityId;
+  reportedAt: Seconds;
+  position: WorldPoint;
+  startBearing: number;
+  endBearing: number;
+}
+
 export interface SceneState {
   t: Seconds;
   ships: EvaluatedShip[];
+  rpfSectors: EvaluatedRpfSector[];
   ordnance: EvaluatedOrdnance[];
   captureZones: EvaluatedCaptureZone[];
   buffZones: EvaluatedBuffZone[];
@@ -309,6 +351,7 @@ export interface SceneState {
   /** Consumable activations running at the requested time. */
   consumables: EvaluatedConsumable[];
   scores: Record<TeamId, number>;
+  ownerStats?: OwnerStats;
 }
 
 /**
@@ -320,6 +363,7 @@ export interface ReplaySceneV1 {
   version: 1;
   replay: {
     id: string;
+    arenaUniqueId?: string;
     name: string;
     gameBuild: string;
     gameVersionShort?: string;
@@ -327,6 +371,7 @@ export interface ReplaySceneV1 {
     dateTime?: string;
     complete?: boolean;
     durationMs: number;
+    outcome?: 'victory' | 'defeat' | 'draw';
     battleStartMs: number;
     perspective: string | { playerName?: string; teamId: TeamId; entityId?: EntityId };
   };
@@ -339,6 +384,8 @@ export interface ReplaySceneV1 {
   assets?: {
     powerupIcons?: Record<string, string>;
     planeIcons?: Record<string, string>;
+    ribbons?: Record<string, RibbonDefinition>;
+    ownerSilhouette?: string;
   };
   teams: Array<{ id: TeamId; name: string; color: string }>;
   entities: Array<{
@@ -352,9 +399,11 @@ export interface ReplaySceneV1 {
     shipName: string;
     shipCode: string;
     species: ShipDefinition['shipClass'] | 'aircarrier';
+    tier?: number;
     maxHp: number;
   }>;
   tracks: {
+    ownerStats?: Array<OwnerStats & { t: number }>;
     ships: Record<EntityId, Array<{
       t: number;
       x: number;
@@ -468,6 +517,7 @@ export interface ReplaySceneV1 {
       shipId: EntityId;
       name: string;
       durationMs: number;
+      visual?: ConsumableVisual;
     }>;
     chat?: Array<{
       t: number;

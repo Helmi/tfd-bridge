@@ -3,6 +3,10 @@ pub mod donation;
 pub mod engine;
 pub mod link_target;
 pub mod uploader;
+pub mod video_upload;
+pub mod video_share;
+mod share_coordinator;
+mod render_worker;
 
 use bridge_core::battle_result::{DecodeConfig, Tables};
 use bridge_core::detection::derive_game_dir;
@@ -336,7 +340,8 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
 fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
     let resource_dir = app.path().resource_dir().ok()?;
     let player_dist = resource_dir.join("player");
-    player_dist.exists().then_some(PlayerConfig { player_dist })
+    let dispatch=render_worker::dispatcher(app.clone());
+    player_dist.exists().then_some(PlayerConfig { player_dist, render_dispatcher: Some(dispatch.clone()), share_service: Some(std::sync::Arc::new(share_coordinator::Coordinator::new(app.clone(),dispatch))) })
 }
 
 // ── Bridge management ────────────────────────────────────────────────────────

@@ -1,15 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
-import { shipIconColor } from '../divisions';
+import { isOwnDivision, shipIconColor } from '../divisions';
+import { createShipMarker } from './shipMarker';
+import { createShipLabel } from './shipLabel';
+import { consumableIconKey, consumableIconUrl } from '../consumableIcons';
+import { activeConsumableVisuals } from '../engine/consumableVisuals';
+import { drawConsumableRanges, drawConsumableIcons } from './consumableEffects';
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { evaluateScene } from '../engine/timeline';
+import { acquireEnhancedMapTexture, type EnhancedMapTextureLease } from '../engine/enhancedMap';
+import { clipRpfSector } from '../engine/rpfGeometry';
 import { shipClassIconUrl, type ShipClass } from '../shipClassIcons';
 import type { EvaluatedShip, PlaneTrack, ReplayScene, SceneState, WorldPoint } from '../types';
 
 interface Props {
+  resolution?: number;
   scene: ReplayScene;
   time: number;
   selectedShipId: string;
   onSelectShip: (id: string) => void;
+  presentation?: 'interactive' | 'broadcast';
+  onRendererReady?: (renderer: TacticalMapCapture) => void;
+  onRendererError?: (error: Error) => void;
+}
+
+export interface TacticalMapCapture {
+  render(time: number, selectedShipId: string): HTMLCanvasElement;
 }
 
 interface Viewport {
@@ -24,16 +39,24 @@ interface Runtime {
   mapSprite: Sprite;
   graphics: Graphics;
   markers: Container;
+  consumableGraphics: Graphics;
+  consumableMask: Graphics;
+  consumableTextures: Record<string, Texture>;
   iconTextures: Partial<Record<ShipClass, Texture>>;
   powerupTextures: Record<string, Texture>;
   powerupAssetsKey?: string;
   planeTextures: Record<string, Texture>;
   planeAssetsKey?: string;
   mapHref?: string;
+  mapLease?: EnhancedMapTextureLease;
+  mapRequest?: symbol;
+  mapLoading?: Promise<void>;
+  disposed?: boolean;
   viewport: Viewport;
   latestState: SceneState;
   scene: ReplayScene;
   selectedShipId: string;
+  presentation: 'interactive' | 'broadcast';
 }
 
 const islands: WorldPoint[][] = [
@@ -83,14 +106,6 @@ function shipScale(ship: EvaluatedShip, viewport: Viewport): number {
   return 0.8 * Math.min(2.0, Math.max(1.05, base * size));
 }
 
-function transformedHull(center: WorldPoint, yaw: number, scale: number): number[] {
-  const angle = (yaw * Math.PI) / 180;
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const points = [[0, -11], [5, -4], [4.5, 8], [0, 12], [-4.5, 8], [-5, -4]];
-  return points.flatMap(([x, y]) => [center.x + (x * cos - y * sin) * scale, center.y + (x * sin + y * cos) * scale]);
-}
-
 function mapText(text: string, fontSize: number, color: string, weight: '500' | '600' | '700' | '800' = '600'): Text {
   return new Text({
     text,
@@ -103,6 +118,25 @@ function mapText(text: string, fontSize: number, color: string, weight: '500' | 
       stroke: { color: '#05100d', width: Math.max(2, fontSize * 0.22) },
     },
   });
+}
+
+function drawRpfSectors(runtime: Runtime): void {
+  const { graphics, scene, latestState, viewport } = runtime;
+  for (const sector of latestState.rpfSectors) {
+    const clipped = clipRpfSector(sector.position, scene.map.bounds, sector);
+    if (clipped.polygon.length < 3) continue;
+    const points = clipped.polygon.flatMap(point => {
+      const screen = worldToScreen(scene, viewport, point);
+      return [screen.x, screen.y];
+    });
+    graphics.poly(points).fill({ color: '#d4e9e5', alpha: 0.085 });
+    for (const [from, to] of clipped.rays) {
+      const start = worldToScreen(scene, viewport, from);
+      const end = worldToScreen(scene, viewport, to);
+      graphics.moveTo(start.x, start.y).lineTo(end.x, end.y)
+        .stroke({ color: '#d4e9e5', width: 1.1, alpha: 0.3 });
+    }
+  }
 }
 
 function drawCaptureZones(runtime: Runtime, teamColors: Record<string, string>): void {
@@ -322,7 +356,7 @@ function drawMap(runtime: Runtime): void {
   runtime.viewport = viewport;
   backdrop.clear();
   graphics.clear();
-  for (const child of markers.removeChildren()) child.destroy();
+  for (const child of markers.removeChildren()) child.destroy({children:true});
 
   backdrop.roundRect(viewport.left - 2, viewport.top - 2, viewport.size + 4, viewport.size + 4, 8)
     .fill({ color: '#081210' })
@@ -358,6 +392,10 @@ function drawMap(runtime: Runtime): void {
   const enemyTeamIds = new Set(
     scene.ships.filter((ship) => ship.relation === 'enemy').map((ship) => ship.teamId),
   );
+  const consumableEffects = activeConsumableVisuals(latestState);
+  runtime.consumableMask.clear().rect(viewport.left,viewport.top,viewport.size,viewport.size).fill(0xffffff);
+  drawConsumableRanges(runtime.consumableGraphics, consumableEffects, viewport.size, p=>worldToScreen(scene,viewport,p));
+  drawRpfSectors(runtime);
   drawCaptureZones(runtime, teamColors);
   drawBuffZones(runtime, teamColors);
   drawSmoke(runtime);
@@ -393,7 +431,7 @@ function drawMap(runtime: Runtime): void {
     const point = worldToScreen(scene, viewport, ship.displayPose);
     const color = teamColors[ship.definition.teamId];
     const iconColor = shipIconColor(ship.definition, scene.ships, selectedShipId, color);
-    const scale = shipScale(ship, viewport);
+    const scale = shipScale(ship, viewport) * (runtime.presentation === 'broadcast' ? 1.2 : 1);
     const selected = ship.definition.id === selectedShipId;
     const alpha = ship.knowledge === 'last-known' ? 0.42 : ship.destroyed ? 0.3 : 1;
 
@@ -401,21 +439,10 @@ function drawMap(runtime: Runtime): void {
       graphics.circle(point.x, point.y, 16 * scale).fill({ color: '#ffbd66', alpha: 0.14 });
     }
 
-    const texture = runtime.iconTextures[ship.definition.shipClass];
-    if (texture) {
-      const icon = new Sprite(texture);
-      icon.anchor.set(0.5);
-      icon.height = 16 * scale;
-      icon.width = icon.height * (texture.width / texture.height);
-      icon.position.set(point.x, point.y);
-      icon.rotation = (ship.displayPose.yaw * Math.PI) / 180;
-      icon.tint = iconColor;
-      icon.alpha = alpha;
-      markers.addChild(icon);
-    } else {
-      const hull = transformedHull(point, ship.displayPose.yaw, scale);
-      graphics.poly(hull).fill({ color: iconColor, alpha }).stroke({ color: '#eef4f1', width: selected ? 1.35 : 0.75, alpha: 0.8 * alpha });
-    }
+    markers.addChild(createShipMarker({
+      texture: runtime.iconTextures[ship.definition.shipClass], shipClass: ship.definition.shipClass,
+      position: point, yaw: ship.displayPose.yaw, scale, color: iconColor, alpha, selected,
+    }));
 
     if (ship.knowledge === 'last-known') {
       graphics.circle(point.x, point.y, 14 * scale).stroke({ color, width: 1, alpha: 0.42 });
@@ -443,40 +470,77 @@ function drawMap(runtime: Runtime): void {
     }
 
     const name = mapText(
-      ship.definition.shipName,
-      Math.max(10, Math.min(13, viewport.size / 55)),
-      selected ? '#ffffff' : color,
+      runtime.presentation === 'broadcast' ? ship.definition.shipName.toUpperCase() : ship.definition.shipName,
+      runtime.presentation === 'broadcast' ? 13 : Math.max(10, Math.min(13, viewport.size / 55)),
+      iconColor,
       selected ? '700' : '600',
     );
-    name.anchor.set(0.5, 0);
-    name.position.set(point.x, point.y + 15 * scale);
-    name.alpha = ship.knowledge === 'last-known' ? 0.56 : ship.destroyed ? 0.42 : 0.95;
-    markers.addChild(name);
+    if (runtime.presentation === 'broadcast') {
+      name.style.fontFamily = '"JetBrains Mono", monospace';
+      name.style.fontWeight = selected ? '600' : '500';
+      name.style.letterSpacing = -0.35;
+      name.style.stroke = { color: '#05100d', width: 2.5 };
+    }
+    markers.addChild(createShipLabel(name, {
+      point, viewport, scale, color: iconColor,
+      ownDivision: isOwnDivision(ship.definition, scene.ships),
+      alpha: ship.knowledge === 'last-known' ? 0.56 : ship.destroyed ? 0.42 : 0.95,
+    }));
   }
 
+  drawConsumableIcons(markers,consumableEffects,runtime.consumableTextures,viewport,
+    p=>worldToScreen(scene,viewport,p),ship=>shipScale(ship,viewport)*(runtime.presentation==='broadcast'?1.2:1));
   drawPlanes(runtime, markers, teamColors);
 }
 
-async function loadMapImage(runtime: Runtime): Promise<void> {
+function releaseMapTexture(runtime: Runtime): void {
+  runtime.mapSprite.texture = Texture.EMPTY;
+  runtime.mapLease?.release();
+  runtime.mapLease = undefined;
+}
+
+function loadMapImage(runtime: Runtime): Promise<void> {
+  if (runtime.disposed) return Promise.resolve();
   const href = runtime.scene.map.image?.href;
-  if (!href) {
-    runtime.mapHref = undefined;
-    runtime.mapSprite.visible = false;
-    drawMap(runtime);
-    return;
+  const mapName = runtime.scene.map.name;
+  const key = `${mapName}\0${href ?? ''}`;
+  if (runtime.mapHref === key) {
+    if (runtime.mapLoading) return runtime.mapLoading;
+    if (runtime.mapSprite.visible) return Promise.resolve();
   }
-  if (runtime.mapHref === href && runtime.mapSprite.visible) return;
-  runtime.mapHref = href;
+  const request = Symbol(key);
+  runtime.mapRequest = request;
+  runtime.mapHref = key;
   runtime.mapSprite.visible = false;
-  try {
-    const texture = await Assets.load<Texture>(href);
-    if (runtime.mapHref !== href) return;
-    runtime.mapSprite.texture = texture;
-    runtime.mapSprite.visible = true;
+  releaseMapTexture(runtime);
+  if (!href) {
+    runtime.mapLoading = undefined;
     drawMap(runtime);
-  } catch (reason) {
-    console.warn('Replay map image could not be loaded', reason);
+    return Promise.resolve();
   }
+  runtime.mapLoading = (async () => {
+    let lease: EnhancedMapTextureLease | undefined;
+    try {
+      const original = await Assets.load<Texture>(href);
+      if (runtime.disposed || runtime.mapRequest !== request) return;
+      lease = await acquireEnhancedMapTexture(mapName, href);
+      if (runtime.disposed || runtime.mapRequest !== request) return;
+      runtime.mapSprite.texture = lease?.texture ?? original;
+      runtime.mapLease = lease;
+      lease = undefined;
+      runtime.mapSprite.visible = true;
+      drawMap(runtime);
+    } catch (reason) {
+      if (!runtime.disposed && runtime.mapRequest === request) {
+        console.warn('Replay map image could not be loaded', reason);
+      }
+    } finally {
+      // Includes unmount and A → B → A races while a texture is loading.
+      lease?.release();
+      if (runtime.mapRequest === request) runtime.mapLoading = undefined;
+    }
+  })();
+  return runtime.mapLoading;
 }
 
 async function loadShipIcons(runtime: Runtime): Promise<void> {
@@ -551,7 +615,20 @@ async function loadPlaneIcons(runtime: Runtime): Promise<void> {
   drawMap(runtime);
 }
 
-export function TacticalMap({ scene, time, selectedShipId, onSelectShip }: Props) {
+async function loadConsumableIcons(runtime: Runtime): Promise<void> {
+  const keys = [...new Set((runtime.scene.consumables ?? []).map(consumableIconKey).filter((key): key is string=>Boolean(key)))];
+  const loaded = await Promise.all(keys.map(async key => {
+    const url = consumableIconUrl(key);
+    if (!url) return undefined;
+    try { return [key,await Assets.load<Texture>(url)] as const; }
+    catch { return undefined; }
+  }));
+  if (runtime.disposed) return;
+  runtime.consumableTextures = Object.fromEntries(loaded.filter((e): e is readonly [string,Texture]=>Boolean(e)));
+  drawMap(runtime);
+}
+
+export function TacticalMap({ scene, time, selectedShipId, onSelectShip, presentation = 'interactive', resolution, onRendererReady, onRendererError }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<Runtime | null>(null);
   const onSelectRef = useRef(onSelectShip);
@@ -571,7 +648,7 @@ export function TacticalMap({ scene, time, selectedShipId, onSelectShip }: Props
           resizeTo: host,
           antialias: true,
           autoDensity: true,
-          resolution: Math.min(window.devicePixelRatio || 1, 2),
+          resolution: resolution ?? Math.min(window.devicePixelRatio || 1, 2),
           backgroundAlpha: 0,
         });
         if (disposed) {
@@ -587,7 +664,10 @@ export function TacticalMap({ scene, time, selectedShipId, onSelectShip }: Props
         const graphics = new Graphics();
         const markers = new Container();
         const stage = new Container();
-        stage.addChild(backdrop, mapSprite, graphics, markers);
+        const consumableGraphics = new Graphics({label:'consumable-ranges'});
+        const consumableMask = new Graphics();
+        consumableGraphics.mask = consumableMask;
+        stage.addChild(backdrop, mapSprite, consumableGraphics, consumableMask, graphics, markers);
         app.stage.addChild(stage);
         runtimeRef.current = {
           app,
@@ -598,22 +678,27 @@ export function TacticalMap({ scene, time, selectedShipId, onSelectShip }: Props
           iconTextures: {},
           powerupTextures: {},
           planeTextures: {},
+          consumableGraphics, consumableMask, consumableTextures: {},
           scene,
           selectedShipId,
+          presentation,
           latestState: evaluateScene(scene, time),
           viewport: makeViewport(app.screen.width, app.screen.height),
         };
         drawMap(runtimeRef.current);
-        void loadMapImage(runtimeRef.current);
-        void loadShipIcons(runtimeRef.current).catch((reason) => console.warn('Ship-class icons could not be loaded', reason));
-        void loadPowerupIcons(runtimeRef.current);
-        void loadPlaneIcons(runtimeRef.current);
+        const assetLoading = Promise.all([
+          loadMapImage(runtimeRef.current), loadShipIcons(runtimeRef.current),
+          loadPowerupIcons(runtimeRef.current), loadPlaneIcons(runtimeRef.current), loadConsumableIcons(runtimeRef.current),
+        ]);
 
         const pickShip = (event: PointerEvent) => {
           const runtime = runtimeRef.current;
           if (!runtime) return;
           const rect = app.canvas.getBoundingClientRect();
-          const screen = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+          const screen = {
+            x: (event.clientX - rect.left) * app.screen.width / rect.width,
+            y: (event.clientY - rect.top) * app.screen.height / rect.height,
+          };
           const world = screenToWorld(runtime.scene, runtime.viewport, screen);
           const worldRadius = (runtime.scene.map.bounds.maxX - runtime.scene.map.bounds.minX) * 0.035;
           const candidate = runtime.latestState.ships
@@ -635,8 +720,21 @@ export function TacticalMap({ scene, time, selectedShipId, onSelectShip }: Props
           resizeObserver.disconnect();
           app.canvas.removeEventListener('pointerdown', pickShip);
         };
+        await assetLoading;
+        if (!disposed) onRendererReady?.({
+          render(frameTime, selection) {
+            const runtime = runtimeRef.current;
+            if (!runtime) throw new Error('Map renderer was disposed');
+            runtime.selectedShipId = selection;
+            runtime.latestState = evaluateScene(runtime.scene, frameTime);
+            drawMap(runtime);
+            app.renderer.render(app.stage);
+            return app.canvas;
+          },
+        });
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : String(reason));
+        onRendererError?.(reason instanceof Error ? reason : new Error(String(reason)));
       }
     };
 
@@ -644,6 +742,11 @@ export function TacticalMap({ scene, time, selectedShipId, onSelectShip }: Props
     return () => {
       disposed = true;
       const runtime = runtimeRef.current as (Runtime & { cleanup?: () => void }) | null;
+      if (runtime) {
+        runtime.disposed = true;
+        runtime.mapRequest = undefined;
+        releaseMapTexture(runtime);
+      }
       runtime?.cleanup?.();
       runtimeRef.current = null;
       if (app.renderer) app.destroy(true, { children: true });
@@ -657,12 +760,13 @@ export function TacticalMap({ scene, time, selectedShipId, onSelectShip }: Props
     if (!runtime) return;
     runtime.scene = scene;
     runtime.selectedShipId = selectedShipId;
+    runtime.presentation = presentation;
     runtime.latestState = evaluateScene(scene, time);
     drawMap(runtime);
     void loadMapImage(runtime);
     void loadPowerupIcons(runtime);
     void loadPlaneIcons(runtime);
-  }, [scene, time, selectedShipId]);
+  }, [scene, time, selectedShipId, presentation]);
 
   return (
     <div className="map-host" ref={hostRef}>

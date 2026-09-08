@@ -1,4 +1,5 @@
 mod ballistics;
+mod consumables;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -14,7 +15,7 @@ use sha2::{Digest, Sha256};
 use wows_battle_world::scan::{WorldScanCollector, scan_replay_world};
 use wows_battle_world::view::BattleView;
 use wows_minimap_renderer::MINIMAP_SIZE;
-use wows_minimap_renderer::assets::{load_map_image, load_map_info, load_powerup_icons};
+use wows_minimap_renderer::assets::{load_map_image, load_map_info, load_powerup_icons, load_ribbon_icons};
 use wows_minimap_renderer::map_data::MapInfo;
 use wows_replays::ReplayFile;
 use wows_replays::analyzer::decoder::{DecodedPacketPayload, PacketDecoder};
@@ -24,9 +25,10 @@ use wows_replays::packet2::{Packet, PacketType, PacketTypeId, Parser, RawPacketI
 use wows_replays::types::{EntityId, GameClock, WorldPos};
 use wowsunpack::data::{ResourceLoader, Version};
 use wowsunpack::game_data;
+use wowsunpack::game_assets::{GuiAsset, GuiAssetDir};
 use wowsunpack::game_params::provider::GameMetadataProvider;
 use wowsunpack::game_params::types::{AmmoType, GameParamProvider, PlaneCategory, Species};
-use wowsunpack::game_types::{CollisionType, ShellHitType};
+use wowsunpack::game_types::{CollisionType, ShellHitType, DamageStatCategory, Ribbon};
 use wowsunpack::rpc::typedefs::ArgValue;
 
 #[derive(Debug, Serialize)]
@@ -49,14 +51,20 @@ struct ReplayScene {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SceneAssets {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner_silhouette: Option<String>,
     powerup_icons: BTreeMap<String, String>,
     plane_icons: BTreeMap<String, String>,
+    ribbons: BTreeMap<String, RibbonDescriptor>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReplayInfo {
     id: String,
+    /// Decimal string so browser code never rounds a 64-bit battle identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arena_unique_id: Option<String>,
     name: String,
     source_sha256: String,
     game_build: String,
@@ -73,6 +81,8 @@ struct ReplayInfo {
     /// Whether the recording captured the whole battle. False when a `BattleEnd`
     /// was never observed — i.e. the player exited before the battle finished.
     complete: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<&'static str>,
     duration_ms: i64,
     battle_start_ms: i64,
     perspective: Perspective,
@@ -117,6 +127,8 @@ struct EntityDescriptor {
     division_label: Option<char>,
     ship_name: String,
     ship_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tier: Option<u32>,
     species: String,
     max_hp: f32,
 }
@@ -126,10 +138,42 @@ struct EntityDescriptor {
 struct SceneTracks {
     ships: BTreeMap<String, Vec<ShipSample>>,
     scores: Vec<ScoreSample>,
+    owner_stats: Vec<OwnerStatsSample>,
     caps: Vec<CapSample>,
     buffs: Vec<BuffSample>,
     smoke: Vec<SmokeSample>,
     planes: Vec<PlaneSample>,
+}
+
+/// Absolute self-player counters at a replay timestamp, not post-battle totals.
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+struct OwnerStatsSample {
+    t: i64,
+    damage: f64,
+    potential_damage: f64,
+    spotting_damage: f64,
+    ribbons: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RibbonDescriptor {
+    label: String,
+    icon_key: String,
+    is_subribbon: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_url: Option<String>,
+}
+
+fn push_owner_stats(track: &mut Vec<OwnerStatsSample>, mut sample: OwnerStatsSample) {
+    if let Some(last) = track.last() {
+        let time = sample.t;
+        sample.t = last.t;
+        if *last == sample { return; }
+        sample.t = time;
+    }
+    track.push(sample);
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -280,6 +324,8 @@ struct ConsumableEvent {
     ship_id: String,
     name: String,
     duration_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visual: Option<consumables::ConsumableVisual>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -328,8 +374,11 @@ struct ShellEvent {
     speed: f32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     path: Vec<ShellSample>,
-    #[serde(skip)]
+    /// True when endpoint and arrival time came from a recorded collision,
+    /// rather than the launch packet's predicted trajectory.
     impact_recorded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    impact_target_guess_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -385,12 +434,15 @@ struct Coverage {
 
 struct SceneCollector<'a> {
     metadata: &'a GameMetadataProvider,
+    version: Version,
     map_info: MapInfo,
     entities: BTreeMap<String, EntityDescriptor>,
     ships: BTreeMap<String, Vec<ShipSample>>,
     scores: Vec<ScoreSample>,
+    owner_stats: Vec<OwnerStatsSample>,
     caps: Vec<CapSample>,
     last_caps: HashMap<usize, CapSample>,
+    ribbon_definitions: BTreeMap<String, RibbonDescriptor>,
     buffs: Vec<BuffSample>,
     last_buffs: HashMap<String, BuffSample>,
     buff_activation_at: HashMap<String, i64>,
@@ -420,17 +472,22 @@ struct SceneCollector<'a> {
     buff_zone_params: HashMap<String, i64>,
     battle_start_ms: Option<i64>,
     battle_end_ms: Option<i64>,
+    winning_team: Option<i8>,
     last_clock_ms: i64,
+    arena_unique_id: Option<String>,
 }
 
 impl<'a> SceneCollector<'a> {
-    fn new(map_info: MapInfo, metadata: &'a GameMetadataProvider) -> Self {
+    fn new(map_info: MapInfo, metadata: &'a GameMetadataProvider, version: Version) -> Self {
         Self {
             metadata,
+            version,
             map_info,
             entities: BTreeMap::new(),
             ships: BTreeMap::new(),
             scores: Vec::new(),
+            owner_stats: Vec::new(),
+            ribbon_definitions: BTreeMap::new(),
             caps: Vec::new(),
             last_caps: HashMap::new(),
             buffs: Vec::new(),
@@ -462,7 +519,9 @@ impl<'a> SceneCollector<'a> {
             buff_zone_params: HashMap::new(),
             battle_start_ms: None,
             battle_end_ms: None,
+            winning_team: None,
             last_clock_ms: 0,
+            arena_unique_id: None,
         }
     }
 
@@ -470,12 +529,16 @@ impl<'a> SceneCollector<'a> {
         let clock = packet.clock;
         let now = ms(clock);
         self.last_clock_ms = self.last_clock_ms.max(now);
+        if let PacketType::BattleResults(results) = &packet.payload {
+            self.arena_unique_id = arena_id_from_results(results).or(self.arena_unique_id.take());
+        }
         self.battle_start_ms = view.battle_start_clock().map(ms).or(self.battle_start_ms);
         self.battle_end_ms = view.battle_end_clock().map(ms).or(self.battle_end_ms);
 
         self.collect_entities(view);
         self.collect_ships(clock, view);
         self.collect_scores(now, view);
+        self.collect_owner_stats(now, view);
         self.collect_caps(now, view);
         self.collect_buffs(now, view);
         self.collect_salvos(view);
@@ -488,6 +551,35 @@ impl<'a> SceneCollector<'a> {
         self.collect_consumables(view);
         self.collect_chat(view);
         self.resolve_pickups(now);
+    }
+
+    fn collect_owner_stats(&mut self, now: i64, view: &BattleView<'_>) {
+        let mut sample = OwnerStatsSample { t: now, ..Default::default() };
+        // Mirror the toolkit renderer's Enemy / Agro / Spot aggregation.
+        for ((_, category), entry) in view.self_damage_stats() {
+            if !entry.total.is_finite() || entry.total < 0.0 { continue; }
+            match category.known() {
+                Some(DamageStatCategory::Enemy) => sample.damage += entry.total,
+                Some(DamageStatCategory::Agro) => sample.potential_damage += entry.total,
+                Some(DamageStatCategory::Spot) => sample.spotting_damage += entry.total,
+                _ => {},
+            }
+        }
+        for (ribbon, count) in view.self_ribbons() {
+            if *count == 0 { continue; }
+            let key = ribbon.translation_key().map(str::to_owned)
+                .unwrap_or_else(|| format!("UNKNOWN_{ribbon:?}"));
+            sample.ribbons.insert(key.clone(), *count);
+            self.ribbon_definitions.entry(key.clone()).or_insert_with(|| {
+                let translated = ribbon.translation_key().and_then(|key|
+                    wowsunpack::game_params::translations::translate_ribbon(key, self.metadata as &dyn ResourceLoader));
+                match translated {
+                    Some(value) => RibbonDescriptor { label: value.display_name, icon_key: value.icon_key, is_subribbon: value.is_subribbon, image_url: None },
+                    None => RibbonDescriptor { label: key, icon_key: String::new(), is_subribbon: false, image_url: None },
+                }
+            });
+        }
+        push_owner_stats(&mut self.owner_stats, sample);
     }
 
     fn collect_entities(&mut self, view: &BattleView<'_>) {
@@ -528,6 +620,11 @@ impl<'a> SceneCollector<'a> {
                         .localized_name_from_param(player.vehicle())
                         .unwrap_or_else(|| fallback_ship_name(player.vehicle().name())),
                     ship_code: player.vehicle().index().to_string(),
+                    tier: player
+                        .vehicle()
+                        .vehicle()
+                        .map(|vehicle| vehicle.level())
+                        .filter(|level| (1..=11).contains(level)),
                     species,
                     max_hp: state.max_health() as f32,
                 },
@@ -950,6 +1047,7 @@ impl<'a> SceneCollector<'a> {
                         speed: shot.speed,
                         path,
                         impact_recorded: false,
+                        impact_target_guess_id: None,
                     }
                 })
                 .collect();
@@ -1053,7 +1151,11 @@ impl<'a> SceneCollector<'a> {
                         .iter_mut()
                         .find(|shell| shell.id == hit.hit.shot_id.to_string())
                     {
+                        let first_impact = !shell.impact_recorded;
                         reconcile_shell_impact(shell, fired_at, ms(hit.clock), target);
+                        if first_impact && shell.impact_recorded && matches!(hit.hit.hit_type.collision.known(), Some(CollisionType::HitEntity | CollisionType::HitEntityBB)) {
+                            shell.impact_target_guess_id = Some(hit.victim_entity_id.to_string());
+                        }
                     }
                 }
             }
@@ -1185,7 +1287,7 @@ impl<'a> SceneCollector<'a> {
                         scene_id.clone(),
                         PlaneDescriptor {
                             id: scene_id.clone(),
-                            owner_id: plane.owner_id.to_string(),
+                            owner_id: plane.plane_id.owner_id().to_string(),
                             team_id: plane.team_id.to_string(),
                             kind: icon.kind,
                             category: icon.category,
@@ -1313,6 +1415,7 @@ impl<'a> SceneCollector<'a> {
                     ship_id: entity_id.to_string(),
                     name,
                     duration_ms: (f64::from(activation.duration) * 1_000.0).round() as i64,
+                    visual: activation.consumable.known().and_then(|kind| consumables::resolve(self.metadata, view, entity_id, *kind, self.version, &self.map_info)),
                 });
             }
         }
@@ -1359,6 +1462,7 @@ impl<'a> SceneCollector<'a> {
             normalize_step_vec(track, start, |sample| &mut sample.t);
         }
         normalize_step_vec(&mut self.scores, start, |sample| &mut sample.t);
+        normalize_step_vec(&mut self.owner_stats, start, |sample| &mut sample.t);
         normalize_caps(&mut self.caps, start);
         normalize_buffs(&mut self.buffs, start);
         normalize_vec(&mut self.salvos, start, |sample| &mut sample.t);
@@ -1418,6 +1522,7 @@ impl WorldScanCollector for SceneCollector<'_> {
     }
 
     fn finish(&mut self, view: &BattleView<'_>) {
+        self.winning_team = view.winning_team();
         self.battle_start_ms = view.battle_start_clock().map(ms).or(self.battle_start_ms);
         self.battle_end_ms = view.battle_end_clock().map(ms).or(self.battle_end_ms);
     }
@@ -1428,6 +1533,17 @@ impl WorldScanCollector for SceneCollector<'_> {
 /// `game_dir` is the World of Warships installation directory; the client build
 /// recorded in the replay must be present there. Runs entirely in-process — no
 /// temp files, no subprocess.
+fn replay_outcome(winner: Option<i8>, owner_team: Option<&str>) -> Option<&'static str> {
+    match winner {
+        Some(-1) => Some("draw"),
+        Some(team) if team >= 0 => {
+            let owner = owner_team?.parse::<i8>().ok()?;
+            Some(if team == owner { "victory" } else { "defeat" })
+        }
+        _ => None,
+    }
+}
+
 pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> {
     let replay_bytes = fs::read(replay_path)
         .with_context(|| format!("reading replay {}", replay_path.display()))?;
@@ -1470,7 +1586,9 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
     };
     let powerup_icon_images = load_powerup_icons(&vfs, 96, Some(&version));
 
-    let mut collector = SceneCollector::new(map_info.clone(), &game_params);
+    let ribbon_images = load_ribbon_icons(&vfs, GuiAssetDir::Ribbons, Some(&version));
+    let subribbon_images = load_ribbon_icons(&vfs, GuiAssetDir::SubRibbons, Some(&version));
+    let mut collector = SceneCollector::new(map_info.clone(), &game_params, version);
     scan_replay_world(
         &replay.meta,
         &game_params,
@@ -1489,6 +1607,36 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
     let battle_end = collector.battle_end_ms.unwrap_or(collector.last_clock_ms);
     let duration_ms = (battle_end - battle_start).max(0);
     collector.normalize_times(battle_start);
+    // Modern live ribbon updates can contain only hit outcomes. Include the
+    // toolkit's original aggregate icon even when no aggregate counter arrived;
+    // the player can then present the main hit total without showing subribbons.
+    let main_ribbon_key = Ribbon::MainCaliber.translation_key().unwrap();
+    collector.ribbon_definitions.entry(main_ribbon_key.into()).or_insert_with(|| {
+        let translated = wowsunpack::game_params::translations::translate_ribbon(
+            main_ribbon_key, &game_params as &dyn ResourceLoader,
+        );
+        RibbonDescriptor {
+            label: translated.as_ref().map(|value| value.display_name.clone()).unwrap_or_else(|| "Main battery hits".into()),
+            icon_key: translated.map(|value| value.icon_key).unwrap_or_else(|| main_ribbon_key.to_lowercase()),
+            is_subribbon: false,
+            image_url: None,
+        }
+    });
+    for definition in collector.ribbon_definitions.values_mut() {
+        // Match the toolkit drawing code: translations use ribbon_* keys,
+        // while the sub-ribbon directory uses subribbon_* filenames.
+        let sub_key = format!("sub{}", definition.icon_key);
+        let image = if definition.is_subribbon {
+            subribbon_images.get(&sub_key).or_else(|| ribbon_images.get(&definition.icon_key))
+        } else {
+            ribbon_images.get(&definition.icon_key).or_else(|| subribbon_images.get(&sub_key))
+        };
+        if let Some(image) = image {
+            let mut bytes = Vec::new();
+            image.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)?;
+            definition.image_url = Some(format!("data:image/png;base64,{}", BASE64.encode(bytes)));
+        }
+    }
     let powerup_icons = powerup_icons_inline(&collector.buffs, &powerup_icon_images)?;
 
     let mut entities: Vec<EntityDescriptor> = collector.entities.values().cloned().collect();
@@ -1515,6 +1663,9 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
             .map(|entity| entity.id.clone())
             .unwrap_or_default(),
     };
+    let owner_silhouette = self_entity
+        .and_then(|entity| GuiAsset::ShipSilhouette(&entity.ship_code).read(&vfs, Some(&version)))
+        .map(|bytes| format!("data:image/png;base64,{}", BASE64.encode(bytes)));
     let teams = build_teams(&entities);
     let id = source_sha256[..16].to_string();
     let replay_name = replay_path
@@ -1528,6 +1679,7 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
         version: 1,
         replay: ReplayInfo {
             id,
+            arena_unique_id: collector.arena_unique_id,
             name: replay_name,
             source_sha256,
             game_build: replay.meta.clientVersionFromExe.clone(),
@@ -1535,6 +1687,7 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
             battle_type: replay.meta.matchGroup.clone(),
             date_time: (!replay.meta.dateTime.is_empty()).then(|| replay.meta.dateTime.clone()),
             complete,
+            outcome: replay_outcome(collector.winning_team, self_entity.filter(|entity| entity.relation == "self").map(|entity| entity.team_id.as_str())),
             duration_ms,
             battle_start_ms: battle_start,
             perspective,
@@ -1546,10 +1699,12 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
             space_size: map_info.space_size,
         },
         assets: SceneAssets {
+            owner_silhouette,
             powerup_icons,
             // The web player draws squadrons from its own bundled minimap-icon
             // set, so the scene carries no plane-icon assets.
             plane_icons: BTreeMap::new(),
+            ribbons: collector.ribbon_definitions,
         },
         teams,
         entities,
@@ -1558,6 +1713,7 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
         tracks: SceneTracks {
             ships: collector.ships,
             scores: collector.scores,
+            owner_stats: collector.owner_stats,
             caps: collector.caps,
             buffs: collector.buffs,
             smoke: collector.smoke,
@@ -1582,9 +1738,7 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
     serde_json::to_string(&scene).context("serializing scene")
 }
 
-/// Lightweight replay metadata read from the plaintext header only — no packet
-/// decryption/decode and no game files, so it is cheap enough to run over a
-/// whole replay folder to enrich the picker (battle type + client version).
+/// Picker metadata plus the final results packet. No entity or world decode.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayMeta {
@@ -1603,6 +1757,10 @@ pub struct ReplayMeta {
     /// Whether the recording captured the whole battle (a `BattleResults` packet
     /// is present). False when the player left before the battle finished.
     pub complete: bool,
+    #[serde(skip)]
+    pub header: Option<serde_json::Value>,
+    #[serde(skip)]
+    pub battle_results: Option<serde_json::Value>,
 }
 
 /// Read a `.wowsreplay`'s metadata plus a completeness flag — WITHOUT game
@@ -1616,7 +1774,28 @@ pub fn read_replay_meta(replay_path: &Path) -> Result<ReplayMeta> {
     let replay =
         ReplayFile::from_bytes(&bytes).map_err(|error| anyhow!("parsing replay: {error:?}"))?;
     let meta = &replay.meta;
-    let complete = recording_complete(&replay.packet_data, &meta.clientVersionFromExe);
+    let version = Version::from_client_exe(&meta.clientVersionFromExe);
+    let mut complete = false;
+    let mut battle_results = None;
+    let mut offset = 0;
+    let mut parser = Parser::with_version(&[], version.clone());
+    for packet in RawPacketIterator::with_version(&replay.packet_data, version).map_while(Result::ok) {
+        let end = offset + 12 + packet.packet_size as usize;
+        if matches!(packet.packet_type, PacketTypeId::BattleResults) {
+            complete = true;
+            // Give the toolkit the original packet, including its header; only
+            // this spec-independent packet needs payload parsing for the picker.
+            let mut bytes = &replay.packet_data[offset..end];
+            if let Ok(parsed) = parser.parse_packet(&mut bytes) {
+                if let PacketType::BattleResults(json) = parsed.payload {
+                    if let Ok(value) = serde_json::from_str(json) {
+                        battle_results = Some(value);
+                    }
+                }
+            }
+        }
+        offset = end;
+    }
     Ok(ReplayMeta {
         battle_type: meta.matchGroup.clone(),
         game_version_short: short_game_version(&meta.clientVersionFromExe),
@@ -1625,7 +1804,40 @@ pub fn read_replay_meta(replay_path: &Path) -> Result<ReplayMeta> {
         player_name: meta.playerName.clone(),
         player_vehicle: meta.playerVehicle.clone(),
         complete,
+        header: serde_json::to_value(meta).ok(),
+        battle_results,
     })
+}
+
+/// Resolve the stable ship index with the game's own display-name catalog.
+/// This needs only global.mo, not GameParams or a full replay decode. Cache by
+/// file metadata so an installed game update refreshes names automatically.
+pub fn ship_display_name(game_dir: &Path, player_vehicle: &str) -> Option<String> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    type CatalogCache = HashMap<std::path::PathBuf, (std::time::SystemTime, u64, Arc<gettext::Catalog>)>;
+    static CACHE: OnceLock<Mutex<CatalogCache>> = OnceLock::new();
+    let index = player_vehicle.split(['-', '_']).next()?.to_ascii_uppercase();
+    if index.is_empty() || !index.bytes().all(|c| c.is_ascii_alphanumeric()) { return None; }
+    let key = format!("IDS_{index}");
+    for build in game_data::list_available_builds(game_dir).ok()?.into_iter().rev() {
+        let path = game_data::translations_path(game_dir, build);
+        let Ok(stat) = fs::metadata(&path) else { continue };
+        let Ok(modified) = stat.modified() else { continue };
+        let mut cache = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock().ok()?;
+        let catalog = match cache.get(&path) {
+            Some((mtime, size, catalog)) if *mtime == modified && *size == stat.len() => Arc::clone(catalog),
+            _ => {
+                let Ok(file) = File::open(&path) else { continue };
+                let Ok(catalog) = gettext::Catalog::parse(file) else { continue };
+                let catalog = Arc::new(catalog);
+                cache.insert(path, (modified, stat.len(), Arc::clone(&catalog)));
+                catalog
+            }
+        };
+        let name = catalog.gettext(&key);
+        if name != key && !name.trim().is_empty() { return Some(name.to_owned()); }
+    }
+    None
 }
 
 /// Whether the replay captured the battle's end: a `BattleResults` (0x22)
@@ -1892,6 +2104,27 @@ mod division_tests {
     }
 }
 
+fn arena_id_from_results(results: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(results).ok()?;
+    let id = &value["arenaUniqueID"];
+    id.as_u64().or_else(|| id.as_str()?.parse::<u64>().ok())
+        .filter(|id| *id > 0).map(|id| id.to_string())
+}
+
+#[cfg(test)]
+mod arena_identity_tests {
+    use super::arena_id_from_results;
+
+    #[test]
+    fn battle_identity_preserves_u64_and_rejects_missing_or_fractional_ids() {
+        assert_eq!(arena_id_from_results(r#"{"arenaUniqueID":18446744073709551615}"#).as_deref(), Some("18446744073709551615"));
+        assert_eq!(arena_id_from_results(r#"{"arenaUniqueID":"9007199254740993"}"#).as_deref(), Some("9007199254740993"));
+        for invalid in ["{}", r#"{"arenaUniqueID":0}"#, r#"{"arenaUniqueID":-1}"#, r#"{"arenaUniqueID":1.5}"#] {
+            assert_eq!(arena_id_from_results(invalid), None);
+        }
+    }
+}
+
 fn reconcile_shell_impact(shell: &mut ShellEvent, fired_at: i64, impact_at: i64, target: Point) {
     if shell.impact_recorded
         || impact_at <= fired_at
@@ -1932,6 +2165,37 @@ mod shell_tests {
     use super::*;
 
     #[test]
+    fn invalid_collision_does_not_turn_an_unconfirmed_shell_into_a_hit() {
+        let mut shell = ShellEvent {
+            id: "miss".into(),
+            origin: Point { x: 0.1, y: 0.2 },
+            target: Point { x: 0.7, y: 0.8 },
+            flight_ms: 5000,
+            speed: 800.0,
+            impact_recorded: false,
+            impact_target_guess_id: None,
+            path: vec![
+                ShellSample { t: 1000, x: 0.1, y: 0.2 },
+                ShellSample { t: 6000, x: 0.7, y: 0.8 },
+            ],
+        };
+        let unchanged = serde_json::to_value(&shell).unwrap();
+        for (time, target) in [
+            (1000, Point { x: 0.9, y: 0.9 }),
+            (999, Point { x: 0.9, y: 0.9 }),
+            (6000, Point { x: f32::NAN, y: 0.9 }),
+            (6000, Point { x: 0.9, y: f32::INFINITY }),
+        ] {
+            reconcile_shell_impact(&mut shell, 1000, time, target);
+            assert_eq!(serde_json::to_value(&shell).unwrap(), unchanged);
+        }
+        // Without a usable collision, retain the launch trajectory. Never snap
+        // it to a nearby moving ship just because one could be the target.
+        assert!(!shell.impact_recorded);
+        assert!(shell.impact_target_guess_id.is_none());
+    }
+
+    #[test]
     fn lethal_impact_ends_tracer_and_preserves_ballistic_progress() {
         let mut shell = ShellEvent {
             id: "1".into(),
@@ -1940,6 +2204,7 @@ mod shell_tests {
             flight_ms: 27000,
             speed: 800.0,
             impact_recorded: false,
+            impact_target_guess_id: None,
             path: vec![
                 ShellSample {
                     t: 1000,
@@ -2197,4 +2462,41 @@ fn normalize_species(raw: String) -> String {
 fn _is_replay(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("wowsreplay"))
+}
+
+
+#[cfg(test)]
+mod owner_stats_tests {
+    use super::*;
+
+    #[test]
+    fn sparse_absolute_counts_preserve_earning_time_and_corrections() {
+        let mut track = Vec::new();
+        push_owner_stats(&mut track, OwnerStatsSample::default());
+        push_owner_stats(&mut track, OwnerStatsSample { t: 100, ..Default::default() });
+        let earned = OwnerStatsSample { t: 1500, damage: 1200.0, ribbons: BTreeMap::from([("RIBBON_BURN".into(), 2)]), ..Default::default() };
+        push_owner_stats(&mut track, earned.clone());
+        push_owner_stats(&mut track, OwnerStatsSample { t: 1600, ..earned.clone() });
+        push_owner_stats(&mut track, OwnerStatsSample { t: 1700, ribbons: BTreeMap::from([("RIBBON_BURN".into(), 1)]), ..earned });
+        assert_eq!(track.len(), 3);
+        normalize_step_vec(&mut track, 500, |sample| &mut sample.t);
+        assert_eq!(track.iter().map(|s| s.t).collect::<Vec<_>>(), vec![0, 1000, 1200]);
+        assert!(track[0].ribbons.is_empty());
+        assert_eq!(track[1].ribbons["RIBBON_BURN"], 2);
+        assert_eq!(track[2].ribbons["RIBBON_BURN"], 1);
+    }
+}
+
+#[cfg(test)]
+mod ending_tests {
+    use super::replay_outcome;
+    #[test]
+    fn result_is_relative_to_replay_owner_and_unknown_is_not_a_loss() {
+        assert_eq!(replay_outcome(Some(0), Some("0")), Some("victory"));
+        assert_eq!(replay_outcome(Some(1), Some("0")), Some("defeat"));
+        assert_eq!(replay_outcome(Some(1), Some("1")), Some("victory"));
+        assert_eq!(replay_outcome(Some(-1), Some("0")), Some("draw"));
+        assert_eq!(replay_outcome(None, Some("0")), None);
+        assert_eq!(replay_outcome(Some(0), None), None);
+    }
 }

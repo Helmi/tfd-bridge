@@ -1,0 +1,380 @@
+{
+  "mapId": "spaces/18_NE_ice_islands",
+  "recipeVersion": 2,
+  "sourceLandSha256": "8222ce12c73ec663ce724807d060633ff6035226970c2fcc808f1119e2ee574b",
+  "generatedLandSha256": "9cbd109e6391111f3848dbc666db9f02b773014d4c395c34360425f81f747676",
+  "generatedWaterSha256": "e5a35227490a569a31dd356cfcae58b1f889e74bee15b6a587e7faf7cf15c8d7",
+  "landSha256": "aa2fa43847655077fe5f5abaf45d5346322c29d62f22d8d08dc1d6a6ae654e68",
+  "waterSha256": "eaf033b3a7611d1fae0ae9d411bc203aad205a366a4c4a7305b7b41134d6449f",
+  "landBytes": 59706,
+  "waterBytes": 206636,
+  "width": 1520,
+  "height": 1520,
+  "generatedLandSize": [
+    1254,
+    1254
+  ],
+  "generatedWaterSize": [
+    1254,
+    1254
+  ],
+  "alphaMismatches": 0,
+  "keyContaminationPixels": 0,
+  "sourceCoveredPixels": 92656,
+  "fallbackPixels": 24,
+  "extendedPixels": 10455,
+  "fallbackFraction": 0.0002590226213089276,
+  "originalComponents": 28,
+  "paintedComponents": 25,
+  "registrations": [
+    {
+      "originalArea": 8728,
+      "paintArea": 5659,
+      "originalCenter": [
+        1317.8858845096242,
+        760.7511457378552
+      ],
+      "paintCenter": [
+        1315.6239618307122,
+        754.9876303233787
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 8144,
+      "paintArea": 5564,
+      "originalCenter": [
+        901.6954813359529,
+        1079.8467583497054
+      ],
+      "paintCenter": [
+        901.5350467289719,
+        1076.4049245147376
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 7984,
+      "paintArea": 5492,
+      "originalCenter": [
+        899.5891783567134,
+        438.3496993987976
+      ],
+      "paintCenter": [
+        899.6349235251274,
+        438.04206117989804
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 7948,
+      "paintArea": 5522,
+      "originalCenter": [
+        581.638399597383,
+        761.0968797181681
+      ],
+      "paintCenter": [
+        581.5083303151032,
+        758.6995653748642
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4704,
+      "paintArea": 3013,
+      "originalCenter": [
+        974.0595238095239,
+        843.1411564625851
+      ],
+      "paintCenter": [
+        973.0225688682376,
+        841.0896116827082
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4540,
+      "paintArea": 2768,
+      "originalCenter": [
+        971.1625550660793,
+        678.2744493392071
+      ],
+      "paintCenter": [
+        970.8919797687861,
+        677.5780346820809
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4528,
+      "paintArea": 2430,
+      "originalCenter": [
+        941.6625441696114,
+        565.7809187279152
+      ],
+      "paintCenter": [
+        942.3279835390947,
+        564.9641975308642
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 4112,
+      "paintArea": 2284,
+      "originalCenter": [
+        1091.1322957198443,
+        589.5
+      ],
+      "paintCenter": [
+        1090.5617338003503,
+        588.2088441330998
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3900,
+      "paintArea": 2110,
+      "originalCenter": [
+        1094.0035897435898,
+        929.7676923076923
+      ],
+      "paintCenter": [
+        1093.109952606635,
+        926.6777251184834
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3796,
+      "paintArea": 2113,
+      "originalCenter": [
+        1331.4420442571127,
+        382.76765015806114
+      ],
+      "paintCenter": [
+        1331.6677709417888,
+        382.2882158069096
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3480,
+      "paintArea": 1990,
+      "originalCenter": [
+        266.93908045977014,
+        441.00114942528734
+      ],
+      "paintCenter": [
+        267.321608040201,
+        440.34522613065326
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3312,
+      "paintArea": 1863,
+      "originalCenter": [
+        846.5144927536232,
+        762.475845410628
+      ],
+      "paintCenter": [
+        846.3236714975845,
+        760.0933977455717
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3160,
+      "paintArea": 1831,
+      "originalCenter": [
+        218.5632911392405,
+        650.7759493670886
+      ],
+      "paintCenter": [
+        219.47023484434735,
+        649.4593118514473
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 3076,
+      "paintArea": 1659,
+      "originalCenter": [
+        1328.1358907672302,
+        1121.7847854356307
+      ],
+      "paintCenter": [
+        1327.506329113924,
+        1119.042194092827
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 2852,
+      "paintArea": 1339,
+      "originalCenter": [
+        947.9305750350632,
+        958.9628330995793
+      ],
+      "paintCenter": [
+        946.5870052277819,
+        957.1090365944735
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 2812,
+      "paintArea": 1610,
+      "originalCenter": [
+        274.27809388335703,
+        1095.8456614509246
+      ],
+      "paintCenter": [
+        274.8,
+        1093.311801242236
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 2756,
+      "paintArea": 1471,
+      "originalCenter": [
+        225.28955007256894,
+        868.1168359941945
+      ],
+      "paintCenter": [
+        225.73079537729436,
+        866.2454112848402
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 2212,
+      "paintArea": 1134,
+      "originalCenter": [
+        715.9719710669078,
+        707.4439421338155
+      ],
+      "paintCenter": [
+        716.5670194003527,
+        705.3712522045855
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 2124,
+      "paintArea": 1031,
+      "originalCenter": [
+        715.7919020715631,
+        809.4303201506591
+      ],
+      "paintCenter": [
+        716.3714839961202,
+        807.6294859359845
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 1916,
+      "paintArea": 708,
+      "originalCenter": [
+        386.8883089770355,
+        914.9801670146138
+      ],
+      "paintCenter": [
+        385.22740112994353,
+        912.3121468926554
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 1660,
+      "paintArea": 744,
+      "originalCenter": [
+        382.0277108433735,
+        600.1722891566266
+      ],
+      "paintCenter": [
+        382.2190860215054,
+        599.2069892473119
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 1340,
+      "paintArea": 313,
+      "originalCenter": [
+        1230.4701492537313,
+        552.7567164179104
+      ],
+      "paintCenter": [
+        1225.0575079872206,
+        548.4025559105431
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 1308,
+      "paintArea": 519,
+      "originalCenter": [
+        1235.1422018348624,
+        961.7110091743119
+      ],
+      "paintCenter": [
+        1235.5183044315993,
+        960.0346820809249
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 1204,
+      "paintArea": 395,
+      "originalCenter": [
+        1372.2674418604652,
+        711.9883720930233
+      ],
+      "paintCenter": [
+        1373.1012658227849,
+        709.7873417721519
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 1036,
+      "paintArea": 300,
+      "originalCenter": [
+        362.1756756756757,
+        761.1332046332046
+      ],
+      "paintCenter": [
+        362.27,
+        759.8233333333334
+      ],
+      "fallback": false
+    },
+    {
+      "originalArea": 12,
+      "originalCenter": [
+        1000.5,
+        1026.5
+      ],
+      "fallback": true
+    },
+    {
+      "originalArea": 8,
+      "originalCenter": [
+        993.5,
+        1024.5
+      ],
+      "fallback": true
+    },
+    {
+      "originalArea": 4,
+      "originalCenter": [
+        986.5,
+        1022.5
+      ],
+      "fallback": true
+    }
+  ]
+}
