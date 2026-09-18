@@ -1137,10 +1137,9 @@
     } catch {
       // Never render or log the raw rejection: it can carry transport/host/
       // internal detail (credentials, a signed URL, an internal endpoint)
-      // that must reach neither the DOM nor the webview console. The
-      // rejection value is not even bound; the user only ever sees fixed,
-      // safe copy and the console only a fixed, context-only line.
-      console.error('TFD account action failed');
+      // that must reach neither the DOM nor the webview devtools console;
+      // the rejection value is not even bound and nothing is logged there,
+      // so the user only ever sees fixed, safe copy.
       lastConnectError = CONNECT_ERROR_SAFE_TEXT;
     }
     await pollAccountOnce();

@@ -2142,10 +2142,13 @@ mod tests {
 
     #[test]
     fn index_html_account_action_never_logs_the_raw_rejection() {
-        // The performAccountAction catch must never hand the raw rejection to
-        // the webview console: it can carry credentials, signed URLs, or
-        // internal endpoints, and the console sits outside the DOM safe-copy
-        // guard. Only a fixed, context-only string literal may be logged.
+        // The performAccountAction catch must never hand anything to the
+        // webview console: the raw rejection can carry credentials, signed
+        // URLs, or internal endpoints, and the console sits outside the DOM
+        // safe-copy guard. No console.* call and no logging call of any kind
+        // may exist anywhere in the function body (this is a whole-body
+        // absence check, not an argument-shape heuristic, so concatenation,
+        // interpolation, or extra arguments cannot sneak a value through).
         let start = INDEX_HTML
             .find("async function performAccountAction")
             .expect("performAccountAction must exist in ui/index.html");
@@ -2154,21 +2157,23 @@ mod tests {
         // 4-space indented, and the pattern is newline-ending agnostic (CRLF-safe).
         let end = rest.find("\n  }").expect("performAccountAction body end");
         let body = &rest[..end];
+        // Guard the slice: it must be the real function body (the action call
+        // and the safe-copy assignment), not a degenerate/empty match.
+        assert!(
+            body.contains("await action()") && body.contains("CONNECT_ERROR_SAFE_TEXT"),
+            "performAccountAction slice must contain the real action/copy body"
+        );
         assert!(
             body.contains("} catch {"),
             "performAccountAction catch must not bind the raw rejection value"
         );
-        let mut scan = body;
-        while let Some(pos) = scan.find("console.error(") {
-            scan = &scan[pos + "console.error(".len()..];
-            assert!(
-                scan.starts_with('\''),
-                "performAccountAction console.error must log a fixed string literal only"
-            );
-        }
         assert!(
-            body.contains("console.error('TFD account action failed')"),
-            "expected the fixed context-only console line in performAccountAction"
+            !body.contains("console."),
+            "performAccountAction must not touch the console at all (no console.<method>)"
+        );
+        assert!(
+            !body.contains("log("),
+            "performAccountAction must not call any logging function"
         );
     }
 }
