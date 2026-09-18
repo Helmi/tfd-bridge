@@ -303,19 +303,156 @@ enum SceneError {
     Timeout,
 }
 
+// ── Native auth callback (loopback OAuth-style redirect) ────────────────────
+
+/// Injected by the native account service (src-tauri's `AccountService`),
+/// which owns the actual PKCE/state pending-attempt machinery and the async
+/// token exchange. This module's job stops at: route matching, bounded/
+/// well-formed query parsing, and a safe, non-reflecting response — never the
+/// state machine or the exchange itself. See `crates/bridge-core/src/
+/// login_flow.rs` for the credential-free pending-attempt state this sink
+/// typically wraps.
+pub trait AuthCallbackSink: Send + Sync {
+    fn handle_callback(&self, callback: AuthCallback) -> AuthCallbackAck;
+}
+
+/// One parsed, already-validated loopback callback (contract v5 section 4.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthCallback {
+    pub state: String,
+    pub outcome: AuthCallbackOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthCallbackOutcome {
+    Code(String),
+    AccessDenied,
+    AccountNotAuthorized,
+    ExpiredRequest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthCallbackAck {
+    Accepted,
+    Rejected,
+}
+
+const AUTH_CALLBACK_ACCEPTED_BODY: &str =
+    "TFD Bridge is now connected. You can close this tab and return to the app.";
+const AUTH_CALLBACK_REJECTED_BODY: &str =
+    "This sign-in link is no longer valid. Close this tab and retry from TFD Bridge.";
+const AUTH_CALLBACK_UNAVAILABLE_BODY: &str = "Sign-in is not available right now.";
+/// Defensive bound on the raw query string; the real one is a handful of
+/// short opaque tokens, never anywhere close to this.
+const AUTH_CALLBACK_MAX_QUERY_LEN: usize = 4096;
+
+/// `GET /auth/callback` — the loopback redirect target for the OS-browser
+/// authorization flow. `raw` is the full request path including its query
+/// string. Always responds with a static, non-reflecting body: never echoes
+/// back `code`, `state` or any other request-supplied value.
+fn handle_auth_callback(
+    sink: Option<&Arc<dyn AuthCallbackSink>>,
+    raw: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let query = raw.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let Some(sink) = sink else {
+        return auth_callback_response(503, AUTH_CALLBACK_UNAVAILABLE_BODY);
+    };
+    let Some(callback) = parse_auth_callback_query(query) else {
+        return auth_callback_response(400, AUTH_CALLBACK_REJECTED_BODY);
+    };
+    match sink.handle_callback(callback) {
+        AuthCallbackAck::Accepted => auth_callback_response(200, AUTH_CALLBACK_ACCEPTED_BODY),
+        AuthCallbackAck::Rejected => auth_callback_response(400, AUTH_CALLBACK_REJECTED_BODY),
+    }
+}
+
+fn auth_callback_response(status: u16, body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_string(body)
+        .with_status_code(StatusCode(status))
+        .with_header(Header::from_bytes("Content-Type", "text/plain; charset=utf-8").unwrap())
+        .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap())
+        .with_header(Header::from_bytes("Referrer-Policy", "no-referrer").unwrap())
+        .with_header(Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap())
+}
+
+/// Parse and validate the callback query string per contract v5 section 4.3:
+/// bounded length, a fixed, unique key set (`state`, and exactly one of
+/// `code`/`error`), and (when present) `error` restricted to the three
+/// documented values. Anything else is rejected outright — this function
+/// never partially trusts a malformed query.
+fn parse_auth_callback_query(query: &str) -> Option<AuthCallback> {
+    if query.is_empty() || query.len() > AUTH_CALLBACK_MAX_QUERY_LEN {
+        return None;
+    }
+    let mut state: Option<String> = None;
+    let mut code: Option<String> = None;
+    let mut error: Option<String> = None;
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            return None;
+        }
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = percent_decode_str(value).decode_utf8().ok()?.into_owned();
+        let slot = match key {
+            "state" => &mut state,
+            "code" => &mut code,
+            "error" => &mut error,
+            // Bounded key set: an unknown key makes the whole callback
+            // untrustworthy rather than being silently ignored.
+            _ => return None,
+        };
+        // Unique keys: a repeated key is ambiguous and rejected outright.
+        if slot.is_some() {
+            return None;
+        }
+        *slot = Some(value);
+    }
+    let state = state.filter(|s| !s.is_empty())?;
+    // code XOR error: exactly one of the two, never both, never neither.
+    let outcome = match (code, error) {
+        (Some(code), None) if !code.is_empty() => AuthCallbackOutcome::Code(code),
+        (None, Some(error)) => match error.as_str() {
+            "access_denied" => AuthCallbackOutcome::AccessDenied,
+            "account_not_authorized" => AuthCallbackOutcome::AccountNotAuthorized,
+            "expired_request" => AuthCallbackOutcome::ExpiredRequest,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some(AuthCallback { state, outcome })
+}
+
 // ── Public types ───────────────────────────────────────────────────────────────
 
+/// State attached once the replays folder is known: everything the replay,
+/// player, share and render routes need. Built by [`Bridge::attach_replays`],
+/// independent of the listener's own lifecycle (see [`AuthCallbackSink`]).
+struct SharedAttachment {
+    dir: PathBuf,
+    decode_ctx: Option<Arc<DecodeContext>>,
+    player: Option<Arc<PlayerState>>,
+    /// Replay-finalized detector (None when attached without finalize options).
+    /// Held so re-attaching/stopping can cancel in-flight finalize workers.
+    detector: Option<Arc<FinalizeDetector>>,
+    /// Keep the watcher alive as long as this attachment is current.
+    _watcher: notify::RecommendedWatcher,
+}
+
 /// A running bridge instance.  Drop or call [`Bridge::stop`] to shut it down.
+///
+/// The listener binds and starts serving `/v1/health` and (when given an
+/// [`AuthCallbackSink`]) `/auth/callback` immediately. The replays folder is a
+/// separate, later attachment (see [`Bridge::attach_replays`]): every
+/// replay/player/share/render route fails safe (503 `replays_not_attached`)
+/// until one exists. There is exactly one listener per `Bridge` regardless of
+/// how many times the replays folder is (re-)attached.
 pub struct Bridge {
     port: u16,
     server: Arc<Server>,
     /// Monotonically increasing counter incremented on every replay-dir change.
     generation: Arc<AtomicU64>,
-    /// Replay-finalized detector (None when started without finalize options).
-    /// Held so `stop()` can cancel in-flight finalize workers.
-    detector: Option<Arc<FinalizeDetector>>,
-    /// Keep the watcher alive as long as the bridge is alive.
-    _watcher: notify::RecommendedWatcher,
+    attachment: Arc<Mutex<Option<SharedAttachment>>>,
 }
 
 impl Bridge {
@@ -329,12 +466,86 @@ impl Bridge {
         self.generation.load(Ordering::SeqCst)
     }
 
+    /// Attach (or re-attach, replacing any previous attachment) the replays
+    /// folder this bridge serves, without creating a second listener and
+    /// without restarting the auth callback route. Re-attaching cancels the
+    /// previous finalize detector and stops its watcher before installing the
+    /// new one.
+    pub fn attach_replays(
+        &self,
+        replays_dir: PathBuf,
+        finalize: Option<FinalizeOptions>,
+        decode: Option<Arc<DecodeContext>>,
+        player: Option<PlayerConfig>,
+    ) -> Result<(), BridgeError> {
+        let generation = Arc::clone(&self.generation);
+        let dir_clone = replays_dir.clone();
+
+        // Replay-finalized detection shares THIS watcher: the detector is fed
+        // tempArenaInfo.json transitions from the same callback that bumps the
+        // generation counter, so there is exactly one notify watcher per
+        // attachment.
+        let detector = finalize.map(|opts| FinalizeDetector::new(replays_dir.clone(), opts));
+        let det_clone = detector.clone();
+
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                if event.kind.is_create() || event.kind.is_modify() || event.kind.is_remove() {
+                    if let Some(det) = &det_clone {
+                        for p in event.paths.iter().filter(|p| is_temp_arena_info(p)) {
+                            det.observe_temp_file(p);
+                        }
+                    }
+                    let affects_replays = event.paths.iter().any(|p| is_served_file(p));
+                    if affects_replays {
+                        generation.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        })
+        .map_err(|e| BridgeError::Watch(e.to_string()))?;
+
+        watcher
+            .watch(&dir_clone, RecursiveMode::Recursive)
+            .map_err(|e| BridgeError::Watch(e.to_string()))?;
+
+        // Startup catch-up: emit finalized events for archives that landed
+        // while the app was not running. Spawned AFTER the watcher is active
+        // so a battle ending mid-scan is still seen.
+        if let Some(det) = &detector {
+            det.start_catch_up();
+        }
+
+        let player_state: Option<Arc<PlayerState>> = player.map(|cfg| Arc::new(PlayerState::new(cfg)));
+
+        let new_attachment = SharedAttachment {
+            dir: replays_dir,
+            decode_ctx: decode,
+            player: player_state,
+            detector,
+            _watcher: watcher,
+        };
+
+        let mut guard = self.attachment.lock().unwrap();
+        if let Some(old) = guard.take() {
+            if let Some(det) = &old.detector {
+                det.cancel();
+            }
+            // `old._watcher` is dropped here, which stops the previous watch.
+        }
+        *guard = Some(new_attachment);
+        Ok(())
+    }
+
     /// Signal the HTTP server to stop and wait for the handler thread to exit.
-    /// Consuming `self` ensures the watcher is also dropped.  In-flight
-    /// finalize workers are cancelled so no events fire after stop.
+    /// Consuming `self` ensures the watcher (if any replays folder was
+    /// attached) is also dropped.  In-flight finalize workers are cancelled so
+    /// no events fire after stop.
     pub fn stop(self) {
-        if let Some(det) = &self.detector {
-            det.cancel();
+        if let Some(att) = self.attachment.lock().unwrap().as_ref() {
+            if let Some(det) = &att.detector {
+                det.cancel();
+            }
         }
         self.server.unblock();
     }
@@ -385,6 +596,12 @@ pub fn start_with_finalize(
 ///   `/result` endpoints are active and health advertises `"battle-result-v1"`.
 /// - `player`      — optional replay-player config; when `Some` the
 ///   `/player/*` and `/v1/replays/{name}/scene` routes are active.
+///
+/// This is a convenience wrapper: it starts the listener and attaches the
+/// replays folder in one call, for callers that already know the folder at
+/// startup. A caller that must expose `/auth/callback` (see
+/// [`AuthCallbackSink`]) before the folder is known should call
+/// [`start_with_auth_sink`] and [`Bridge::attach_replays`] separately instead.
 pub fn start_full(
     replays_dir: PathBuf,
     dev_origin: Option<String>,
@@ -396,6 +613,22 @@ pub fn start_full(
         .chain(FALLBACK_PORTS)
         .collect();
     start_on_ports_full(replays_dir, dev_origin, &candidates, finalize, decode, player)
+}
+
+/// Start the bridge listener with a native `/auth/callback` sink and no
+/// replays folder attached yet. Health and the callback route work
+/// immediately; every replay/player/share/render route answers 503
+/// `replays_not_attached` until [`Bridge::attach_replays`] is called on the
+/// returned handle. There is exactly one listener either way — attaching the
+/// folder later never opens a second one.
+pub fn start_with_auth_sink(
+    dev_origin: Option<String>,
+    auth_sink: Arc<dyn AuthCallbackSink>,
+) -> Result<Bridge, BridgeError> {
+    let candidates: Vec<u16> = std::iter::once(CANONICAL_PORT)
+        .chain(FALLBACK_PORTS)
+        .collect();
+    start_on_ports_with_auth(&candidates, dev_origin, Some(auth_sink))
 }
 
 /// Internal start that accepts an explicit list of ports to try in order.
@@ -410,7 +643,9 @@ pub(crate) fn start_on_ports(
     start_on_ports_full(replays_dir, dev_origin, ports, finalize, None, None)
 }
 
-/// Internal start with all options including decode context and player config.
+/// Internal start with all options including decode context and player
+/// config. Implemented as "bind, then attach" so both the folder-at-startup
+/// callers and the auth-first/attach-later callers share one code path.
 pub(crate) fn start_on_ports_full(
     replays_dir: PathBuf,
     dev_origin: Option<String>,
@@ -419,56 +654,33 @@ pub(crate) fn start_on_ports_full(
     decode: Option<Arc<DecodeContext>>,
     player: Option<PlayerConfig>,
 ) -> Result<Bridge, BridgeError> {
+    let bridge = start_on_ports_with_auth(ports, dev_origin, None)?;
+    if let Err(e) = bridge.attach_replays(replays_dir, finalize, decode, player) {
+        // Fail clean: no orphaned listener/thread left behind on attach failure.
+        bridge.stop();
+        return Err(e);
+    }
+    Ok(bridge)
+}
+
+/// Internal start that binds the listener (with an optional
+/// [`AuthCallbackSink`] for `/auth/callback`) without attaching a replays
+/// folder. Port 0 means "let the OS pick" (used in tests).
+pub(crate) fn start_on_ports_with_auth(
+    ports: &[u16],
+    dev_origin: Option<String>,
+    auth_sink: Option<Arc<dyn AuthCallbackSink>>,
+) -> Result<Bridge, BridgeError> {
     let (server, port) = bind_server(ports)?;
 
     log::info!("Bridge listening on http://127.0.0.1:{port}");
 
     let generation = Arc::new(AtomicU64::new(0));
-    let gen_clone = Arc::clone(&generation);
-    let dir_clone = replays_dir.clone();
+    let attachment: Arc<Mutex<Option<SharedAttachment>>> = Arc::new(Mutex::new(None));
 
-    // Replay-finalized detection shares THIS watcher: the detector is fed
-    // tempArenaInfo.json transitions from the same callback that bumps the
-    // generation counter, so there is exactly one notify watcher per bridge.
-    let detector = finalize.map(|opts| FinalizeDetector::new(replays_dir.clone(), opts));
-    let det_clone = detector.clone();
-
-    // File watcher: bump generation on any change to served files in the replays dir.
-    // Covers *.wowsreplay archives and tempArenaInfo.json (live battle roster).
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(event) = res {
-            if event.kind.is_create() || event.kind.is_modify() || event.kind.is_remove() {
-                // Feed roster transitions to the finalize detector BEFORE the
-                // generation bump, so anyone who observed the bump can rely on
-                // the detector having seen the same event.
-                if let Some(det) = &det_clone {
-                    for p in event.paths.iter().filter(|p| is_temp_arena_info(p)) {
-                        det.observe_temp_file(p);
-                    }
-                }
-                let affects_replays = event.paths.iter().any(|p| is_served_file(p));
-                if affects_replays {
-                    gen_clone.fetch_add(1, Ordering::SeqCst);
-                }
-            }
-        }
-    })
-    .map_err(|e| BridgeError::Watch(e.to_string()))?;
-
-    watcher
-        .watch(&dir_clone, RecursiveMode::Recursive)
-        .map_err(|e| BridgeError::Watch(e.to_string()))?;
-
-    // Startup catch-up: emit finalized events for archives that landed while
-    // the app was not running (modified after the caller's watermark).  Spawned
-    // AFTER the watcher is active so a battle ending mid-scan is still seen.
-    if let Some(det) = &detector {
-        det.start_catch_up();
-    }
-
-    // Spawn handler thread.
     let server_clone = Arc::clone(&server);
-    let gen_clone2 = Arc::clone(&generation);
+    let gen_clone = Arc::clone(&generation);
+    let attachment_clone = Arc::clone(&attachment);
     let allowed_origins: Vec<String> = {
         let mut v = vec![PROD_ORIGIN.to_string()];
         if let Some(ref o) = dev_origin {
@@ -478,19 +690,15 @@ pub(crate) fn start_on_ports_full(
         }
         v
     };
-    // Wrap the caller's PlayerConfig into the runtime state (cache + decode
-    // lock) once at startup, same shape as decode's Option<Arc<DecodeContext>>.
-    let player_state: Option<Arc<PlayerState>> = player.map(|cfg| Arc::new(PlayerState::new(cfg)));
 
     thread::spawn(move || {
         handle_requests(
             &server_clone,
-            &replays_dir,
+            &attachment_clone,
             &allowed_origins,
-            &gen_clone2,
+            &gen_clone,
             port,
-            decode.as_ref(),
-            player_state.as_ref(),
+            auth_sink.as_ref(),
         );
     });
 
@@ -498,8 +706,7 @@ pub(crate) fn start_on_ports_full(
         port,
         server,
         generation,
-        detector,
-        _watcher: watcher,
+        attachment,
     })
 }
 
@@ -529,12 +736,11 @@ fn bind_server(ports: &[u16]) -> Result<(Arc<Server>, u16), BridgeError> {
 
 fn handle_requests(
     server: &Server,
-    replays_dir: &Path,
+    attachment: &Arc<Mutex<Option<SharedAttachment>>>,
     allowed_origins: &[String],
     generation: &AtomicU64,
     port: u16,
-    decode_ctx: Option<&Arc<DecodeContext>>,
-    player: Option<&Arc<PlayerState>>,
+    auth_sink: Option<&Arc<dyn AuthCallbackSink>>,
 ) {
     loop {
         let mut request = match server.recv() {
@@ -582,15 +788,37 @@ fn handle_requests(
         // Strip query string for routing
         let path_no_qs = path.split('?').next().unwrap_or(&path);
 
+        // Snapshot the replays-folder attachment for this one request. The
+        // callback listener and /v1/health work whether or not a folder is
+        // attached yet (see `AuthCallbackSink` / `Bridge::attach_replays`);
+        // every replay/player/share/render route needs one and fails safe
+        // (503) when it is `None` instead of touching a bogus path. `dir` and
+        // `player` are always attached together (`attach_replays` builds both
+        // from the same call), so the two calls below that still take a bare
+        // `&Path` (`share_routes::post`, `render_routes::post`) only ever
+        // read it after their own `player`-is-`None` guard has already
+        // returned — the placeholder path is never dereferenced.
+        let (dir, decode_ctx, player): (Option<PathBuf>, Option<Arc<DecodeContext>>, Option<Arc<PlayerState>>) = {
+            let guard = attachment.lock().unwrap();
+            match guard.as_ref() {
+                Some(a) => (Some(a.dir.clone()), a.decode_ctx.clone(), a.player.clone()),
+                None => (None, None, None),
+            }
+        };
+        let decode_ctx = decode_ctx.as_ref();
+        let player = player.as_ref();
+        let dir_for_player_gated_routes: &Path = dir.as_deref().unwrap_or_else(|| Path::new(""));
+        let unattached = || make_json_response(StatusCode(503), r#"{"error":"replays_not_attached"}"#, None);
+
         // POST routes are handled first: reading the request body needs `&mut
         // request`, which the borrow held by `match request.method()` below would
         // forbid. Currently the only POST endpoint is the player's render-save.
         if request.method() == &tiny_http::Method::Post {
             let response = match path_no_qs {
                 p if p.starts_with("/v1/share/") || (p == "/v1/render/jobs" && origin.as_deref() == Some("https://engine.tfd.rocks") && player.is_some_and(|s|s.config.share_service.is_some())) =>
-                    share_routes::post(&mut request, replays_dir, player, port, p),
+                    share_routes::post(&mut request, dir_for_player_gated_routes, player, port, p),
                 p if p == "/v1/render/jobs" || p.starts_with("/v1/render/jobs/") =>
-                    render_routes::post(&mut request, replays_dir, player, port, p),
+                    render_routes::post(&mut request, dir_for_player_gated_routes, player, port, p),
                 "/player/api/render" => handle_player_render_save(&mut request, &path, player),
                 _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
             };
@@ -606,41 +834,57 @@ fn handle_requests(
                 p if p.starts_with("/v1/share/status/") => share_routes::status(player, p),
                 p if p.starts_with("/v1/render/jobs/") => render_routes::get(player, p),
                 "/v1/health" => handle_health(decode_ctx, player),
-                "/v1/replays" => handle_list(replays_dir, generation),
+                "/auth/callback" => handle_auth_callback(auth_sink, &path),
+                "/v1/replays" => match &dir {
+                    Some(d) => handle_list(d, generation),
+                    None => unattached(),
+                },
                 // /result routes MUST be matched BEFORE the generic /latest and /{name} fetch routes.
-                "/v1/replays/latest/result" => handle_latest_result(replays_dir, decode_ctx),
+                "/v1/replays/latest/result" => match &dir {
+                    Some(d) => handle_latest_result(d, decode_ctx),
+                    None => unattached(),
+                },
                 p if p.starts_with("/v1/replays/") && p.ends_with("/result") => {
                     // Extract the name segment between "/v1/replays/" and "/result".
                     // Use strip_prefix/strip_suffix to avoid a slice-bounds panic when
                     // the path is exactly "/v1/replays/result" (prefix and suffix overlap).
-                    match p
+                    match (p
                         .strip_prefix("/v1/replays/")
-                        .and_then(|r| r.strip_suffix("/result"))
+                        .and_then(|r| r.strip_suffix("/result")), &dir)
                     {
-                        Some(mid) if !mid.is_empty() => handle_result(replays_dir, mid, decode_ctx),
+                        (Some(mid), Some(d)) if !mid.is_empty() => handle_result(d, mid, decode_ctx),
+                        (Some(mid), None) if !mid.is_empty() => unattached(),
                         _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
                     }
                 }
-                "/v1/replays/latest" => handle_latest(replays_dir),
+                "/v1/replays/latest" => match &dir {
+                    Some(d) => handle_latest(d),
+                    None => unattached(),
+                },
                 // /scene MUST also be matched before the generic /v1/replays/{name}
                 // fetch arm below, same reasoning as /result above.
                 p if p.starts_with("/v1/replays/") && p.ends_with("/scene") => {
-                    match p
+                    match (p
                         .strip_prefix("/v1/replays/")
-                        .and_then(|r| r.strip_suffix("/scene"))
+                        .and_then(|r| r.strip_suffix("/scene")), &dir)
                     {
-                        Some(mid) if !mid.is_empty() => handle_scene(replays_dir, mid, player),
+                        (Some(mid), Some(d)) if !mid.is_empty() => handle_scene(d, mid, player),
+                        (Some(mid), None) if !mid.is_empty() => unattached(),
                         _ => make_json_response(StatusCode(404), r#"{"error":"not found"}"#, None),
                     }
                 }
-                p if p.starts_with("/v1/replays/") => {
-                    let name = &p["/v1/replays/".len()..];
-                    handle_fetch(replays_dir, name)
-                }
+                p if p.starts_with("/v1/replays/") => match &dir {
+                    Some(d) => {
+                        let name = &p["/v1/replays/".len()..];
+                        handle_fetch(d, name)
+                    }
+                    None => unattached(),
+                },
                 // Enriched picker list — matched before the static catch-all.
-                "/player/api/replays" => {
-                    handle_player_replays(replays_dir, generation, player, decode_ctx, &path)
-                }
+                "/player/api/replays" => match &dir {
+                    Some(d) => handle_player_replays(d, generation, player, decode_ctx, &path),
+                    None => unattached(),
+                },
                 p if p == "/player" || p.starts_with("/player/") => {
                     handle_player_static(player, p)
                 }
@@ -1718,6 +1962,170 @@ mod tests {
             .iter()
             .find(|(k, _)| k == name)
             .map(|(_, v)| v.clone())
+    }
+
+
+    // ── Native auth callback: available before replay-folder attachment ────────
+
+    /// Records every callback the sink receives and returns a fixed ack —
+    /// good enough to test the HTTP-layer routing/parsing/response contract
+    /// without a real `AccountService`.
+    struct RecordingSink {
+        calls: Mutex<Vec<AuthCallback>>,
+        ack: AuthCallbackAck,
+    }
+    impl AuthCallbackSink for RecordingSink {
+        fn handle_callback(&self, callback: AuthCallback) -> AuthCallbackAck {
+            self.calls.lock().unwrap().push(callback);
+            self.ack
+        }
+    }
+
+    #[test]
+    fn auth_callback_works_before_replays_attached_then_replay_routes_activate() {
+        let sink = Arc::new(RecordingSink {
+            calls: Mutex::new(Vec::new()),
+            ack: AuthCallbackAck::Accepted,
+        });
+        let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
+            .expect("bridge start failed");
+        let base = format!("http://127.0.0.1:{}", bridge.port());
+
+        // Health always works, with or without a replays folder.
+        let (status, _, _) = get(&format!("{base}/v1/health"));
+        assert_eq!(status, 200);
+
+        // Replay routes fail safe — never a dummy dir, never a crash.
+        let (status, body, _) = get(&format!("{base}/v1/replays"));
+        assert_eq!(status, 503);
+        assert!(body.contains("replays_not_attached"));
+
+        // The callback route is live already, independent of the folder.
+        let (status, body, headers) =
+            get(&format!("{base}/auth/callback?code=abc123&state=xyz789"));
+        assert_eq!(status, 200);
+        assert!(body.contains("connected"));
+        assert!(!body.contains("abc123") && !body.contains("xyz789"), "must not reflect request values");
+        assert_eq!(find_header(&headers, "cache-control").as_deref(), Some("no-store"));
+        assert_eq!(find_header(&headers, "referrer-policy").as_deref(), Some("no-referrer"));
+        let calls = sink.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].state, "xyz789");
+        assert_eq!(calls[0].outcome, AuthCallbackOutcome::Code("abc123".to_string()));
+        drop(calls);
+
+        // Attaching the folder now activates replay routes on the SAME
+        // listener (same port) — no second listener, no restart.
+        let tmp = TempDir::new().unwrap();
+        bridge
+            .attach_replays(tmp.path().to_path_buf(), None, None, None)
+            .unwrap();
+        let (status, _, _) = get(&format!("{base}/v1/replays"));
+        assert_eq!(status, 200);
+        // The callback route is unaffected by attaching a folder.
+        let (status, _, _) = get(&format!("{base}/auth/callback?error=access_denied&state=s2"));
+        assert_eq!(status, 200);
+        assert_eq!(sink.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn auth_callback_unavailable_without_a_wired_sink() {
+        let tmp = TempDir::new().unwrap();
+        let bridge = start_test_bridge(&tmp);
+        let base = format!("http://127.0.0.1:{}", bridge.port());
+        let (status, body, _) = get(&format!("{base}/auth/callback?code=a&state=b"));
+        assert_eq!(status, 503);
+        assert!(!body.contains('a') || body.contains("available"));
+    }
+
+    #[test]
+    fn auth_callback_maps_known_error_values() {
+        let sink = Arc::new(RecordingSink {
+            calls: Mutex::new(Vec::new()),
+            ack: AuthCallbackAck::Accepted,
+        });
+        let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
+            .expect("bridge start failed");
+        let base = format!("http://127.0.0.1:{}", bridge.port());
+        for (error, expected) in [
+            ("access_denied", AuthCallbackOutcome::AccessDenied),
+            ("account_not_authorized", AuthCallbackOutcome::AccountNotAuthorized),
+            ("expired_request", AuthCallbackOutcome::ExpiredRequest),
+        ] {
+            let (status, _, _) = get(&format!("{base}/auth/callback?error={error}&state=s"));
+            assert_eq!(status, 200);
+            assert_eq!(sink.calls.lock().unwrap().pop().unwrap().outcome, expected);
+        }
+        // Unknown error value: rejected outright, never handed to the sink.
+        let before = sink.calls.lock().unwrap().len();
+        let (status, _, _) = get(&format!("{base}/auth/callback?error=bogus&state=s"));
+        assert_eq!(status, 400);
+        assert_eq!(sink.calls.lock().unwrap().len(), before);
+    }
+
+    #[test]
+    fn auth_callback_rejects_malformed_queries_without_calling_the_sink() {
+        let sink = Arc::new(RecordingSink {
+            calls: Mutex::new(Vec::new()),
+            ack: AuthCallbackAck::Accepted,
+        });
+        let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
+            .expect("bridge start failed");
+        let base = format!("http://127.0.0.1:{}", bridge.port());
+        let bad_queries = [
+            "",                                    // nothing at all
+            "state=s",                              // neither code nor error
+            "code=a&error=access_denied&state=s",   // both code and error
+            "code=a",                               // missing state
+            "code=&state=s",                        // empty code
+            "state=&code=a",                        // empty state
+            "state=s&state=s2&code=a",               // duplicate key
+            "code=a&code=b&state=s",                 // duplicate key
+            "state=s&code=a&unexpected=1",           // unbounded/unknown key
+            "state=s&error=totally_made_up",         // unknown error value
+        ];
+        for q in bad_queries {
+            let (status, _, _) = get(&format!("{base}/auth/callback?{q}"));
+            assert_eq!(status, 400, "query {q:?} must be rejected");
+        }
+        assert!(
+            sink.calls.lock().unwrap().is_empty(),
+            "a malformed callback must never reach the sink"
+        );
+    }
+
+    #[test]
+    fn auth_callback_rejected_ack_returns_400_without_reflecting_input() {
+        let sink = Arc::new(RecordingSink {
+            calls: Mutex::new(Vec::new()),
+            ack: AuthCallbackAck::Rejected,
+        });
+        let bridge = start_on_ports_with_auth(&[0], None, Some(sink))
+            .expect("bridge start failed");
+        let base = format!("http://127.0.0.1:{}", bridge.port());
+        let (status, body, _) =
+            get(&format!("{base}/auth/callback?code=secretcodevalue&state=s"));
+        assert_eq!(status, 400);
+        assert!(!body.contains("secretcodevalue"));
+    }
+
+    /// The pre-existing DNS-rebinding Host guard runs before ANY routing, so
+    /// it must cover the new callback route exactly like every other one.
+    #[test]
+    fn auth_callback_still_enforces_the_host_guard() {
+        let sink = Arc::new(RecordingSink {
+            calls: Mutex::new(Vec::new()),
+            ack: AuthCallbackAck::Accepted,
+        });
+        let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
+            .expect("bridge start failed");
+        let (status, _) = raw_get_with_host(
+            bridge.port(),
+            "/auth/callback?code=a&state=b",
+            "attacker.com",
+        );
+        assert_eq!(status, 403);
+        assert!(sink.calls.lock().unwrap().is_empty());
     }
 
     /// Send a raw HTTP/1.1 GET with an arbitrary Host header.  ureq always

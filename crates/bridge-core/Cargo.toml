@@ -17,6 +17,11 @@ percent-encoding = "2"
 sha2 = "0.10"
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+# ES256 device key + DPoP proof signing (RFC 7638 thumbprint, JWS r||s form).
+# Pure-Rust P-256; no OS credential store dependency here (that lives in
+# src-tauri's AccountService, injected as a SecretStore trait).
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "arithmetic", "std"] }
 # In-process WoWS replay parsing. Pinned to Helmi/wows-toolkit (a fork of
 # landaire/wows-toolkit, MIT, under our control). Shares ONE rev with the
 # scene-export decoder (the replay player needs an API only present from

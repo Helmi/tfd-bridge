@@ -11,6 +11,10 @@ mod tests {
     use crate::share_service::{ReplayResolver, ShareService};
     struct FakeService;
     impl ShareService for FakeService {
+        fn open_authorization(&self, url: &str) -> bool {
+            assert!(url.starts_with("https://engine.tfd.rocks/share/video/authorize?state="));
+            true
+        }
         fn start(
             &self,
             claim: ShareClaim,
@@ -112,7 +116,7 @@ mod tests {
         let base = format!("http://127.0.0.1:{port}");
         let root = dir.path().to_path_buf();
         let worker = std::thread::spawn(move || {
-            for _ in 0..3 {
+            for _ in 0..6 {
                 let mut request = server.recv().unwrap();
                 let path = request.url().to_string();
                 let response = post(&mut request, &root, Some(&player), port, &path);
@@ -128,6 +132,32 @@ mod tests {
             .into_string()
             .unwrap();
         let start: serde_json::Value = serde_json::from_str(&start).unwrap();
+        assert_eq!(start["opened"], true);
+        let reopen = serde_json::json!({"state":start["state"]}).to_string();
+        // Engine pages may claim a share, but cannot trigger browser popups.
+        assert!(matches!(
+            ureq::post(&format!("{base}/v1/share/authorize/open"))
+                .set("Origin", "https://engine.tfd.rocks")
+                .send_string(&reopen),
+            Err(ureq::Error::Status(403, _))
+        ));
+        assert!(matches!(
+            ureq::post(&format!("{base}/v1/share/authorize/open"))
+                .set("Origin", &base)
+                .send_string(r#"{"state":"wrong","url":"https://evil.test"}"#),
+            Err(ureq::Error::Status(403, _))
+        ));
+        let opened = ureq::post(&format!("{base}/v1/share/authorize/open"))
+            .set("Origin", &base)
+            .send_string(&reopen)
+            .unwrap()
+            .into_string()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&opened).unwrap()["opened"],
+            true
+        );
+        // Reopening must not consume the original callback state.
         let claim=serde_json::json!({"state":start["state"],"share_id":"share-123","capability":"test-capability","arena_unique_id":"9007199254740993","max_bytes":19922944}).to_string();
         assert_eq!(
             ureq::post(&format!("{base}/v1/share/claim"))
@@ -184,7 +214,8 @@ pub(super) fn post(
         .zip(host)
         .is_some_and(|(o, h)| o == format!("http://{h}"));
     let engine = origin == Some("https://engine.tfd.rocks");
-    if (path == "/v1/share/authorize" && !local) || (path != "/v1/share/authorize" && !engine) {
+    let local_authorization = matches!(path, "/v1/share/authorize" | "/v1/share/authorize/open");
+    if (local_authorization && !local) || (!local_authorization && !engine) {
         return error(403, "forbidden");
     }
     let mut bytes = Vec::new();
@@ -193,6 +224,30 @@ pub(super) fn post(
     }
     if bytes.len() > 16384 {
         return error(413, "request_too_large");
+    }
+    if path == "/v1/share/authorize/open" {
+        #[derive(serde::Deserialize)]
+        struct Input {
+            state: String,
+        }
+        let Ok(input) = serde_json::from_slice::<Input>(&bytes) else {
+            return error(400, "invalid_request");
+        };
+        let Ok(url) = player
+            .share_auth
+            .lock()
+            .unwrap()
+            .authorization_url(&input.state, port)
+        else {
+            return error(403, "invalid_state");
+        };
+        let opened = player
+            .config
+            .share_service
+            .as_ref()
+            .unwrap()
+            .open_authorization(&url);
+        return json(200, serde_json::json!({"opened":opened}));
     }
     if path == "/v1/share/authorize" {
         #[derive(serde::Deserialize)]

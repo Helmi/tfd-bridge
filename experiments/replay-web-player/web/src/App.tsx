@@ -322,7 +322,8 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
         </div>
       </header>
       {share.label && !share.renderProgress && <div className="render-note" role="status">{share.label}
-        {share.authorizationUrl && <> · <a href={share.authorizationUrl} target="_blank" rel="noreferrer">Open Engine authorization</a></>}
+        {share.browserError && <> · <span role="alert">{share.browserError}</span></>}
+        {share.authorizationUrl && <> · <button onClick={()=>void share.openAuthorization()} disabled={share.opening}>{share.opening?'Opening browser…':'Open in default browser'}</button></>}
         {share.messageUrl && <> · <a href={share.messageUrl} target="_blank" rel="noreferrer">View on Discord</a></>}
       </div>}
 

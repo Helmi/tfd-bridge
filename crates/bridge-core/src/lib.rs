@@ -1,4 +1,8 @@
+pub mod account;
 pub mod battle_result;
+pub mod dpop;
+pub mod login_flow;
+pub mod pkce;
 pub mod config;
 pub mod detection;
 pub mod finalize;

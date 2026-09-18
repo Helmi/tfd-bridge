@@ -1,3 +1,4 @@
+mod account;
 mod commands;
 pub mod donation;
 pub mod engine;
@@ -138,14 +139,18 @@ async fn refresh_engine_config(app: AppHandle) {
 
 // ── Bridge state ─────────────────────────────────────────────────────────────
 
-/// A running bridge paired with the path it is serving.
+/// The one bridge listener, paired with the replays path currently attached
+/// to it (if any). The listener itself (including `/auth/callback`) starts
+/// unconditionally in `setup()`, before any replays path is known; `path`
+/// stays `None` until `apply_replays_path` calls `Bridge::attach_replays`.
 struct ActiveBridge {
-    path: PathBuf,
+    path: Option<PathBuf>,
     bridge: Bridge,
 }
 
 /// Managed state that holds the bridge handle.
-/// `None` when the replays path is not yet configured.
+/// `None` only if the listener itself failed to bind at all (all five ports
+/// occupied) — otherwise `Some` for the whole app lifetime.
 struct BridgeState(Mutex<Option<ActiveBridge>>);
 
 /// Managed state for the donation upload pipeline (td-c8973d).  One uploader
@@ -351,7 +356,15 @@ fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
 pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
     let state = app.state::<BridgeState>();
     let mut guard = state.0.lock().unwrap();
-    let current = guard.as_ref().map(|ab| ab.path.as_path());
+    let Some(active) = guard.as_mut() else {
+        // The bridge listener (and the `/auth/callback` route on it) starts
+        // unconditionally in `setup()`, before any replays path is known —
+        // this should be unreachable except when the listener itself failed
+        // to bind at all (all five ports occupied).
+        log::error!("Bridge listener is not running — cannot attach a replays path");
+        return;
+    };
+    let current = active.path.as_deref();
     let action = decide_bridge_action(current, &path);
 
     match action {
@@ -359,22 +372,21 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             log::info!("Bridge already serving the configured path — no change");
         }
         BridgeAction::Start | BridgeAction::Restart => {
-            // Stop the existing bridge (if any) before starting a new one,
-            // and the donation uploader tied to it — a fresh one is created
-            // below against the (possibly different) replays dir.
-            if let Some(ab) = guard.take() {
-                ab.bridge.stop();
-            }
+            // No stop/restart of the listener itself: `attach_replays` swaps
+            // the replay/player/share/render attachment on the SAME running
+            // bridge (same port, same `/auth/callback` route, unaffected).
+            // The donation uploader is tied to the (possibly different)
+            // replays dir, so it is still recreated below.
             if let Some(up) = app.state::<UploaderState>().0.lock().unwrap().take() {
                 up.cancel();
             }
             // Only honour TFD_BRIDGE_DEV_ORIGIN in debug builds so release
             // builds keep CORS strictly limited to https://engine.tfd.rocks.
-            let dev_origin = if cfg!(debug_assertions) {
-                std::env::var("TFD_BRIDGE_DEV_ORIGIN").ok()
-            } else {
-                None
-            };
+            // NOTE: the listener's CORS `dev_origin` was already fixed at
+            // `start_with_auth_sink` time in `setup()`; re-reading it here
+            // has no effect on an already-bound listener and is dead for
+            // this call, kept only so a future per-path CORS override would
+            // have an obvious place to plug in.
             // Donation upload pipeline (td-c8973d): consumes the finalized
             // events below; gates on consent + the engine feature flag itself.
             let donation_uploader = uploader::Uploader::new(uploader::UploaderOptions::production(
@@ -408,10 +420,10 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             // `resolve_player_config`). `None` on a default build — the
             // player routes then quietly 404.
             let player_cfg = resolve_player_config(app);
-            match server::start_full(path.clone(), dev_origin, Some(finalize), decode_ctx, player_cfg) {
-                Ok(bridge) => {
-                    log::info!("Bridge started on port {}", bridge.port());
-                    *guard = Some(ActiveBridge { path, bridge });
+            match active.bridge.attach_replays(path.clone(), Some(finalize), decode_ctx, player_cfg) {
+                Ok(()) => {
+                    log::info!("Replays folder attached — bridge serving on port {}", active.bridge.port());
+                    active.path = Some(path);
                     // Startup catch-up + backfill resume: scan for donate-able
                     // replays (30-day window, not in the ledger). Donation is
                     // default-on for every user now, so always scan; the uploader's
@@ -421,7 +433,7 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
                     *app.state::<UploaderState>().0.lock().unwrap() = Some(donation_uploader);
                 }
                 Err(e) => {
-                    log::error!("Failed to start bridge: {e}");
+                    log::error!("Failed to attach replays path to the bridge: {e}");
                     donation_uploader.cancel();
                 }
             }
@@ -1416,6 +1428,49 @@ pub fn run() {
             // commands keep it in sync from then on.
             donation::set_consent(commands::read_donation_consent(app.handle()));
 
+            // ── Start the bridge listener BEFORE any replays folder is known ─
+            // `/auth/callback` (and `/v1/health`) must be reachable from the
+            // earliest possible moment — independent of, and before, replay
+            // folder setup/detection/onboarding below. There is exactly one
+            // listener for the app's lifetime; `apply_replays_path` only ever
+            // attaches/re-attaches the replays folder onto it.
+            let account_service = Arc::new(account::AccountService::new(
+                Arc::new(account::http::ReqwestTransport::production()),
+                Arc::new(account::store::KeyringStore::new()),
+                Arc::new(account::TauriBrowserLauncher(app.handle().clone())),
+                Arc::new(account::SystemClock),
+                Arc::new(account::OsRandom),
+                account::ClientProfile::current(),
+            ));
+            app.manage(account_service.clone());
+            let auth_sink: Arc<dyn bridge_core::server::AuthCallbackSink> =
+                Arc::new(account::AccountCallbackSink(account_service.clone()));
+            // Same dev-CORS-origin rule as the replays attachment below.
+            let bridge_dev_origin = if cfg!(debug_assertions) {
+                std::env::var("TFD_BRIDGE_DEV_ORIGIN").ok()
+            } else {
+                None
+            };
+            match server::start_with_auth_sink(bridge_dev_origin, auth_sink) {
+                Ok(bridge) => {
+                    account_service.set_port(bridge.port());
+                    log::info!("Bridge listener started on port {} (no replays folder attached yet)", bridge.port());
+                    *app.state::<BridgeState>().0.lock().unwrap() = Some(ActiveBridge { path: None, bridge });
+                }
+                Err(e) => {
+                    log::error!("Failed to start the bridge listener: {e}");
+                }
+            }
+            // One-shot restart refresh (td-27bcc9's scope; recurring renewal
+            // scheduling/backoff is td-cab09a): tries to restore a prior
+            // session from durable storage without opening a browser.
+            {
+                let service = account_service.clone();
+                tauri::async_runtime::spawn(async move {
+                    service.bootstrap().await;
+                });
+            }
+
             // ── Start the bridge if onboarding is complete ──────────────────
             let cfg = commands::read_config(app.handle());
             let onboarding_complete = !cfg.needs_onboarding();
@@ -1475,6 +1530,10 @@ pub fn run() {
             commands::set_donation_consent,
             commands::get_link_target,
             commands::set_link_target,
+            commands::account_status,
+            commands::account_begin_login,
+            commands::account_cancel_login,
+            commands::account_reopen_pending,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1658,3 +1717,4 @@ mod tests {
         );
     }
 }
+

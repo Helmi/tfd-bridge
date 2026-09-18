@@ -7,6 +7,8 @@ export function useReplayShare() {
   const [status,setStatus]=useState<ShareStatus|null>(null);
   const [authorizationUrl,setAuthorizationUrl]=useState<string>();
   const [starting,setStarting]=useState(false);
+  const [browserError,setBrowserError]=useState<string>();
+  const [opening,setOpening]=useState(false);
   useEffect(()=>{
     if(!id)return;
     let stopped=false;const abort=new AbortController();
@@ -22,7 +24,7 @@ export function useReplayShare() {
             if(!response.ok)throw new Error('Sharing status is unavailable.');
             const next=await response.json() as ShareStatus;
             if(stopped)return;
-            setStatus(next);setAuthorizationUrl(undefined);
+            setStatus(next);setAuthorizationUrl(undefined);setBrowserError(undefined);
             if(['posted','failed','expired'].includes(next.state)){
               sessionStorage.removeItem(storageKey);setId(null);return;
             }
@@ -38,7 +40,7 @@ export function useReplayShare() {
     return()=>{stopped=true;abort.abort();};
   },[id]);
   const start=async(replayName:string,arena:string)=>{
-    setStarting(true);setStatus(null);setAuthorizationUrl(undefined);
+    setStarting(true);setStatus(null);setAuthorizationUrl(undefined);setBrowserError(undefined);
     try{
       const response=await fetch('/v1/share/authorize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({replay_name:replayName,arena_unique_id:arena})});
       if(!response.ok)throw new Error(`Could not start sharing (${response.status}).`);
@@ -46,9 +48,26 @@ export function useReplayShare() {
       const url=new URL(result.authorization_url);
       if(url.origin!=='https://engine.tfd.rocks'||url.pathname!=='/share/video/authorize')throw new Error('Invalid authorization address.');
       setAuthorizationUrl(url.href);sessionStorage.setItem(storageKey,result.state);setId(result.state);
+      if(!result.opened)setBrowserError('Could not open your default browser. Retry opening it below.');
       setStatus({state:'awaiting_authorization'});
     }catch(error){setStatus({state:'failed',error:error instanceof Error?error.message:'Sharing failed.'});}
     finally{setStarting(false);}
+  };
+  const openAuthorization=async()=>{
+    if(!id || opening)return;
+    setOpening(true);setBrowserError(undefined);
+    try{
+      const response=await fetch('/v1/share/authorize/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:id})});
+      if(response.status===403){
+        sessionStorage.removeItem(storageKey);setId(null);setAuthorizationUrl(undefined);
+        setStatus({state:'failed',error:'Authorization expired. Start sharing again.'});
+        return;
+      }
+      if(!response.ok)throw new Error('Could not open your default browser. Please retry.');
+      const result=await response.json() as {opened:boolean};
+      if(!result.opened)throw new Error('Could not open your default browser. Please retry.');
+    }catch(error){setBrowserError(error instanceof Error?error.message:'Could not open your default browser.');}
+    finally{setOpening(false);}
   };
   const label=status?.state==='rendering'?`Rendering video… ${Math.round((status.frame??0)/Math.max(1,status.total??1)*100)}%`
     :status?.state==='awaiting_authorization'?'Confirm sharing in Engine.'
@@ -62,5 +81,5 @@ export function useReplayShare() {
     const response=await fetch(`/v1/render/jobs/${encodeURIComponent(status.job_id)}/cancel`,{method:'POST'});
     if(!response.ok)throw new Error('Could not cancel the render.');
   };
-  return{start,busy:starting||id!==null,label,authorizationUrl,messageUrl:status?.message_url,renderProgress,cancelRender};
+  return{start,busy:starting||id!==null,label,authorizationUrl,openAuthorization,opening,browserError,messageUrl:status?.message_url,renderProgress,cancelRender};
 }

@@ -34,9 +34,9 @@ const ENGINE_BASE_URL: &str = "https://engine.tfd.rocks";
 const CONFIG_PATH: &str = "/api/v1/bridge/config";
 /// Replay-donation intake (the uploader's endpoint, td-c8973d).
 pub(crate) const DONATE_REPLAY_PATH: &str = "/api/v1/bridge/donate-replay";
-const VERSION_HEADER: &str = "X-TFD-Bridge-Version";
+pub(crate) const VERSION_HEADER: &str = "X-TFD-Bridge-Version";
 /// The running bridge version, straight from the package metadata.
-const BRIDGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const BRIDGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Generous-but-bounded request timeout; refreshes are background work.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -190,7 +190,7 @@ fn build_client(version: &str) -> reqwest::Client {
 
 /// Default headers for every engine request (the User-Agent is set separately
 /// via `ClientBuilder::user_agent`).
-fn default_headers(version: &str) -> HeaderMap {
+pub(crate) fn default_headers(version: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
         VERSION_HEADER,
@@ -200,7 +200,7 @@ fn default_headers(version: &str) -> HeaderMap {
 }
 
 /// `TFD-Bridge/<semver> (<OS>)`, e.g. `TFD-Bridge/0.2.4 (Windows)`.
-fn user_agent(version: &str) -> String {
+pub(crate) fn user_agent(version: &str) -> String {
     format!("TFD-Bridge/{version} ({})", platform_label())
 }
 

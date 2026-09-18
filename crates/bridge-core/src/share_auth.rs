@@ -32,6 +32,22 @@ pub struct AuthorizationStart {
 }
 
 impl ShareAuthorization {
+    /// Reopen only the live request already bound to a local replay. Never
+    /// accept an arbitrary URL from the webview for the native browser opener.
+    pub fn authorization_url(&self, state: &str, port: u16) -> Result<String, AuthorizationError> {
+        let pending = self
+            .pending
+            .as_ref()
+            .ok_or(AuthorizationError::UnknownState)?;
+        if Instant::now() >= pending.expires_at {
+            return Err(AuthorizationError::Expired);
+        }
+        if pending.state != state || port == 0 {
+            return Err(AuthorizationError::UnknownState);
+        }
+        Ok(format!("https://engine.tfd.rocks/share/video/authorize?state={state}&port={port}&arena_unique_id={}", pending.arena_unique_id))
+    }
+
     /// The caller must obtain the arena from the selected decoded local replay,
     /// never from a browser-provided claim. It must validate the replay path.
     pub fn begin(
@@ -96,6 +112,35 @@ impl ShareAuthorization {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn browser_retry_is_bound_to_live_authorization() {
+        let mut auth = ShareAuthorization::default();
+        let start = auth
+            .begin("test.wowsreplay".into(), "123".into(), 43210)
+            .unwrap();
+        assert_eq!(
+            auth.authorization_url(&start.state, 43210).unwrap(),
+            start.url
+        );
+        assert_eq!(
+            auth.authorization_url("https://evil.test", 43210),
+            Err(AuthorizationError::UnknownState)
+        );
+        auth.claim(&start.state, "123").unwrap();
+        assert_eq!(
+            auth.authorization_url(&start.state, 43210),
+            Err(AuthorizationError::UnknownState)
+        );
+        let start = auth
+            .begin("test.wowsreplay".into(), "123".into(), 43210)
+            .unwrap();
+        auth.pending.as_mut().unwrap().expires_at = Instant::now();
+        assert_eq!(
+            auth.authorization_url(&start.state, 43210),
+            Err(AuthorizationError::Expired)
+        );
+    }
+
     #[test]
     fn state_is_single_use_and_bound_to_local_battle() {
         let mut auth = ShareAuthorization::default();

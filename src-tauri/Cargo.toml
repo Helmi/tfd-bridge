@@ -1,6 +1,6 @@
 [package]
 name = "tfd-bridge"
-version = "0.18.0"
+version = "0.19.0"
 description = "TFD Bridge — local companion app for the TFD World of Warships community"
 authors = []
 license = "MIT"
@@ -43,6 +43,17 @@ semver = "1"
 sha2 = "0.10"
 hex = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+# Account service (td-27bcc9): DPoP proof / device-key plumbing reuses
+# bridge-core's pure crypto (crates/bridge-core/src/dpop.rs, pkce.rs,
+# login_flow.rs); this crate only adds the native OS-integration pieces.
+async-trait = "0.1"
+rand = "0.8"
+base64 = "0.22"
+# OS credential store for the device key + refresh tokens (contract v5
+# section 1: "0.19.0 assumes a software EC P-256 key in the Windows
+# Credential Manager (`keyring` 3.6.3 `windows-native`)"). Pinned exactly per
+# that decision, not a floating minor.
+keyring = { version = "=3.6.3", features = ["windows-native"] }
 
 [dev-dependencies]
 # Local mock engine for src/engine.rs + src/uploader.rs tests (no live

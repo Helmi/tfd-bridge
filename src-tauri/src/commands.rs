@@ -11,6 +11,7 @@ use bridge_core::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_store::StoreExt;
@@ -182,6 +183,42 @@ pub fn set_link_target(app: AppHandle, target: String) {
     let parsed = serde_json::from_value::<LinkTarget>(serde_json::Value::String(target))
         .unwrap_or(LinkTarget::Browser);
     link_target::save_link_target(&app, parsed);
+}
+
+// ── Account (td-27bcc9) ──────────────────────────────────────────────────────
+// Exactly four commands, matching the architecture directive: safe status,
+// begin/cancel/reopen-pending. No token IPC, no caller-supplied URL opener,
+// no secret Debug/Serialize/logs, no config.json credentials.
+
+/// Safe account status for the local UI: no tokens, no device key, no flow
+/// state — see `account::AccountStatus`.
+#[tauri::command]
+pub fn account_status(app: AppHandle) -> crate::account::AccountStatus {
+    app.state::<Arc<crate::account::AccountService>>().status()
+}
+
+/// Begin (or restart) native browser sign-in. Always replaces any existing
+/// pending attempt, so a late callback for an old attempt becomes harmless.
+#[tauri::command]
+pub async fn account_begin_login(app: AppHandle) -> Result<(), String> {
+    let service = app.state::<Arc<crate::account::AccountService>>().inner().clone();
+    service.begin_login().await.map_err(|e| e.to_string())
+}
+
+/// Cancel the pending sign-in attempt, if any.
+#[tauri::command]
+pub fn account_cancel_login(app: AppHandle) {
+    app.state::<Arc<crate::account::AccountService>>().cancel_login();
+}
+
+/// Reopen the OS browser on the exact URL already sent for the pending
+/// attempt. Takes no URL from the caller — there is nothing here for a
+/// compromised or buggy frontend to redirect.
+#[tauri::command]
+pub fn account_reopen_pending(app: AppHandle) -> Result<(), String> {
+    app.state::<Arc<crate::account::AccountService>>()
+        .reopen_pending()
+        .map_err(|e| e.to_string())
 }
 
 /// Confirm a detected or manually entered path and persist it.
