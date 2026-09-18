@@ -1095,8 +1095,9 @@
   let lastConnectError = null;
   // Fixed, safe copy for a failed account action (e.g. account_begin_login
   // rejecting with a network/transport error). The raw rejection can carry
-  // arbitrary transport/host/internal detail (a URL, an error class name, a
-  // stack fragment) — that detail goes to the console only, never the DOM.
+  // arbitrary transport/host/internal detail (credentials, a signed URL, an
+  // internal endpoint) — it is neither rendered nor logged: the DOM gets the
+  // safe copy and the console gets a fixed, context-only line.
   const CONNECT_ERROR_SAFE_TEXT = 'Could not reach TFD. Check your connection and try again.';
 
   function invalidatePendingPoll() {
@@ -1133,11 +1134,13 @@
     lastConnectError = null;
     try {
       await action();
-    } catch (err) {
-      // Never render the raw rejection: it can carry transport/host/internal
-      // detail (e.g. "network error: could not reach engine.tfd.rocks", or
-      // worse). Log it for diagnosis; the user only ever sees fixed, safe copy.
-      console.error('account action failed:', err);
+    } catch {
+      // Never render or log the raw rejection: it can carry transport/host/
+      // internal detail (credentials, a signed URL, an internal endpoint)
+      // that must reach neither the DOM nor the webview console. The
+      // rejection value is not even bound; the user only ever sees fixed,
+      // safe copy and the console only a fixed, context-only line.
+      console.error('TFD account action failed');
       lastConnectError = CONNECT_ERROR_SAFE_TEXT;
     }
     await pollAccountOnce();

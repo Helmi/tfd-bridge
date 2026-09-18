@@ -2139,4 +2139,36 @@ mod tests {
             "expected exactly one place setting #main-status visibility (setAccountScreen), got {count}"
         );
     }
+
+    #[test]
+    fn index_html_account_action_never_logs_the_raw_rejection() {
+        // The performAccountAction catch must never hand the raw rejection to
+        // the webview console: it can carry credentials, signed URLs, or
+        // internal endpoints, and the console sits outside the DOM safe-copy
+        // guard. Only a fixed, context-only string literal may be logged.
+        let start = INDEX_HTML
+            .find("async function performAccountAction")
+            .expect("performAccountAction must exist in ui/index.html");
+        let rest = &INDEX_HTML[start..];
+        // "\n  }" (2-space closing brace) is the function end; body content is
+        // 4-space indented, and the pattern is newline-ending agnostic (CRLF-safe).
+        let end = rest.find("\n  }").expect("performAccountAction body end");
+        let body = &rest[..end];
+        assert!(
+            body.contains("} catch {"),
+            "performAccountAction catch must not bind the raw rejection value"
+        );
+        let mut scan = body;
+        while let Some(pos) = scan.find("console.error(") {
+            scan = &scan[pos + "console.error(".len()..];
+            assert!(
+                scan.starts_with('\''),
+                "performAccountAction console.error must log a fixed string literal only"
+            );
+        }
+        assert!(
+            body.contains("console.error('TFD account action failed')"),
+            "expected the fixed context-only console line in performAccountAction"
+        );
+    }
 }
