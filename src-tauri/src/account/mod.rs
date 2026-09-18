@@ -7,8 +7,10 @@ pub mod http;
 pub mod store;
 pub mod traits;
 
+mod renewal;
 mod service;
 
+pub use renewal::RenewalScheduler;
 pub use service::{AccountCallbackSink, AccountService, AccountStatus};
 // `AccountError` and `SecureRandom` are public API surface for later tasks
 // (td-96a620's reset UI, td-cab09a's renewal scheduler / test doubles) that

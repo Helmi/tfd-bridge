@@ -1470,6 +1470,12 @@ pub fn run() {
                     service.bootstrap().await;
                 });
             }
+            // Recurring silent renewal (td-cab09a). Order against the
+            // bootstrap above does not matter: a tick with no connected
+            // session is a no-op. Managed state owns the loop, so it is
+            // cancelled and aborted when the app tears the state down —
+            // never left running as a bare task.
+            app.manage(account::RenewalScheduler::start(account_service.clone()));
 
             // ── Start the bridge if onboarding is complete ──────────────────
             let cfg = commands::read_config(app.handle());

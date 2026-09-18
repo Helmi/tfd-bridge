@@ -16,6 +16,7 @@ use super::traits::{
     STORED_PROFILE_SCHEMA_VERSION,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use bridge_core::account::{RenewalFailure, RenewalTicket};
 use bridge_core::dpop::DeviceKey;
 use bridge_core::login_flow::{ConsumedLogin, LoginFlow, LoginFlowError, TerminalReason};
 use bridge_core::server::{AuthCallback, AuthCallbackAck, AuthCallbackOutcome, AuthCallbackSink};
@@ -40,6 +41,24 @@ pub enum AccountStatus {
     AwaitingBrowser,
     Exchanging,
     Connected {
+        nickname: String,
+        clan_tag: Option<String>,
+        realm: Option<String>,
+        /// Contract v5 section 7.1.1: the current access token's own expiry
+        /// (Unix seconds), captured verbatim from the last successful
+        /// `/token` response's required `web_lease_expires_at` field. Safe
+        /// to expose (timestamp only, no token) — for td-9994bd to consume
+        /// later; no handoff/cookie code lives here.
+        web_lease_expires_at: Option<u64>,
+    },
+    /// The recurring renewal scheduler (td-cab09a) exhausted its 3-attempt
+    /// transient-retry budget. Distinct from `Connected` so the local UI can
+    /// offer an explicit recovery action instead of looking silently healthy;
+    /// recovery is the SAME connection flow (`account_begin_login`), not a
+    /// new command. Surfaced once per exhaustion episode — `status()` keeps
+    /// returning this same variant on every subsequent poll while it lasts,
+    /// but never causes any additional retry attempt or repeated log line.
+    RenewalFailed {
         nickname: String,
         clan_tag: Option<String>,
         realm: Option<String>,
@@ -117,6 +136,22 @@ struct Inner {
     /// network call and rechecks it under `commit_lock` immediately before
     /// writing anything — a mismatch means zero writes, zero status change.
     credential_generation: u64,
+    /// Memory-only (contract v5 section 7.1.1): the current access token's
+    /// own expiry, captured verbatim from the last successful `/token`
+    /// response's required `web_lease_expires_at` field. Only a successful
+    /// `/token` call (exchange, bootstrap refresh or scheduled renewal) ever
+    /// advances it; nothing else moves it forward.
+    web_lease_expires_at: Option<u64>,
+    /// The DPoP proof/`jti` most recently sent for the CURRENT renewal
+    /// chain (td-cab09a, contract v5 section 5.5's transport-retry rule).
+    /// `None` at the start of every fresh chain (`RenewalTicket.attempt ==
+    /// 1`); read back on the next attempt to decide reuse (`iat` still
+    /// under 60 s old) vs. a fresh mint.
+    renewal_proof: Option<PendingRenewalProof>,
+    /// Guards the exhausted-renewal log line against firing more than once
+    /// per exhaustion episode. `status()`'s return value itself is a plain
+    /// poll of current state and is unaffected by this flag.
+    renewal_failure_logged: bool,
 }
 
 impl Default for Inner {
@@ -130,9 +165,56 @@ impl Default for Inner {
             access_token: None,
             session: bridge_core::account::AccountSession::default(),
             credential_generation: 0,
+            web_lease_expires_at: None,
+            renewal_proof: None,
+            renewal_failure_logged: false,
         }
     }
 }
+
+/// One reusable/re-mintable DPoP proof for the renewal scheduler's own
+/// transport-retry chain (contract v5 section 5.5) — deliberately separate
+/// from `build_headers`'s always-fresh minting, and from `call`'s own
+/// always-fresh, exactly-once nonce-challenge retry.
+#[derive(Clone)]
+struct PendingRenewalProof {
+    headers: Vec<(String, String)>,
+    iat_unix: u64,
+}
+
+/// Classification of one `/token` renewal-scheduler refresh attempt, before
+/// any commit decision (contract v5 section 5.6: DPoP failures never
+/// revoke; section 11's `invalid_grant` reason list is the only definitive
+/// set).
+enum RenewalAttemptOutcome {
+    Success(ParsedRefresh),
+    /// `invalid_grant` with a reason in [`DEFINITIVE_REFRESH_REASONS`].
+    Definitive,
+    /// Everything else — network/timeout/DPoP-proof errors, 429, 5xx, or a
+    /// malformed 200 body — retries within the existing budget.
+    Transient { retry_after: Option<Duration> },
+}
+
+/// The frozen v5 section 11 `invalid_grant` reasons that mean the refresh
+/// credential itself is dead: retrying cannot repair the session, so these
+/// skip the transient-retry budget entirely and go straight to
+/// sign-in-required. `code_expired`/`code_already_used`/
+/// `code_verifier_mismatch` are login-exchange-only reasons and are
+/// deliberately excluded — they can never appear on a refresh grant.
+/// Scheduler sleep bounds (td-cab09a). The lower bound keeps a loop that
+/// cannot make progress from spinning; the upper bound is the blind re-check
+/// cadence that makes sleep/resume, clock jumps and offline gaps self-correct.
+const MIN_RENEWAL_SLEEP: Duration = Duration::from_secs(1);
+const MAX_RENEWAL_SLEEP: Duration = Duration::from_secs(60);
+
+const DEFINITIVE_REFRESH_REASONS: [&str; 6] = [
+    "refresh_expired",
+    "refresh_absolute_expired",
+    "refresh_reuse_detected",
+    "refresh_orphaned",
+    "device_revoked",
+    "account_changed",
+];
 
 pub struct AccountService {
     transport: Arc<dyn AccountTransport>,
@@ -178,6 +260,12 @@ struct TokenResponse {
     /// later refresh/restart can never silently push this cap into the
     /// future.
     refresh_absolute_expires_at: String,
+    /// Frozen v5 section 7.1.1: equals the minted access token's own `exp`,
+    /// RFC 3339. Required on every `/token` response (initial exchange and
+    /// refresh) — only a successful `/token` call ever advances the stored
+    /// value (section 7.1). Malformed/missing rejects the whole response,
+    /// same rule as the two refresh-expiry fields above.
+    web_lease_expires_at: String,
     account: AccountObject,
 }
 
@@ -203,6 +291,49 @@ fn base64_decode_32(value: &str) -> Result<[u8; 32], ()> {
 fn parse_rfc3339_unix(value: &str) -> Result<u64, ()> {
     let parsed = chrono::DateTime::parse_from_rfc3339(value).map_err(|_| ())?;
     u64::try_from(parsed.timestamp()).map_err(|_| ())
+}
+
+/// Everything a successful `/token` response commits, shared by the initial
+/// exchange, the one-shot bootstrap/restart refresh and the recurring
+/// renewal scheduler so the parse/validation logic lives in exactly one
+/// place (td-cab09a: "adopts one-shot bootstrap try_refresh transport/parser
+/// rather than duplicating it").
+struct ParsedRefresh {
+    refresh: StoredRefresh,
+    access_token: String,
+    lifetime: Duration,
+    renew_in: Duration,
+    web_lease_expires_at_unix: u64,
+}
+
+/// Parses one `/token` success body. Every required absolute-UTC timestamp
+/// (v5 section 4.4/7.1.1) is validated here; a missing or malformed value
+/// rejects the WHOLE response (`None`) rather than falling back to a locally
+/// guessed duration — never a partial commit.
+fn parse_token_response(body: &serde_json::Value) -> Option<ParsedRefresh> {
+    let parsed: TokenResponse = serde_json::from_value(body.clone()).ok()?;
+    let refresh_expires_at_unix = parse_rfc3339_unix(&parsed.refresh_expires_at).ok()?;
+    let refresh_absolute_expires_at_unix =
+        parse_rfc3339_unix(&parsed.refresh_absolute_expires_at).ok()?;
+    let web_lease_expires_at_unix = parse_rfc3339_unix(&parsed.web_lease_expires_at).ok()?;
+    let lifetime = Duration::from_secs(parsed.expires_in.max(1));
+    let renew_in = lifetime.mul_f32(0.5);
+    Some(ParsedRefresh {
+        refresh: StoredRefresh {
+            refresh_token: parsed.refresh_token,
+            refresh_expires_at_unix,
+            refresh_absolute_expires_at_unix,
+            account: StoredAccount {
+                nickname: parsed.account.nickname,
+                clan_tag: parsed.account.clan_tag,
+                realm: parsed.account.realm,
+            },
+        },
+        access_token: parsed.access_token,
+        lifetime,
+        renew_in,
+        web_lease_expires_at_unix,
+    })
 }
 
 /// The Engine's own production origin, the only value this checks against
@@ -285,22 +416,46 @@ impl AccountService {
         if inner.login_flow.expire_if_due(now) {
             inner.phase = Phase::Expired;
         }
-        if matches!(
-            inner.session.status(),
+        match inner.session.status() {
             bridge_core::account::AccountStatus::Connected
-                | bridge_core::account::AccountStatus::Renewing
-                | bridge_core::account::AccountStatus::RenewalFailed
-        ) {
-            let account = inner.account_display.clone().unwrap_or(StoredAccount {
-                nickname: String::new(),
-                clan_tag: None,
-                realm: None,
-            });
-            return AccountStatus::Connected {
-                nickname: account.nickname,
-                clan_tag: account.clan_tag,
-                realm: account.realm,
-            };
+            | bridge_core::account::AccountStatus::Renewing => {
+                // Silent per contract §0: a proactive renewal in flight or
+                // being retried never surfaces differently from a plain
+                // connected account.
+                let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    nickname: String::new(),
+                    clan_tag: None,
+                    realm: None,
+                });
+                return AccountStatus::Connected {
+                    nickname: account.nickname,
+                    clan_tag: account.clan_tag,
+                    realm: account.realm,
+                    web_lease_expires_at: inner.web_lease_expires_at,
+                };
+            }
+            bridge_core::account::AccountStatus::RenewalFailed => {
+                // Log exactly once per exhaustion episode; every poll still
+                // returns the same `RenewalFailed` status below (that is
+                // current state, not a repeated notification).
+                if !inner.renewal_failure_logged {
+                    inner.renewal_failure_logged = true;
+                    log::warn!(
+                        "Account renewal exhausted its 3-attempt retry budget; sign-in is required to recover."
+                    );
+                }
+                let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    nickname: String::new(),
+                    clan_tag: None,
+                    realm: None,
+                });
+                return AccountStatus::RenewalFailed {
+                    nickname: account.nickname,
+                    clan_tag: account.clan_tag,
+                    realm: account.realm,
+                };
+            }
+            bridge_core::account::AccountStatus::SignInRequired => {}
         }
         match inner.phase {
             Phase::Idle => AccountStatus::SignedOut,
@@ -634,35 +789,15 @@ impl AccountService {
             Ok(r) if r.status == 200 => r,
             _ => return,
         };
-        let parsed: TokenResponse = match serde_json::from_value(response.body) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        // Both fields are required, absolute UTC timestamps (v5 section
-        // 4.4). A malformed/missing value is rejected outright rather than
-        // guessed at — never commit a credential whose expiry we could not
-        // establish, and never log the response that carried it.
-        let Ok(refresh_expires_at_unix) = parse_rfc3339_unix(&parsed.refresh_expires_at) else {
-            return;
-        };
-        let Ok(refresh_absolute_expires_at_unix) =
-            parse_rfc3339_unix(&parsed.refresh_absolute_expires_at)
-        else {
+        // Every required absolute-UTC field (v5 section 4.4/7.1.1) is
+        // validated here; a malformed/missing value rejects the whole
+        // response outright rather than guessing — never commit a
+        // credential whose expiry we could not establish, and never log the
+        // response that carried it.
+        let Some(parsed) = parse_token_response(&response.body) else {
             return;
         };
         let now_instant = self.clock.now_instant();
-        let refresh = StoredRefresh {
-            refresh_token: parsed.refresh_token,
-            refresh_expires_at_unix,
-            refresh_absolute_expires_at_unix,
-            account: StoredAccount {
-                nickname: parsed.account.nickname,
-                clan_tag: parsed.account.clan_tag,
-                realm: parsed.account.realm,
-            },
-        };
-        let lifetime = Duration::from_secs(parsed.expires_in.max(1));
-        let renew_in = lifetime.mul_f32(0.5);
 
         let _commit = self.commit_lock.lock().await;
         let mut inner = self.inner.lock().unwrap();
@@ -675,7 +810,7 @@ impl AccountService {
         let Some(device_key) = inner.device_key.clone() else { return };
         let scalar_b64 = URL_SAFE_NO_PAD.encode(device_key.to_scalar_bytes());
         if self
-            .persist_new_refresh(refresh.clone(), &device_id, &scalar_b64)
+            .persist_new_refresh(parsed.refresh.clone(), &device_id, &scalar_b64)
             .is_err()
         {
             // "Initial exchange store failure stays disconnected and
@@ -683,11 +818,14 @@ impl AccountService {
             inner.phase = Phase::StoreUnavailable;
             return;
         }
-        if inner.session.connect(now_instant, lifetime, renew_in) {
-            inner.access_token = Some((parsed.access_token, now_instant + lifetime));
-            inner.account_display = Some(refresh.account);
+        if inner.session.connect(now_instant, parsed.lifetime, parsed.renew_in) {
+            inner.access_token = Some((parsed.access_token, now_instant + parsed.lifetime));
+            inner.account_display = Some(parsed.refresh.account);
+            inner.web_lease_expires_at = Some(parsed.web_lease_expires_at_unix);
             inner.phase = Phase::Idle;
             inner.credential_generation = inner.credential_generation.wrapping_add(1);
+            inner.renewal_failure_logged = false;
+            inner.renewal_proof = None;
         }
     }
 
@@ -805,35 +943,14 @@ impl AccountService {
             Ok(r) if r.status == 200 => r,
             _ => return false,
         };
-        let parsed: TokenResponse = match serde_json::from_value(response.body) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
         // Same required, absolute-UTC parsing as the initial exchange (v5
-        // section 4.4) — never re-derive either expiry from "now" here,
+        // section 4.4/7.1.1) — never re-derive an expiry from "now" here,
         // which is exactly what let a refresh silently reset the 365-day
         // absolute cap.
-        let Ok(refresh_expires_at_unix) = parse_rfc3339_unix(&parsed.refresh_expires_at) else {
-            return false;
-        };
-        let Ok(refresh_absolute_expires_at_unix) =
-            parse_rfc3339_unix(&parsed.refresh_absolute_expires_at)
-        else {
+        let Some(parsed) = parse_token_response(&response.body) else {
             return false;
         };
         let now_instant = self.clock.now_instant();
-        let new_refresh = StoredRefresh {
-            refresh_token: parsed.refresh_token,
-            refresh_expires_at_unix,
-            refresh_absolute_expires_at_unix,
-            account: StoredAccount {
-                nickname: parsed.account.nickname,
-                clan_tag: parsed.account.clan_tag,
-                realm: parsed.account.realm,
-            },
-        };
-        let lifetime = Duration::from_secs(parsed.expires_in.max(1));
-        let renew_in = lifetime.mul_f32(0.5);
 
         let _commit = self.commit_lock.lock().await;
         let mut inner = self.inner.lock().unwrap();
@@ -849,18 +966,298 @@ impl AccountService {
         };
         let scalar_b64 = URL_SAFE_NO_PAD.encode(device_key.to_scalar_bytes());
         if self
-            .persist_new_refresh(new_refresh.clone(), &device_id, &scalar_b64)
+            .persist_new_refresh(parsed.refresh.clone(), &device_id, &scalar_b64)
             .is_err()
         {
             return false;
         }
-        if inner.session.connect(now_instant, lifetime, renew_in) {
-            inner.access_token = Some((parsed.access_token, now_instant + lifetime));
-            inner.account_display = Some(new_refresh.account);
+        if inner.session.connect(now_instant, parsed.lifetime, parsed.renew_in) {
+            inner.access_token = Some((parsed.access_token, now_instant + parsed.lifetime));
+            inner.account_display = Some(parsed.refresh.account);
+            inner.web_lease_expires_at = Some(parsed.web_lease_expires_at_unix);
             inner.phase = Phase::Idle;
             inner.credential_generation = inner.credential_generation.wrapping_add(1);
+            inner.renewal_failure_logged = false;
+            inner.renewal_proof = None;
         }
         true
+    }
+
+    // ── Recurring renewal scheduler (td-cab09a) ─────────────────────────────
+
+    /// Mints a fresh `/token` DPoP proof (new `jti`, current `iat`) with the
+    /// same header shape `build_headers` uses for every other call —
+    /// re-derived here (not shared) because the renewal path needs the
+    /// minted `iat` back for the next attempt's section 5.5 reuse-window
+    /// decision, which `build_headers`'s existing signature does not
+    /// expose.
+    fn mint_renewal_headers(&self, device_key: &DeviceKey, htu: &str, nonce: Option<&str>) -> PendingRenewalProof {
+        let mut jti_bytes = [0u8; 16];
+        self.rng.fill(&mut jti_bytes);
+        let jti = bridge_core::dpop::jti_from_bytes(jti_bytes);
+        let iat_unix = self.clock.now_unix().as_secs();
+        let proof = bridge_core::dpop::build_proof(device_key, "POST", htu, iat_unix, &jti, nonce, None)
+            .expect("htu is built from a constant base + path, never a query/fragment");
+        let headers = vec![
+            ("DPoP".to_string(), proof),
+            (crate::engine::VERSION_HEADER.to_string(), crate::engine::BRIDGE_VERSION.to_string()),
+            ("User-Agent".to_string(), crate::engine::user_agent(crate::engine::BRIDGE_VERSION)),
+        ];
+        PendingRenewalProof { headers, iat_unix }
+    }
+
+    /// Sends one `/token` request for the recurring renewal scheduler,
+    /// applying contract v5 section 5.5's transport-retry rule: reuse the
+    /// exact same DPoP proof/`jti` from `reuse` as long as its `iat` is
+    /// still under 60 s old at the moment of THIS send; otherwise —
+    /// including the first attempt of a chain, when `reuse` is `None` —
+    /// mint a fresh proof/`jti` (which safely re-rotates: the predecessor is
+    /// `ROTATED_UNCONFIRMED`, so the Engine mints a fresh pair rather than
+    /// erroring). The nonce-challenge retry below is `call`'s existing
+    /// separate, always-fresh, exactly-once boundary — unrelated to this
+    /// reuse decision.
+    async fn call_for_renewal(
+        &self,
+        body: serde_json::Value,
+        reuse: Option<PendingRenewalProof>,
+    ) -> (Result<HttpResponse, TransportError>, PendingRenewalProof) {
+        let device_key = match self.ensure_device_key().await {
+            Ok(k) => k,
+            Err(_) => {
+                // Renewal only ever runs once connected, so the device key
+                // is already cached in `Inner`; this path is defensive, not
+                // expected in practice. Fail this attempt like a transport
+                // error rather than panicking.
+                return (
+                    Err(TransportError::Network),
+                    reuse.unwrap_or(PendingRenewalProof { headers: Vec::new(), iat_unix: 0 }),
+                );
+            }
+        };
+        let htu = format!("{}/token", super::http::PRODUCTION_BASE_URL);
+        let now_unix = self.clock.now_unix().as_secs();
+        let used = match reuse {
+            Some(prev) if now_unix.saturating_sub(prev.iat_unix) < 60 => prev,
+            _ => self.mint_renewal_headers(&device_key, &htu, None),
+        };
+        let response = match self.transport.post_json("/token", used.headers.clone(), body.clone()).await {
+            Ok(r) => r,
+            Err(e) => return (Err(e), used),
+        };
+        if response.status == 401 {
+            let use_nonce = response
+                .header("www-authenticate")
+                .is_some_and(|v| v.contains("use_dpop_nonce"));
+            if let (true, Some(nonce)) = (use_nonce, response.header("dpop-nonce").map(str::to_string)) {
+                let retried = self.mint_renewal_headers(&device_key, &htu, Some(&nonce));
+                let response2 = self.transport.post_json("/token", retried.headers.clone(), body).await;
+                return (response2, retried);
+            }
+        }
+        (Ok(response), used)
+    }
+
+    /// One `/token` refresh attempt: builds the grant-B body, sends it via
+    /// [`Self::call_for_renewal`], and classifies the result. Shares
+    /// [`parse_token_response`] with `try_refresh`/`finish_login_exchange`
+    /// rather than duplicating the HTTP/parse logic.
+    async fn perform_renewal_attempt(
+        &self,
+        refresh: &StoredRefresh,
+        device_id: &str,
+        reuse: Option<PendingRenewalProof>,
+    ) -> (RenewalAttemptOutcome, PendingRenewalProof) {
+        let body = json!({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh.refresh_token,
+            "device_id": device_id,
+        });
+        let (result, used) = self.call_for_renewal(body, reuse).await;
+        let response = match result {
+            Err(_) => return (RenewalAttemptOutcome::Transient { retry_after: None }, used),
+            Ok(r) => r,
+        };
+        if response.status == 200 {
+            return match parse_token_response(&response.body) {
+                Some(parsed) => (RenewalAttemptOutcome::Success(parsed), used),
+                // A malformed 200 body is not a contract error code at all;
+                // treat it like any other unclassifiable failure — retry
+                // within the existing budget rather than committing garbage
+                // or declaring a definitive revoke it never claimed to be.
+                None => (RenewalAttemptOutcome::Transient { retry_after: None }, used),
+            };
+        }
+        if response.status == 400
+            && response.body.get("error").and_then(|v| v.as_str()) == Some("invalid_grant")
+        {
+            let reason = response.body.get("reason").and_then(|v| v.as_str());
+            if matches!(reason, Some(r) if DEFINITIVE_REFRESH_REASONS.contains(&r)) {
+                return (RenewalAttemptOutcome::Definitive, used);
+            }
+        }
+        let retry_after = response
+            .header("retry-after")
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(Duration::from_secs);
+        (RenewalAttemptOutcome::Transient { retry_after }, used)
+    }
+
+    /// One recurring-renewal scheduler tick (td-cab09a): if
+    /// `AccountSession::begin_renewal` finds a renewal due against the
+    /// injected `Clock`, performs exactly one `/token` refresh attempt and
+    /// commits the result strictly through
+    /// `session.is_current`/`renewed`/`renewal_failed`, so a response for a
+    /// ticket that logout, account-switch or a newer renewal cycle has
+    /// already superseded can never write credentials or resurrect a stale
+    /// session. Never sleeps and never loops — the caller decides tick
+    /// cadence, always by re-deriving due-ness from `now` rather than
+    /// trusting elapsed wall time, so this self-heals after sleep/suspend/
+    /// offline without any special-case detection.
+    pub async fn renewal_tick(&self) {
+        let now = self.clock.now_instant();
+        let ticket = {
+            let mut inner = self.inner.lock().unwrap();
+            match inner.session.begin_renewal(now) {
+                Some(t) => t,
+                None => return,
+            }
+        };
+        let (device_id, reuse) = {
+            let inner = self.inner.lock().unwrap();
+            // No need to special-case "first attempt of a chain" here:
+            // `renewal_proof` is always cleared to `None` at every
+            // connect/disconnect boundary (fresh login, scheduled renewal
+            // success, definitive revoke, `invalidate_local`), so a truly
+            // fresh chain always starts from `None` — which
+            // `call_for_renewal` already mints fresh for. Every later
+            // attempt in the SAME chain reads back whatever the previous
+            // attempt actually sent, and the section 5.5 age check decides
+            // reuse vs. re-mint from there.
+            (inner.device_id.clone(), inner.renewal_proof.clone())
+        };
+        let Some(device_id) = device_id else {
+            self.commit_renewal_failure(ticket, RenewalFailure::Transient { retry_after: None }).await;
+            return;
+        };
+        let refresh = match self.store.load_profile(self.profile) {
+            Ok(Some(data)) => data.refresh_current,
+            _ => None,
+        };
+        let Some(refresh) = refresh else {
+            self.commit_renewal_failure(ticket, RenewalFailure::Transient { retry_after: None }).await;
+            return;
+        };
+        let (outcome, used_proof) = self.perform_renewal_attempt(&refresh, &device_id, reuse).await;
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.renewal_proof = Some(used_proof);
+        }
+        match outcome {
+            RenewalAttemptOutcome::Success(parsed) => self.commit_renewal_success(ticket, parsed).await,
+            RenewalAttemptOutcome::Definitive => {
+                self.commit_renewal_failure(ticket, RenewalFailure::ReauthenticationRequired).await
+            }
+            RenewalAttemptOutcome::Transient { retry_after } => {
+                self.commit_renewal_failure(ticket, RenewalFailure::Transient { retry_after }).await
+            }
+        }
+    }
+
+    /// How long the renewal scheduler may sleep before its next
+    /// [`Self::renewal_tick`]. Derived from the session's own next deadline
+    /// (proactive renew time or backoff deadline), clamped into
+    /// `[MIN_RENEWAL_SLEEP, MAX_RENEWAL_SLEEP]`: the lower bound keeps a
+    /// loop that cannot make progress from spinning, the upper bound means
+    /// a suspend/resume or clock jump is re-checked within a minute without
+    /// any special-case detector. Nothing here decides due-ness —
+    /// `begin_renewal(now)` inside the tick stays the only authority.
+    pub fn next_tick_delay(&self) -> Duration {
+        let now = self.clock.now_instant();
+        let next = self.inner.lock().unwrap().session.next_renewal_at();
+        match next {
+            Some(at) => at
+                .saturating_duration_since(now)
+                .clamp(MIN_RENEWAL_SLEEP, MAX_RENEWAL_SLEEP),
+            // Signed out, renewal in flight, or the retry budget is
+            // exhausted: nothing is scheduled, so just re-check on the
+            // regular cadence.
+            None => MAX_RENEWAL_SLEEP,
+        }
+    }
+
+    /// Commits a successful scheduled renewal under `commit_lock` — the
+    /// SAME boundary `finish_login_exchange`, `try_refresh` and
+    /// `invalidate_local` use. `session.is_current(ticket)` (rather than
+    /// `try_refresh`'s `credential_generation` counter) is this path's
+    /// staleness gate, checked BEFORE any store write, so a response for a
+    /// ticket that logout/account-switch/a newer renewal attempt already
+    /// superseded performs zero writes and zero status changes.
+    async fn commit_renewal_success(&self, ticket: RenewalTicket, parsed: ParsedRefresh) {
+        let _commit = self.commit_lock.lock().await;
+        let (device_id, device_key) = {
+            let inner = self.inner.lock().unwrap();
+            if !inner.session.is_current(ticket) {
+                return;
+            }
+            let Some(device_id) = inner.device_id.clone() else { return };
+            let Some(device_key) = inner.device_key.clone() else { return };
+            (device_id, device_key)
+        };
+        let scalar_b64 = URL_SAFE_NO_PAD.encode(device_key.to_scalar_bytes());
+        let now = self.clock.now_instant();
+        if self
+            .persist_new_refresh(parsed.refresh.clone(), &device_id, &scalar_b64)
+            .is_err()
+        {
+            // A store failure here must not silently strand the schedule:
+            // fold it into the same transient retry budget (the OLD
+            // `current`/`pending` slots are untouched — `persist_new_refresh`
+            // never overwrites `current` until `pending` is confirmed
+            // written) rather than leaving the session waiting forever for
+            // a tick that will never come.
+            let mut inner = self.inner.lock().unwrap();
+            inner.session.renewal_failed(ticket, now, RenewalFailure::Transient { retry_after: None });
+            return;
+        }
+        let mut inner = self.inner.lock().unwrap();
+        if inner.session.renewed(ticket, now, parsed.lifetime, parsed.renew_in) {
+            inner.access_token = Some((parsed.access_token, now + parsed.lifetime));
+            inner.account_display = Some(parsed.refresh.account);
+            inner.web_lease_expires_at = Some(parsed.web_lease_expires_at_unix);
+            inner.credential_generation = inner.credential_generation.wrapping_add(1);
+            inner.renewal_failure_logged = false;
+            inner.renewal_proof = None;
+        }
+    }
+
+    /// Commits a renewal failure under `commit_lock`, gated by the same
+    /// `is_current(ticket)` check as [`Self::commit_renewal_success`]. A
+    /// transient failure only advances `AccountSession`'s own backoff state
+    /// (`renewal_failed` itself no-ops on a stale ticket). A definitive
+    /// `invalid_grant` additionally clears the memory-only access token/
+    /// display and wipes the durable store — mirroring `invalidate_local`,
+    /// but only once the ticket check confirms this response was not
+    /// superseded by the user already re-authenticating in the meantime.
+    async fn commit_renewal_failure(&self, ticket: RenewalTicket, failure: RenewalFailure) {
+        let _commit = self.commit_lock.lock().await;
+        let now = self.clock.now_instant();
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.session.is_current(ticket) {
+            return;
+        }
+        if !inner.session.renewal_failed(ticket, now, failure) {
+            return;
+        }
+        if matches!(failure, RenewalFailure::ReauthenticationRequired) {
+            inner.account_display = None;
+            inner.access_token = None;
+            inner.web_lease_expires_at = None;
+            inner.phase = Phase::Idle;
+            inner.renewal_proof = None;
+            inner.credential_generation = inner.credential_generation.wrapping_add(1);
+            drop(inner);
+            let _ = self.store.clear_profile(self.profile);
+        }
     }
 
     // ── Revoke / invalidate primitives (not exposed as commands here) ──────
@@ -920,6 +1317,9 @@ impl AccountService {
             inner.session.disconnect();
             inner.account_display = None;
             inner.access_token = None;
+            inner.web_lease_expires_at = None;
+            inner.renewal_proof = None;
+            inner.renewal_failure_logged = false;
             inner.phase = Phase::Idle;
             inner.credential_generation = inner.credential_generation.wrapping_add(1);
         }
@@ -1536,10 +1936,12 @@ mod tests {
         consume_and_exchange(&f, state, "auth-code").await;
 
         match f.service.status() {
-            AccountStatus::Connected { nickname, clan_tag, realm } => {
+            AccountStatus::Connected { nickname, clan_tag, realm, web_lease_expires_at } => {
                 assert_eq!(nickname, "FrankDrake");
                 assert_eq!(clan_tag.as_deref(), Some("TFX"));
                 assert_eq!(realm.as_deref(), Some("eu"));
+                // The fixture's `web_lease_expires_at: "2030-01-01T12:15:00Z"`.
+                assert_eq!(web_lease_expires_at, Some(1_893_500_100));
             }
             other => panic!("expected Connected, got {other:?}"),
         }
@@ -1581,6 +1983,16 @@ mod tests {
             ("malformed refresh_absolute_expires_at", {
                 let mut b = token_response("x");
                 b["refresh_absolute_expires_at"] = json!("not-a-timestamp");
+                b
+            }),
+            ("missing web_lease_expires_at", {
+                let mut b = token_response("x");
+                b.as_object_mut().unwrap().remove("web_lease_expires_at");
+                b
+            }),
+            ("malformed web_lease_expires_at", {
+                let mut b = token_response("x");
+                b["web_lease_expires_at"] = json!("not-a-timestamp");
                 b
             }),
         ];
@@ -1916,7 +2328,11 @@ mod tests {
             headers: Vec<(String, String)>,
             body: serde_json::Value,
         ) -> Result<HttpResponse, TransportError> {
-            if !self.gated.swap(true, Ordering::SeqCst) && (self.predicate)(path, &body) {
+            // Predicate FIRST: the gate latch must only be spent on a call
+            // that actually matches, otherwise an earlier unrelated request
+            // (e.g. bootstrap's own refresh) silently disarms the gate and
+            // the waiting test hangs forever on `reached`.
+            if (self.predicate)(path, &body) && !self.gated.swap(true, Ordering::SeqCst) {
                 self.reached.notify_one();
                 self.release.notified().await;
             }
@@ -2206,4 +2622,516 @@ mod tests {
         assert_eq!(debug.status(), AccountStatus::SignedOut);
     }
 
+    // ── Recurring renewal scheduler (td-cab09a) ─────────────────────────────
+
+    /// Connects via the normal interactive-login path (`token_response`'s
+    /// `expires_in: 900` → `renew_in` of 450 s) so scheduler tests start
+    /// from a plain `Connected` fixture without duplicating login plumbing.
+    async fn connected_fixture() -> Fixture {
+        let f = make_fixture(true);
+        let state = begin_and_get_state(&f).await;
+        f.transport.push_ok(200, token_response("refresh-initial"));
+        consume_and_exchange(&f, state, "auth-code").await;
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        f
+    }
+
+    /// Only the scheduler's own refresh-grant `/token` calls (excludes the
+    /// login exchange's authorization-code grant).
+    fn refresh_calls(f: &Fixture) -> Vec<RecordedCall> {
+        f.transport
+            .calls()
+            .into_iter()
+            .filter(|c| c.path == "/token" && c.body["grant_type"] == "refresh_token")
+            .collect()
+    }
+
+    fn dpop_header(call: &RecordedCall) -> String {
+        call.headers.iter().find(|(k, _)| k == "DPoP").unwrap().1.clone()
+    }
+
+    /// Decodes the `jti` claim out of a DPoP proof's payload segment, for
+    /// tests that want to assert distinct/identical `jti`s directly rather
+    /// than relying on full-proof-string equality alone.
+    fn dpop_jti(proof: &str) -> String {
+        let payload_b64 = proof.split('.').nth(1).unwrap();
+        let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(payload_b64).unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        value["jti"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn scheduler_makes_exactly_three_attempts_staggered_5s_then_30s_then_exhausts() {
+        let f = connected_fixture().await;
+        f.clock.advance(450); // renew_in due
+
+        f.service.renewal_tick().await; // attempt 1 (transport queue empty -> network error)
+        assert_eq!(refresh_calls(&f).len(), 1);
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }), "a retry in flight stays silent");
+
+        // Not due yet before the 5 s local delay elapses.
+        f.service.renewal_tick().await;
+        assert_eq!(refresh_calls(&f).len(), 1);
+        f.clock.advance(4);
+        f.service.renewal_tick().await;
+        assert_eq!(refresh_calls(&f).len(), 1, "must not fire before its scheduled time");
+        f.clock.advance(1); // total 5s elapsed
+
+        f.service.renewal_tick().await; // attempt 2
+        assert_eq!(refresh_calls(&f).len(), 2);
+
+        f.service.renewal_tick().await;
+        assert_eq!(refresh_calls(&f).len(), 2);
+        f.clock.advance(29);
+        f.service.renewal_tick().await;
+        assert_eq!(refresh_calls(&f).len(), 2, "must not fire before the 30s delay elapses");
+        f.clock.advance(1); // total 30s elapsed since attempt 2's failure
+
+        f.service.renewal_tick().await; // attempt 3
+        assert_eq!(refresh_calls(&f).len(), 3);
+        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+
+        // Never a 4th attempt, no matter how much later the next tick runs.
+        f.clock.advance(3600);
+        f.service.renewal_tick().await;
+        assert_eq!(refresh_calls(&f).len(), 3);
+        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+    }
+
+    #[tokio::test]
+    async fn scheduler_honours_a_longer_retry_after_than_the_local_backoff_capped_at_300s() {
+        let f = connected_fixture().await;
+        f.clock.advance(450);
+        f.transport.push_ok_with_headers(
+            503,
+            vec![("retry-after".into(), "90".into())],
+            json!({"error": "auth_backend_unavailable"}),
+        );
+        f.service.renewal_tick().await; // attempt 1
+        assert_eq!(refresh_calls(&f).len(), 1);
+
+        f.clock.advance(89);
+        f.service.renewal_tick().await;
+        assert_eq!(refresh_calls(&f).len(), 1, "the server's 90s Retry-After beats the local 5s delay");
+        f.clock.advance(1); // exactly 90s elapsed
+        f.transport.push_ok(200, token_response("refresh-after-retry-after"));
+        f.service.renewal_tick().await; // attempt 2, now due
+        assert_eq!(refresh_calls(&f).len(), 2);
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+    }
+
+    #[tokio::test]
+    async fn renewal_retry_within_60s_reuses_the_exact_same_proof_and_jti() {
+        let f = connected_fixture().await;
+        f.clock.advance(450);
+        f.service.renewal_tick().await; // attempt 1, network error
+        let proof1 = dpop_header(&refresh_calls(&f)[0]);
+
+        f.clock.advance(5); // attempt 2, only 5s after attempt 1's iat (<60s)
+        f.service.renewal_tick().await;
+        let proof2 = dpop_header(&refresh_calls(&f)[1]);
+
+        assert_eq!(proof1, proof2, "a retry under 60s old must reuse the exact same proof/jti");
+        assert_eq!(dpop_jti(&proof1), dpop_jti(&proof2));
+    }
+
+    #[tokio::test]
+    async fn renewal_retry_after_60s_mints_a_fresh_proof_and_jti() {
+        let f = connected_fixture().await;
+        f.clock.advance(450);
+        // A long server Retry-After simulates a suspend/queue delay that
+        // pushes the next attempt's send time well past the proof's 60s
+        // freshness window.
+        f.transport.push_ok_with_headers(
+            429,
+            vec![("retry-after".into(), "90".into())],
+            json!({"error": "rate_limited"}),
+        );
+        f.service.renewal_tick().await; // attempt 1
+        let proof1 = dpop_header(&refresh_calls(&f)[0]);
+
+        f.clock.advance(90); // 90s later: proof1's iat is now 90s old (>60s)
+        f.transport.push_ok(200, token_response("refresh-fresh-proof"));
+        f.service.renewal_tick().await; // attempt 2
+        let proof2 = dpop_header(&refresh_calls(&f)[1]);
+
+        assert_ne!(proof1, proof2, "a retry sent 90s later must mint a fresh proof");
+        assert_ne!(dpop_jti(&proof1), dpop_jti(&proof2), "and therefore a fresh jti");
+    }
+
+    #[tokio::test]
+    async fn definitive_invalid_grant_reasons_disconnect_without_spending_retry_budget() {
+        let reasons = [
+            "refresh_expired",
+            "refresh_absolute_expired",
+            "refresh_reuse_detected",
+            "refresh_orphaned",
+            "device_revoked",
+            "account_changed",
+        ];
+        for reason in reasons {
+            let f = connected_fixture().await;
+            f.clock.advance(450);
+            f.transport.push_ok(400, json!({"error": "invalid_grant", "reason": reason}));
+
+            f.service.renewal_tick().await;
+
+            assert_eq!(refresh_calls(&f).len(), 1, "{reason}: must not retry a definitive reason");
+            assert_eq!(
+                f.service.status(),
+                AccountStatus::SignedOut,
+                "{reason}: must require sign-in again, not stay Connected/RenewalFailed"
+            );
+
+            // No zombie retries even much later.
+            f.clock.advance(3600);
+            f.service.renewal_tick().await;
+            assert_eq!(refresh_calls(&f).len(), 1, "{reason}: a signed-out session must never renew again");
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_network_5xx_429_and_dpop_proof_errors_all_retry_not_definitive() {
+        let cases: Vec<(u16, serde_json::Value)> = vec![
+            (503, json!({"error": "auth_backend_unavailable"})),
+            (429, json!({"error": "rate_limited"})),
+            (401, json!({"error": "invalid_dpop_proof"})),
+            (500, json!({"error": "internal_error"})),
+        ];
+        for (status, body) in cases {
+            let f = connected_fixture().await;
+            f.clock.advance(450);
+            f.transport.push_ok(status, body.clone());
+            f.service.renewal_tick().await;
+            assert_eq!(refresh_calls(&f).len(), 1, "status {status}: must have attempted once");
+            assert!(
+                matches!(f.service.status(), AccountStatus::Connected { .. }),
+                "status {status}: a transient failure must stay silently Connected, not disconnect"
+            );
+            // The retry budget is still available: the next attempt fires.
+            f.clock.advance(5);
+            f.transport.push_ok(200, token_response("refresh-recovered"));
+            f.service.renewal_tick().await;
+            assert_eq!(refresh_calls(&f).len(), 2, "status {status}: must still have a retry left");
+            assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_store_write_failure_during_scheduled_commit_leaves_a_usable_slot_for_the_next_attempt() {
+        let f = connected_fixture().await;
+        // 4 prior save_profile calls happened during connected_fixture's own
+        // login: device-key persist, device_id persist, pending write,
+        // promotion write (mirrors `crash_between_pending_write_and_
+        // promotion_recovers_via_pending_on_restart`'s own accounting).
+        assert_eq!(f.store.save_calls.load(Ordering::SeqCst), 4);
+        f.clock.advance(450);
+        // Fail exactly the PROMOTION write (save #6) of the scheduler's own
+        // persist_new_refresh (save #5 = pending, #6 = promote).
+        *f.store.fail_save_on_call.lock().unwrap() = Some(6);
+        f.transport.push_ok(200, token_response("refresh-crash-recovery"));
+
+        f.service.renewal_tick().await;
+
+        // Treated like a transient failure: still silently Connected on the
+        // OLD (still valid) access token, not exhausted and not corrupted.
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        assert_eq!(
+            stored.refresh_current.as_ref().unwrap().refresh_token,
+            "refresh-initial",
+            "the OLD current must be untouched — the failed promotion never overwrote it"
+        );
+        assert_eq!(
+            stored.refresh_pending.as_ref().unwrap().refresh_token,
+            "refresh-crash-recovery",
+            "the pending write itself must have survived the later promotion failure"
+        );
+
+        // The next scheduled attempt (backoff already applied, save-failure
+        // was one-shot, not sticky) succeeds normally and promotes cleanly.
+        f.clock.advance(5);
+        f.transport.push_ok(200, token_response("refresh-crash-recovery"));
+        f.service.renewal_tick().await;
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        assert_eq!(stored.refresh_current.as_ref().unwrap().refresh_token, "refresh-crash-recovery");
+        assert!(stored.refresh_pending.is_none());
+
+        // A fresh restart also still reconnects cleanly from the same store.
+        let transport2 = ScriptedTransport::new();
+        let service2 = Arc::new(AccountService::new(
+            transport2.clone(),
+            f.store.clone(),
+            RecordingBrowser::new(true),
+            f.clock.clone(),
+            CountingRandom::new(),
+            ClientProfile::Release,
+        ));
+        service2.set_port(43210);
+        transport2.push_ok(200, token_response("refresh-after-restart"));
+        service2.bootstrap().await;
+        assert!(matches!(service2.status(), AccountStatus::Connected { .. }));
+        assert_eq!(transport2.calls()[0].body["refresh_token"], "refresh-crash-recovery");
+    }
+
+    #[tokio::test]
+    async fn scheduled_renewal_response_after_invalidate_local_writes_nothing() {
+        let store = Arc::new(InMemoryStore::default());
+        let now_unix = 1_700_000_000u64;
+        store.profiles.lock().unwrap().insert("release", stored_old_account("dev_sched_inv", "refresh-seed", now_unix));
+
+        let (gate, reached, release) = GateOnMatch::new(ScriptedTransport::new(), |path, body| {
+            path == "/token" && body["grant_type"] == "refresh_token" && body["refresh_token"] == "refresh-boot"
+        });
+        gate.inner.push_ok(200, token_response("refresh-boot")); // bootstrap's own refresh, ungated
+        gate.inner.push_ok(200, token_response("refresh-after-invalidate")); // the scheduler's gated attempt
+
+        let clock = FixedClock::new();
+        let service = Arc::new(AccountService::new(
+            gate.clone(),
+            store.clone(),
+            RecordingBrowser::new(true),
+            clock.clone(),
+            CountingRandom::new(),
+            ClientProfile::Release,
+        ));
+        service.set_port(43210);
+        service.bootstrap().await;
+        assert!(matches!(service.status(), AccountStatus::Connected { .. }));
+
+        clock.advance(450); // renew_in due, per token_response's expires_in: 900
+        let svc = service.clone();
+        let tick_task = tokio::spawn(async move { svc.renewal_tick().await });
+        reached.notified().await;
+
+        service.invalidate_local().await;
+        assert_eq!(service.status(), AccountStatus::SignedOut);
+        let saves_before_release = store.save_calls.load(Ordering::SeqCst);
+
+        release.notify_one();
+        tick_task.await.unwrap();
+
+        assert_eq!(service.status(), AccountStatus::SignedOut);
+        assert_eq!(
+            store.save_calls.load(Ordering::SeqCst),
+            saves_before_release,
+            "the stale scheduler response must not have written to the store at all"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stale_attempt_ticket_cannot_commit_once_a_newer_attempt_in_the_same_chain_has_begun() {
+        let f = connected_fixture().await;
+        f.clock.advance(450);
+        // Attempt 1 of the chain, captured directly so the test still holds
+        // its ticket after the chain itself has moved on.
+        let stale_ticket = {
+            let mut inner = f.service.inner.lock().unwrap();
+            inner.session.begin_renewal(f.clock.now_instant()).unwrap()
+        };
+        // Attempt 1 fails transiently; once its 5s backoff is due the
+        // scheduler starts attempt 2 (empty transport script = network
+        // error), so `stale_ticket` is no longer the current attempt.
+        f.service
+            .commit_renewal_failure(stale_ticket, RenewalFailure::Transient { retry_after: None })
+            .await;
+        f.clock.advance(5);
+        f.service.renewal_tick().await;
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+
+        // A late SUCCESS response for the now-superseded attempt-1 ticket
+        // must never commit.
+        let parsed = parse_token_response(&token_response("refresh-late-attempt-1")).unwrap();
+        f.service.commit_renewal_success(stale_ticket, parsed).await;
+        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        assert_eq!(
+            stored.refresh_current.as_ref().unwrap().refresh_token,
+            "refresh-initial",
+            "a stale attempt's success must never overwrite the store"
+        );
+
+        // A late DEFINITIVE failure for the same stale ticket must not tear
+        // down the still-live (later-attempt) chain either.
+        f.service.commit_renewal_failure(stale_ticket, RenewalFailure::ReauthenticationRequired).await;
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        assert!(f.store.profiles.lock().unwrap().get("release").is_some());
+    }
+
+    #[tokio::test]
+    async fn scheduler_recovers_correctly_after_a_large_clock_jump_simulating_sleep_or_offline() {
+        let f = connected_fixture().await;
+        f.clock.advance(450);
+
+        f.service.renewal_tick().await; // attempt 1
+        assert_eq!(refresh_calls(&f).len(), 1);
+
+        // The whole tick loop itself was "asleep" (system suspend) for an
+        // hour, far longer than the 5s scheduled delay.
+        f.clock.advance(3600);
+        f.service.renewal_tick().await; // attempt 2 (self-heals: due-ness is re-derived from `now`)
+        assert_eq!(refresh_calls(&f).len(), 2);
+
+        f.clock.advance(3600);
+        f.service.renewal_tick().await; // attempt 3
+        assert_eq!(refresh_calls(&f).len(), 3);
+        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+
+        // A long offline/sleep gap AFTER exhaustion never causes a 4th
+        // attempt or a duplicate exhausted-state transition.
+        f.clock.advance(86_400);
+        f.service.renewal_tick().await;
+        assert_eq!(refresh_calls(&f).len(), 3, "no duplicate attempts after a long offline/sleep gap");
+        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+    }
+
+    #[tokio::test]
+    async fn exhausted_renewal_status_is_stable_and_never_re_signaled_on_repeated_polls() {
+        let f = connected_fixture().await;
+        f.clock.advance(450);
+        f.service.renewal_tick().await;
+        f.clock.advance(5);
+        f.service.renewal_tick().await;
+        f.clock.advance(30);
+        f.service.renewal_tick().await;
+        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+        assert!(f.service.inner.lock().unwrap().renewal_failure_logged);
+
+        let calls_before = refresh_calls(&f).len();
+        for _ in 0..5 {
+            assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+        }
+        assert_eq!(refresh_calls(&f).len(), calls_before, "polling status() must never trigger new network activity");
+        assert!(f.service.inner.lock().unwrap().renewal_failure_logged, "still exactly one logged transition");
+    }
+
+    #[tokio::test]
+    async fn web_lease_expires_at_is_captured_on_scheduled_refresh_and_only_a_success_advances_it() {
+        let f = connected_fixture().await;
+        // Captured on the initial exchange already ("2030-01-01T12:15:00Z" -> 1_893_500_100).
+        match f.service.status() {
+            AccountStatus::Connected { web_lease_expires_at, .. } => {
+                assert_eq!(web_lease_expires_at, Some(1_893_500_100))
+            }
+            other => panic!("expected Connected, got {other:?}"),
+        }
+
+        f.clock.advance(450);
+        // A transient failure must not move it at all.
+        f.service.renewal_tick().await; // network error
+        match f.service.status() {
+            AccountStatus::Connected { web_lease_expires_at, .. } => {
+                assert_eq!(web_lease_expires_at, Some(1_893_500_100), "a failed attempt must never advance the lease")
+            }
+            other => panic!("expected Connected, got {other:?}"),
+        }
+
+        // A later successful refresh with a NEW web_lease_expires_at does
+        // advance it.
+        f.clock.advance(5);
+        let mut body = token_response("refresh-new-lease");
+        body["web_lease_expires_at"] = json!("2030-06-01T00:00:00Z");
+        f.transport.push_ok(200, body);
+        f.service.renewal_tick().await;
+        match f.service.status() {
+            AccountStatus::Connected { web_lease_expires_at, .. } => {
+                assert_eq!(web_lease_expires_at, Some(1_906_502_400))
+            }
+            other => panic!("expected Connected, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn account_changed_and_device_revoked_mid_session_disconnect_rather_than_retry() {
+        for reason in ["account_changed", "device_revoked"] {
+            let f = connected_fixture().await;
+            f.clock.advance(450);
+            f.transport.push_ok(400, json!({"error": "invalid_grant", "reason": reason}));
+            f.service.renewal_tick().await;
+            assert_eq!(refresh_calls(&f).len(), 1, "{reason}: a mid-session scheduled renewal must not retry");
+            assert_eq!(f.service.status(), AccountStatus::SignedOut, "{reason}: must require sign-in again");
+        }
+    }
+
+    // ── Scheduler loop lifecycle (td-cab09a) ────────────────────────────────
+
+    #[tokio::test]
+    async fn next_tick_delay_follows_the_session_deadline_and_a_clock_jump_re_checks_at_once() {
+        let f = make_fixture(true);
+        assert_eq!(
+            f.service.next_tick_delay(),
+            MAX_RENEWAL_SLEEP,
+            "signed out: nothing scheduled, plain re-check cadence"
+        );
+
+        let f = connected_fixture().await;
+        assert_eq!(
+            f.service.next_tick_delay(),
+            MAX_RENEWAL_SLEEP,
+            "renewal is 450s away, far beyond the capped sleep"
+        );
+        f.clock.advance(410); // 40s left of the 450s renew_in
+        assert_eq!(f.service.next_tick_delay(), Duration::from_secs(40));
+
+        // A huge jump (sleep/resume or a long offline gap) lands past the
+        // deadline: the next wake is immediate, not a missed cycle.
+        f.clock.advance(86_400);
+        assert_eq!(f.service.next_tick_delay(), MIN_RENEWAL_SLEEP);
+
+        // After a transient failure the backoff deadline drives the sleep.
+        f.service.renewal_tick().await; // empty script -> network error
+        assert_eq!(f.service.next_tick_delay(), Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn the_renewal_loop_performs_a_due_renewal_and_stops_promptly_when_cancelled() {
+        let f = connected_fixture().await;
+        f.clock.advance(450);
+        f.transport.push_ok(200, token_response("refresh-from-loop"));
+
+        let (stop, rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(crate::account::renewal::run_renewal_loop(f.service.clone(), rx));
+
+        // Bounded wait on the loop's own first tick — no real backoff sleep
+        // is involved, the scripted transport answers immediately.
+        let renewed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let rotated = f
+                    .store
+                    .profiles
+                    .lock()
+                    .unwrap()
+                    .get("release")
+                    .and_then(|d| d.refresh_current.clone())
+                    .is_some_and(|r| r.refresh_token == "refresh-from-loop");
+                if rotated {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(renewed.is_ok(), "the loop must run the due renewal on its first tick");
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+
+        // The loop is now parked in its (capped) sleep; cancelling must end
+        // it without waiting that sleep out.
+        stop.send(true).unwrap();
+        let joined = tokio::time::timeout(Duration::from_secs(5), task).await;
+        assert!(joined.is_ok(), "cancellation must end the loop promptly");
+        joined.unwrap().unwrap();
+        assert_eq!(refresh_calls(&f).len(), 1, "a cancelled loop performs no further attempts");
+    }
+
+    #[tokio::test]
+    async fn dropping_the_scheduler_handle_ends_the_renewal_loop() {
+        let f = connected_fixture().await; // nothing due yet: the first tick is a no-op
+        let (stop, rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(crate::account::renewal::run_renewal_loop(f.service.clone(), rx));
+        drop(stop); // what `RenewalScheduler::drop` amounts to for the loop
+        let joined = tokio::time::timeout(Duration::from_secs(5), task).await;
+        assert!(joined.is_ok(), "a dropped scheduler must not leave the loop running");
+        joined.unwrap().unwrap();
+        assert!(refresh_calls(&f).is_empty(), "no renewal was due, so no attempt may happen");
+    }
 }

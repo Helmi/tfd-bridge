@@ -126,6 +126,20 @@ impl AccountSession {
         matches!(self.renewal, Renewal::InFlight(current) if current == ticket)
     }
 
+    /// When the next [`Self::begin_renewal`] can produce a ticket, so a native
+    /// scheduler can sleep until that deadline instead of polling blindly.
+    /// `None` while no renewal can become due at all: signed out, a request
+    /// already in flight, or the retry budget exhausted. Advisory only —
+    /// `begin_renewal` stays the single source of truth.
+    pub fn next_renewal_at(&self) -> Option<Instant> {
+        self.expires_at?;
+        match self.renewal {
+            Renewal::Idle => self.renew_at,
+            Renewal::Waiting { at, .. } => Some(at),
+            Renewal::InFlight(_) | Renewal::Failed => None,
+        }
+    }
+
     /// The native caller must check is_current, persist rotated credentials and
     /// accept the response under the same lock. A persistence failure must not
     /// be reported as successful renewal.
@@ -224,6 +238,35 @@ mod tests {
             .unwrap();
         assert!(!session.renewed(ticket, due, Duration::from_secs(60), Duration::ZERO));
         assert!(session.is_current(next));
+    }
+
+    #[test]
+    fn next_renewal_at_tracks_the_deadline_a_scheduler_should_sleep_until() {
+        let now = Instant::now();
+        let mut session = AccountSession::default();
+        assert_eq!(session.next_renewal_at(), None, "signed out: nothing is due");
+
+        session = connected(now);
+        assert_eq!(session.next_renewal_at(), Some(now + Duration::from_secs(20)));
+
+        let due = now + Duration::from_secs(20);
+        let ticket = session.begin_renewal(due).unwrap();
+        assert_eq!(session.next_renewal_at(), None, "a request is already in flight");
+
+        assert!(session.renewal_failed(ticket, due, RenewalFailure::Transient { retry_after: None }));
+        assert_eq!(
+            session.next_renewal_at(),
+            Some(due + Duration::from_secs(5)),
+            "the backoff deadline is the next wake-up"
+        );
+
+        let retried = session.begin_renewal(due + Duration::from_secs(5)).unwrap();
+        assert!(session.renewal_failed(
+            retried,
+            due + Duration::from_secs(5),
+            RenewalFailure::ReauthenticationRequired
+        ));
+        assert_eq!(session.next_renewal_at(), None, "disconnected: nothing is due");
     }
 
     #[test]
