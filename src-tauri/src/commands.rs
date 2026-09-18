@@ -94,23 +94,69 @@ pub fn set_launch_on_login(app: AppHandle, enabled: bool) {
     crate::set_launch_on_login_internal(&app, enabled);
 }
 
+// ── Account gate (td-980190) ─────────────────────────────────────────────
+// Single decision point every account-dependent native navigation entry
+// point goes through: this file's three commands below, lib.rs's tray
+// "Open Battle Monitor" `MenuEvent` arm, and the startup saved-Monitor-view
+// restore block. Denied = log-and-no-op, never a silent hide (native gates
+// must refuse, not merely hide a button) — see docs/account-authorization.md.
+
+/// True iff `snapshot` currently permits account-dependent native
+/// navigation. Mirrors `AccountSession::can_use_account`'s fail-closed
+/// semantics at the native snapshot layer (td-811657: false at access
+/// expiry even while a renewal retry is in flight) — never re-derived from
+/// `AccountStatus` matching, which is exactly the gap `AccountSnapshot`
+/// exists to close.
+pub(crate) fn account_navigation_allowed(snapshot: &crate::account::AccountSnapshot) -> bool {
+    snapshot.can_use_account
+}
+
+/// Runs `navigate` iff `snapshot` currently allows account-dependent
+/// navigation; otherwise logs `context` and no-ops. Returns whether it
+/// navigated, so this file's commands and their tests can assert
+/// call-vs-no-call against the exact same decision without a real
+/// `AppHandle`.
+pub(crate) fn gate_account_navigation(
+    snapshot: &crate::account::AccountSnapshot,
+    context: &str,
+    navigate: impl FnOnce(),
+) -> bool {
+    if !account_navigation_allowed(snapshot) {
+        log::info!("{context}: refused, account not usable");
+        return false;
+    }
+    navigate();
+    true
+}
+
 /// Navigate the main window to the embedded Battle Monitor.
 /// Callable only from the local dashboard: the "main" capability is local-only,
 /// so once the window shows the remote monitor page that page gets no IPC.
+/// Refuses (log-and-no-op) when the account is not currently usable — the
+/// local dashboard that this command is reachable from already re-renders
+/// its own connect gate from the same `account_status` poll, so no
+/// additional navigation/recovery is needed here.
 #[tauri::command]
 pub fn open_monitor(app: AppHandle) {
-    crate::open_monitor_window(&app);
+    let snapshot = app.state::<Arc<crate::account::AccountService>>().snapshot();
+    gate_account_navigation(&snapshot, "open_monitor", || crate::open_monitor_window(&app));
 }
 
 /// Open the in-app RePlayer (WoWS replay player) by navigating the main window to
 /// the bridge's own `/player/` route — RePlayer lives IN the main window, not a
 /// separate one. Reached from the "RePlayer" title-bar nav button and the
 /// double-right-click gesture on the brand (`MONITOR_EMBED_JS`). No-op (logged) if
-/// the bridge is not running, since the player page loads off the bridge's own
-/// loopback port.
+/// the account is not currently usable (checked first) or the bridge is not
+/// running.
 #[tauri::command]
 pub fn open_replay_player(app: AppHandle) {
     use crate::BridgeState;
+
+    let snapshot = app.state::<Arc<crate::account::AccountService>>().snapshot();
+    if !account_navigation_allowed(&snapshot) {
+        log::info!("open_replay_player: refused, account not usable");
+        return;
+    }
 
     let port = app
         .state::<BridgeState>()
@@ -128,10 +174,12 @@ pub fn open_replay_player(app: AppHandle) {
 /// Navigate the main window to the engine home ("Dashboard" in the unified bar).
 /// Used by the local dashboard's nav so it offers the same destinations as the
 /// engine-page bar. Routed through `navigate_engine` so the dashboard return-URL
-/// is captured first (keeps "Settings" working).
+/// is captured first (keeps "Settings" working). Refuses (log-and-no-op) when
+/// the account is not currently usable.
 #[tauri::command]
 pub fn open_engine_home(app: AppHandle) {
-    crate::navigate_engine(&app, "/");
+    let snapshot = app.state::<Arc<crate::account::AccountService>>().snapshot();
+    gate_account_navigation(&snapshot, "open_engine_home", || crate::navigate_engine(&app, "/"));
 }
 
 /// Return the donation consent + remote-flag snapshot for the dashboard.
@@ -600,5 +648,389 @@ mod tests {
         assert!(v.get("error").is_some());
         // The auto-correct flag the UI reads must be present.
         assert_eq!(v.get("corrected").and_then(|c| c.as_bool()), Some(true));
+    }
+
+    // ── Account gate (td-980190) ────────────────────────────────────────────
+
+    use crate::account::{AccountEndReason, AccountService, AccountSnapshot, AccountStatus, ClientProfile};
+    use crate::account::traits::{
+        AccountTransport, BrowserLauncher, Clock, HttpResponse, SecretStore, SecureRandom,
+        StoreError, StoredAccount, StoredProfileData, StoredRefresh, TransportError,
+        STORED_PROFILE_SCHEMA_VERSION,
+    };
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::Mutex as StdMutex;
+    use std::time::{Duration, Instant};
+
+    fn connected_usable_snapshot() -> AccountSnapshot {
+        AccountSnapshot {
+            status: AccountStatus::Connected {
+                nickname: "Helmi".into(),
+                clan_tag: Some("TFD".into()),
+                realm: Some("eu".into()),
+                web_lease_expires_at: Some(1_800_000_900),
+            },
+            can_use_account: true,
+            lifecycle_epoch: 3,
+            nickname: Some("Helmi".into()),
+            clan_tag: Some("TFD".into()),
+            realm: Some("eu".into()),
+            web_lease_expires_at: Some(1_800_000_900),
+            access_expires_at_unix: Some(1_800_000_900),
+            end_reason: None,
+        }
+    }
+
+    fn signed_out_snapshot() -> AccountSnapshot {
+        AccountSnapshot {
+            status: AccountStatus::SignedOut,
+            can_use_account: false,
+            lifecycle_epoch: 0,
+            nickname: None,
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: None,
+        }
+    }
+
+    /// Access token expired, a renewal retry may still be in flight — the
+    /// exact "expired while renewing" gap `AccountSnapshot` exists to close
+    /// (`status()` alone maps `Renewing` to the same public `Connected`
+    /// shape, but `can_use_account` is already false).
+    fn access_expired_while_renewing_snapshot() -> AccountSnapshot {
+        AccountSnapshot {
+            status: AccountStatus::Connected {
+                nickname: "Helmi".into(),
+                clan_tag: Some("TFD".into()),
+                realm: Some("eu".into()),
+                web_lease_expires_at: Some(1_800_000_000),
+            },
+            can_use_account: false,
+            lifecycle_epoch: 3,
+            nickname: Some("Helmi".into()),
+            clan_tag: Some("TFD".into()),
+            realm: Some("eu".into()),
+            web_lease_expires_at: Some(1_800_000_000),
+            access_expires_at_unix: Some(1_800_000_000),
+            end_reason: None,
+        }
+    }
+
+    fn revoked_snapshot() -> AccountSnapshot {
+        AccountSnapshot {
+            status: AccountStatus::SignedOut,
+            can_use_account: false,
+            lifecycle_epoch: 4,
+            nickname: None,
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: Some(AccountEndReason::Revoked),
+        }
+    }
+
+    fn account_changed_snapshot() -> AccountSnapshot {
+        AccountSnapshot {
+            status: AccountStatus::SignedOut,
+            can_use_account: false,
+            lifecycle_epoch: 5,
+            nickname: None,
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: Some(AccountEndReason::AccountChanged),
+        }
+    }
+
+    fn renewal_exhausted_snapshot() -> AccountSnapshot {
+        AccountSnapshot {
+            status: AccountStatus::RenewalFailed {
+                nickname: "Helmi".into(),
+                clan_tag: Some("TFD".into()),
+                realm: Some("eu".into()),
+            },
+            can_use_account: false,
+            lifecycle_epoch: 3,
+            nickname: Some("Helmi".into()),
+            clan_tag: Some("TFD".into()),
+            realm: Some("eu".into()),
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: Some(AccountEndReason::RenewalExhausted),
+        }
+    }
+
+    // Each `open_monitor`/`open_replay_player`/`open_engine_home` command
+    // body is exactly "gate then navigate" (see the source above) — testing
+    // `gate_account_navigation`/`account_navigation_allowed` with the same
+    // fixtures a real call site would see IS testing each call site's full
+    // decision, without needing a real `AppHandle`/window.
+
+    #[test]
+    fn open_monitor_refuses_navigation_when_account_not_connected() {
+        let mut navigated = false;
+        let did = gate_account_navigation(&signed_out_snapshot(), "open_monitor", || navigated = true);
+        assert!(!did, "open_monitor must not report navigation when signed out");
+        assert!(!navigated, "open_monitor must not call navigate_engine when signed out");
+    }
+
+    #[test]
+    fn open_monitor_navigates_when_connected() {
+        let mut navigated = false;
+        let did = gate_account_navigation(&connected_usable_snapshot(), "open_monitor", || navigated = true);
+        assert!(did);
+        assert!(navigated, "open_monitor must navigate when Connected");
+    }
+
+    #[test]
+    fn open_replay_player_refuses_navigation_when_account_not_connected() {
+        assert!(!account_navigation_allowed(&signed_out_snapshot()));
+    }
+
+    #[test]
+    fn open_replay_player_allows_navigation_when_connected() {
+        assert!(account_navigation_allowed(&connected_usable_snapshot()));
+    }
+
+    #[test]
+    fn open_engine_home_refuses_navigation_when_account_not_connected() {
+        let mut navigated = false;
+        let did = gate_account_navigation(&signed_out_snapshot(), "open_engine_home", || navigated = true);
+        assert!(!did);
+        assert!(!navigated);
+    }
+
+    #[test]
+    fn open_engine_home_navigates_when_connected() {
+        let mut navigated = false;
+        let did = gate_account_navigation(&connected_usable_snapshot(), "open_engine_home", || navigated = true);
+        assert!(did);
+        assert!(navigated);
+    }
+
+    // ── Mid-session transitions: the native gate flips within one snapshot ──
+    // (`account_status`/`AccountSnapshot` is always read fresh — there is no
+    // native-side caching to go stale across a poll, so "flips within one
+    // poll" reduces to "the gate is a pure function of the latest snapshot",
+    // asserted per transition below.)
+
+    #[test]
+    fn native_gate_refuses_on_access_token_expiry_even_while_renewing() {
+        assert!(!account_navigation_allowed(&access_expired_while_renewing_snapshot()));
+    }
+
+    #[test]
+    fn native_gate_refuses_on_revoked() {
+        let snap = revoked_snapshot();
+        assert!(!account_navigation_allowed(&snap));
+        assert_eq!(snap.end_reason, Some(AccountEndReason::Revoked));
+    }
+
+    #[test]
+    fn native_gate_refuses_on_account_changed() {
+        let snap = account_changed_snapshot();
+        assert!(!account_navigation_allowed(&snap));
+        assert_eq!(snap.end_reason, Some(AccountEndReason::AccountChanged));
+    }
+
+    #[test]
+    fn native_gate_refuses_on_renewal_exhausted() {
+        let snap = renewal_exhausted_snapshot();
+        assert!(!account_navigation_allowed(&snap));
+        assert_eq!(snap.end_reason, Some(AccountEndReason::RenewalExhausted));
+    }
+
+    #[test]
+    fn renewal_exhausted_signal_is_stable_across_two_immediately_following_polls() {
+        // `AccountService::status()` (not re-tested here; owned by
+        // account/service.rs) keeps returning the same `RenewalFailed`
+        // variant on every poll while still failing, and logs the
+        // exhaustion exactly once. This proves OUR gate agrees with itself
+        // (no flapping) when handed the same still-failing snapshot twice in
+        // a row, matching the once-only UI banner semantics.
+        let first = renewal_exhausted_snapshot();
+        let second = renewal_exhausted_snapshot();
+        assert_eq!(account_navigation_allowed(&first), account_navigation_allowed(&second));
+        assert!(!account_navigation_allowed(&first));
+    }
+
+    // ── 0.18.0 migration fixture (config.json: replaysPath, onboardingDone,
+    // launchOnLogin, donationConsent, lastView; no account keys) ───────────
+
+    #[test]
+    fn config_migration_0_18_0_fixture_all_fields_deserialise_unchanged() {
+        let json = r#"{
+            "replaysPath": "C:/Games/World_of_Warships/replays",
+            "onboardingDone": true,
+            "launchOnLogin": true,
+            "donationConsent": "opted_in",
+            "lastView": "monitor"
+        }"#;
+        let value: serde_json::Value = serde_json::from_str(json).expect("fixture must parse");
+
+        // AppConfig (bridge_core) — the fields it owns deserialise unchanged;
+        // replayWatermarkMs did not exist in 0.18.0 and stays None.
+        let cfg: AppConfig = serde_json::from_value(value.clone()).expect("AppConfig must load a 0.18.0 config.json");
+        assert_eq!(
+            cfg.replays_path,
+            Some(std::path::PathBuf::from("C:/Games/World_of_Warships/replays"))
+        );
+        assert!(cfg.onboarding_done);
+        assert_eq!(cfg.replay_watermark_ms, None);
+
+        // Store-only keys this task must never read/clear/reset: the exact
+        // values `commands.rs`'s/`lib.rs`'s readers extract from the same
+        // raw store value a real `store.get(KEY)` would hand them.
+        assert_eq!(value.get(KEY_LAUNCH_ON_LOGIN).and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            DonationConsent::from_store_value(value.get(KEY_DONATION_CONSENT)),
+            DonationConsent::OptedIn
+        );
+        assert_eq!(value.get("lastView").and_then(|v| v.as_str()), Some("monitor"));
+
+        // No account keys present in a 0.18.0 config.json.
+        assert!(value.get("account").is_none());
+        assert!(value.get("accountStatus").is_none());
+    }
+
+    // ── Account status starts SignedOut on a fresh/upgraded profile ────────
+    // (empty mock credential store, independent of folder-onboarding state —
+    // `AccountService` never reads `config.json`/onboarding keys at all).
+
+    struct EmptyStore;
+    impl SecretStore for EmptyStore {
+        fn install_id(&self) -> Result<String, StoreError> {
+            Ok("test-install".into())
+        }
+        fn load_profile(&self, _profile: ClientProfile) -> Result<Option<StoredProfileData>, StoreError> {
+            Ok(None)
+        }
+        fn save_profile(&self, _profile: ClientProfile, _data: &StoredProfileData) -> Result<(), StoreError> {
+            Ok(())
+        }
+        fn clear_profile(&self, _profile: ClientProfile) -> Result<(), StoreError> {
+            Ok(())
+        }
+    }
+
+    struct LiveProfileStore(StdMutex<Option<StoredProfileData>>);
+    impl SecretStore for LiveProfileStore {
+        fn install_id(&self) -> Result<String, StoreError> {
+            Ok("test-install".into())
+        }
+        fn load_profile(&self, _profile: ClientProfile) -> Result<Option<StoredProfileData>, StoreError> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn save_profile(&self, _profile: ClientProfile, data: &StoredProfileData) -> Result<(), StoreError> {
+            *self.0.lock().unwrap() = Some(data.clone());
+            Ok(())
+        }
+        fn clear_profile(&self, _profile: ClientProfile) -> Result<(), StoreError> {
+            *self.0.lock().unwrap() = None;
+            Ok(())
+        }
+    }
+
+    struct FixedClock;
+    impl Clock for FixedClock {
+        fn now_unix(&self) -> Duration {
+            Duration::from_secs(2_000_000_000)
+        }
+        fn now_instant(&self) -> Instant {
+            Instant::now()
+        }
+    }
+
+    struct ZeroRandom;
+    impl SecureRandom for ZeroRandom {
+        fn fill(&self, buf: &mut [u8]) {
+            buf.fill(7);
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingBrowser {
+        calls: AtomicUsize,
+    }
+    impl BrowserLauncher for RecordingBrowser {
+        fn open(&self, _url: &str) -> bool {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            true
+        }
+    }
+
+    struct AlwaysFailTransport;
+    #[async_trait::async_trait]
+    impl AccountTransport for AlwaysFailTransport {
+        async fn post_json(
+            &self,
+            _path: &str,
+            _headers: Vec<(String, String)>,
+            _body: serde_json::Value,
+        ) -> Result<HttpResponse, TransportError> {
+            Err(TransportError::Network)
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_or_upgraded_profile_with_no_stored_credentials_starts_signed_out() {
+        let service = AccountService::new(
+            Arc::new(AlwaysFailTransport),
+            Arc::new(EmptyStore),
+            Arc::new(RecordingBrowser::default()),
+            Arc::new(FixedClock),
+            Arc::new(ZeroRandom),
+            ClientProfile::Debug,
+        );
+        assert_eq!(service.status(), AccountStatus::SignedOut);
+        assert!(!service.snapshot().can_use_account);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_never_invokes_the_browser_launcher_on_the_autostart_startup_path() {
+        // A live stored refresh (the 0.18.0-upgrade-with-an-existing-Bridge-
+        // login case bootstrap actually tries to recover) — the point is
+        // proving the one-shot restart refresh never opens the OS browser
+        // regardless of whether the refresh attempt itself succeeds.
+        let stored = StoredProfileData {
+            schema_version: STORED_PROFILE_SCHEMA_VERSION,
+            device_key_scalar_b64: URL_SAFE_NO_PAD.encode([9u8; 32]),
+            device_id: Some("dev_test".into()),
+            refresh_current: Some(StoredRefresh {
+                refresh_token: "refresh_test".into(),
+                refresh_expires_at_unix: 4_000_000_000,
+                refresh_absolute_expires_at_unix: 4_000_000_000,
+                account: StoredAccount {
+                    nickname: "Helmi".into(),
+                    clan_tag: Some("TFD".into()),
+                    realm: Some("eu".into()),
+                },
+            }),
+            refresh_pending: None,
+        };
+        let browser = Arc::new(RecordingBrowser::default());
+        let service = Arc::new(AccountService::new(
+            Arc::new(AlwaysFailTransport),
+            Arc::new(LiveProfileStore(StdMutex::new(Some(stored)))),
+            browser.clone(),
+            Arc::new(FixedClock),
+            Arc::new(ZeroRandom),
+            ClientProfile::Debug,
+        ));
+
+        service.bootstrap().await;
+
+        assert_eq!(
+            browser.calls.load(AtomicOrdering::SeqCst),
+            0,
+            "bootstrap's one-shot restart refresh must never call the browser launcher \
+             — begin_login (the only browser-opening call) is reachable only from the \
+             explicit Connect/Retry button IPC command, never the startup/autostart path"
+        );
     }
 }

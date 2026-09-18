@@ -873,6 +873,86 @@ pub(crate) fn open_monitor_window(app: &AppHandle) {
     navigate_engine(app, "/monitor");
 }
 
+// ── Account gate: startup restore + tray recovery (td-980190) ──────────────
+
+/// Pure decision for the startup saved-Monitor-view restore gate: true iff
+/// onboarding is complete, the saved view is `"monitor"`, and the account
+/// snapshot currently allows navigation. Kept separate from the actual
+/// `AppHandle`/window-navigate side effects (`maybe_restore_saved_monitor_view`)
+/// so it is unit-testable exactly like `decide_bridge_action`.
+fn should_restore_monitor_view(
+    onboarding_complete: bool,
+    saved_view: Option<&str>,
+    snapshot: &account::AccountSnapshot,
+) -> bool {
+    onboarding_complete
+        && saved_view == Some("monitor")
+        && commands::account_navigation_allowed(snapshot)
+}
+
+/// Runs once, after the one-shot bootstrap restart refresh completes, so the
+/// "may I restore the saved Monitor view" decision is made against a
+/// resolved account snapshot rather than the synchronous pre-bootstrap
+/// `SignedOut` default (td-980190). Never touches window visibility (the
+/// autostart-hide block already ran before this task's spawn) — navigates
+/// directly like the original synchronous block did, not via
+/// `open_monitor_window`. Guards against overriding navigation the user
+/// already triggered while bootstrap was resolving by re-checking the main
+/// window is still showing local (non-engine) content immediately before
+/// navigating.
+fn maybe_restore_saved_monitor_view(
+    app: &AppHandle,
+    service: &account::AccountService,
+    onboarding_complete: bool,
+    saved_view: Option<&str>,
+) {
+    if !should_restore_monitor_view(onboarding_complete, saved_view, &service.snapshot()) {
+        return;
+    }
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    if let Ok(current) = win.url() {
+        if current.host_str() == Some("engine.tfd.rocks") {
+            log::info!("startup view restore: window already navigated, not overriding");
+            return;
+        }
+    }
+    match MONITOR_URL.parse::<tauri::Url>() {
+        Ok(url) => {
+            if let Err(e) = win.navigate(url) {
+                log::error!("startup view restore: navigate to monitor failed: {e}");
+            }
+        }
+        Err(e) => log::error!("startup view restore: bad monitor URL: {e}"),
+    }
+}
+
+/// Interactive-safe fallback for a native gate point whose window may
+/// already be showing account-dependent (engine/monitor) content when the
+/// account stops being usable: navigates the main window back to the
+/// captured local dashboard URL WITHOUT touching the saved `lastView` pref,
+/// so a later successful reconnect still restores the prior view on
+/// restart. Never touches window visibility/focus — an autostart-hidden
+/// window stays hidden. A reusable primitive for future account-gated
+/// recovery call sites (td-9994bd's embedded-session handoff owns wiring
+/// this more broadly); this task wires it only into the tray "Open Battle
+/// Monitor" refusal below, since a tray click can arrive while the window
+/// is already showing engine content — unlike the local-dashboard-only IPC
+/// commands in commands.rs, which are only ever reachable from a page that
+/// is already the local dashboard.
+pub(crate) fn recover_to_local_dashboard(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some(url) = app.state::<DashboardUrl>().0.lock().unwrap().clone() else {
+        return;
+    };
+    if let Err(e) = win.navigate(url) {
+        log::error!("recover_to_local_dashboard: navigate failed: {e}");
+    }
+}
+
 /// Label prefix for profile-link windows (the `Window` link target) and tabs
 /// (the `Tab` link target). The capability scoping (`profile.json`), the
 /// label-aware injected bar, the CloseRequested guard, and any future
@@ -1340,7 +1420,13 @@ pub fn run() {
                         }
                     }
                     "open_monitor" => {
-                        open_monitor_window(app);
+                        let snapshot = app.state::<Arc<account::AccountService>>().snapshot();
+                        if commands::account_navigation_allowed(&snapshot) {
+                            open_monitor_window(app);
+                        } else {
+                            log::info!("tray open_monitor: refused, account not usable");
+                            recover_to_local_dashboard(app);
+                        }
                     }
                     "check_updates" => {
                         let handle = app.clone();
@@ -1461,20 +1547,11 @@ pub fn run() {
                     log::error!("Failed to start the bridge listener: {e}");
                 }
             }
-            // One-shot restart refresh (td-27bcc9's scope; recurring renewal
-            // scheduling/backoff is td-cab09a): tries to restore a prior
-            // session from durable storage without opening a browser.
-            {
-                let service = account_service.clone();
-                tauri::async_runtime::spawn(async move {
-                    service.bootstrap().await;
-                });
-            }
             // Recurring silent renewal (td-cab09a). Order against the
-            // bootstrap above does not matter: a tick with no connected
-            // session is a no-op. Managed state owns the loop, so it is
-            // cancelled and aborted when the app tears the state down —
-            // never left running as a bare task.
+            // one-shot bootstrap below does not matter: a tick with no
+            // connected session is a no-op. Managed state owns the loop, so
+            // it is cancelled and aborted when the app tears the state down
+            // — never left running as a bare task.
             app.manage(account::RenewalScheduler::start(account_service.clone()));
 
             // ── Start the bridge if onboarding is complete ──────────────────
@@ -1488,9 +1565,9 @@ pub fn run() {
             // The engine-page "Settings" control returns the main webview to the
             // captured DashboardUrl. Capture it NOW, while the window still shows
             // the local app, so the target is valid even on an autostart run that
-            // restores straight to the monitor below — otherwise it stays None and
-            // Settings dead-ends on a blank page (the black-window bug). Only ever
-            // store a LOCAL (non-engine) URL.
+            // may restore straight to the monitor below — otherwise it stays None
+            // and Settings dead-ends on a blank page (the black-window bug). Only
+            // ever store a LOCAL (non-engine) URL.
             if let Some(win) = app.get_webview_window("main") {
                 if let Ok(url) = win.url() {
                     // Skip about:blank (window not loaded yet) and engine URLs — the
@@ -1502,24 +1579,28 @@ pub fn run() {
                 }
             }
 
-            // ── Restore last-active view (monitor or dashboard) ─────────────
-            // Only restore monitor when onboarding is complete — navigating to
-            // the remote monitor before the replays path is configured is wrong.
-            // Navigate directly (not via open_monitor_window) so window
-            // visibility is not touched; the autostart-hide block already handled that.
-            if onboarding_complete && read_last_view(app.handle()).as_deref() == Some("monitor") {
-                if let Some(win) = app.get_webview_window("main") {
-                    match MONITOR_URL.parse::<tauri::Url>() {
-                        Ok(url) => {
-                            if let Err(e) = win.navigate(url) {
-                                log::error!(
-                                    "startup view restore: navigate to monitor failed: {e}"
-                                );
-                            }
-                        }
-                        Err(e) => log::error!("startup view restore: bad monitor URL: {e}"),
-                    }
-                }
+            // ── One-shot restart refresh, THEN restore last-active view ─────
+            // (td-980190) The saved-Monitor-view restore must not decide off
+            // the synchronous pre-bootstrap `SignedOut` default — it has to
+            // wait for `bootstrap()` (td-27bcc9's one-shot restart refresh,
+            // the SAME future the account service already exposes; no
+            // second timer/poll loop is added here). Both steps run in one
+            // spawned task so the decision is always made against a
+            // resolved account snapshot, whether or not bootstrap found
+            // anything to restore.
+            let saved_view = read_last_view(app.handle());
+            {
+                let service = account_service.clone();
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    service.bootstrap().await;
+                    maybe_restore_saved_monitor_view(
+                        &app_handle,
+                        &service,
+                        onboarding_complete,
+                        saved_view.as_deref(),
+                    );
+                });
             }
 
             Ok(())
@@ -1720,6 +1801,132 @@ mod tests {
         assert!(
             !INDEX_HTML.contains("style=\""),
             "ui/index.html must not use inline style attributes (CSP-blocked)"
+        );
+    }
+
+    // ── Account gate: startup restore decision (td-980190) ─────────────────
+
+    fn native_connected_snapshot() -> account::AccountSnapshot {
+        account::AccountSnapshot {
+            status: account::AccountStatus::Connected {
+                nickname: "Helmi".into(),
+                clan_tag: None,
+                realm: None,
+                web_lease_expires_at: None,
+            },
+            can_use_account: true,
+            lifecycle_epoch: 1,
+            nickname: Some("Helmi".into()),
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: None,
+        }
+    }
+
+    fn native_signed_out_snapshot() -> account::AccountSnapshot {
+        account::AccountSnapshot {
+            status: account::AccountStatus::SignedOut,
+            can_use_account: false,
+            lifecycle_epoch: 0,
+            nickname: None,
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: None,
+        }
+    }
+
+    #[test]
+    fn restores_monitor_only_when_onboarding_complete_view_saved_and_account_usable() {
+        assert!(should_restore_monitor_view(true, Some("monitor"), &native_connected_snapshot()));
+    }
+
+    #[test]
+    fn does_not_restore_monitor_when_account_not_connected() {
+        // The exact td-980190 fix: the pre-bootstrap `SignedOut` default (or
+        // any other disconnected snapshot) must never let the startup
+        // restore through, even when onboarding is complete and the saved
+        // view is "monitor".
+        assert!(!should_restore_monitor_view(true, Some("monitor"), &native_signed_out_snapshot()));
+    }
+
+    #[test]
+    fn does_not_restore_monitor_when_onboarding_incomplete() {
+        assert!(!should_restore_monitor_view(false, Some("monitor"), &native_connected_snapshot()));
+    }
+
+    #[test]
+    fn does_not_restore_monitor_when_saved_view_is_not_monitor() {
+        assert!(!should_restore_monitor_view(true, Some("dashboard"), &native_connected_snapshot()));
+        assert!(!should_restore_monitor_view(true, None, &native_connected_snapshot()));
+    }
+
+    // ── ui/index.html structural assertions (td-980190) ─────────────────────
+    // Extends the existing INDEX_HTML const + string-assertion convention
+    // above (CSP tests) rather than adding a new JS-DOM test framework.
+
+    #[test]
+    fn index_html_has_no_later_or_skip_button() {
+        // Scoped to actual <button>...</button> text (not comments, which
+        // legitimately explain the absence in prose) — no Later/skip
+        // affordance anywhere in the rendered markup.
+        let mut rest = INDEX_HTML;
+        while let Some(tag_start) = rest.find("<button") {
+            rest = &rest[tag_start..];
+            let Some(open_end) = rest.find('>') else { break };
+            let after_open = &rest[open_end + 1..];
+            let Some(close) = after_open.find("</button>") else { break };
+            let inner = after_open[..close].trim();
+            let lower = inner.to_ascii_lowercase();
+            assert_ne!(lower, "skip", "found a Skip button: {inner:?}");
+            assert_ne!(lower, "later", "found a Later button: {inner:?}");
+            rest = &after_open[close + "</button>".len()..];
+        }
+    }
+
+    #[test]
+    fn index_html_defines_the_mandatory_account_connect_screen() {
+        for id in [
+            "id=\"account\"",
+            "id=\"account-heading\"",
+            "id=\"account-body\"",
+            "id=\"account-dot\"",
+            "id=\"account-error\"",
+            "id=\"account-identity\"",
+            "id=\"btn-account-connect\"",
+            "id=\"btn-account-reopen\"",
+            "id=\"btn-account-cancel\"",
+            "id=\"account-identity-row\"",
+            "id=\"account-identity-label\"",
+        ] {
+            assert!(INDEX_HTML.contains(id), "expected ui/index.html to define {id}");
+        }
+    }
+
+    #[test]
+    fn index_html_routes_all_three_folder_completion_sites_through_one_renderer() {
+        // init(), confirmPath() success and the btn-pick handler success ALL
+        // call the same idempotent folder-complete -> safe account renderer
+        // (1 definition + 3 call sites = 4 occurrences of the substring).
+        let count = INDEX_HTML.matches("completeFolderOnboarding(").count();
+        assert_eq!(
+            count, 4,
+            "expected exactly 1 definition + 3 call sites of completeFolderOnboarding(, got {count}"
+        );
+    }
+
+    #[test]
+    fn index_html_visibility_of_main_status_is_owned_by_a_single_function() {
+        // showRunning() must never itself show the dashboard — the account
+        // gate (setAccountScreen) is the one place that decides between the
+        // connect screen and the running dashboard.
+        let count = INDEX_HTML.matches("main-status').style.display").count();
+        assert_eq!(
+            count, 1,
+            "expected exactly one place setting #main-status visibility (setAccountScreen), got {count}"
         );
     }
 }

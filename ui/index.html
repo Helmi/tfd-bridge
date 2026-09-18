@@ -445,6 +445,14 @@
       margin-top: 0.7rem;
     }
 
+    /* ── Account connect screen (td-980190) ──────────────────────────────────
+       Mirrors #onboarding's card/hint/actions convention — no new visual
+       language, no Later/skip control. */
+    .dot[data-state="idle"]  { background: var(--fg-faint); box-shadow: 0 0 0 3px rgba(123, 145, 137, 0.16); }
+    .dot[data-state="pending"] { background: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+    .dot[data-state="error"] { background: var(--danger); box-shadow: 0 0 0 3px rgba(242, 102, 92, 0.16); }
+    #account-identity { margin-top: 0.85rem; }
+
     /* ── Initial visibility + spacing (former inline style attributes) ──────
        The CSP (tauri.conf.json) gives style-src a Tauri-injected nonce, which
        makes the webview ignore 'unsafe-inline' — inline style attributes
@@ -452,10 +460,16 @@
        element.style via the CSSOM, which CSP does not restrict. */
     #main-status      { display: none; }
     #onboarding       { display: none; }
+    #account          { display: none; }
     #current-path     { display: none; }
     #detected-section { display: none; }
     #no-detect-msg    { display: none; }
     #error-msg        { display: none; }
+    #account-identity { display: none; }
+    #account-identity-row { display: none; }
+    #account-error    { display: none; }
+    #btn-account-reopen { display: none; }
+    #btn-account-cancel { display: none; }
     .card-head + .hint { margin-top: 0.6rem; }
     #main-status .hint { margin-bottom: 0.85rem; }
     #detected-section > .path-source { margin-bottom: 0.5rem; }
@@ -474,10 +488,13 @@
         <p>Local companion for the TFD World of Warships community.</p>
       </div>
 
-      <!-- Running state (onboarding already done) -->
+      <!-- Running state (onboarding already done, account connected) -->
       <div id="main-status">
         <div class="card">
           <div class="status"><span class="dot"></span> Bridge is running</div>
+          <div class="status" id="account-identity-row">
+            <span class="dot"></span> <span id="account-identity-label"></span>
+          </div>
           <div class="path-row" id="current-path">
             <div class="path-source">Replays folder</div>
             <div class="path-field">
@@ -587,6 +604,30 @@
         </div>
       </div>
 
+      <!-- Mandatory account connection (td-980190) — folder onboarding first,
+           this screen next; no Later/skip control anywhere in it. -->
+      <div id="account">
+        <div class="card">
+          <div class="card-head">
+            <h2 id="account-heading">Connect to TFD</h2>
+          </div>
+          <div class="status" role="status" aria-live="polite">
+            <span class="dot" id="account-dot" data-state="idle"></span>
+            <span id="account-body"></span>
+          </div>
+          <div class="path-row" id="account-identity">
+            <div class="path-source">Signed in as</div>
+            <div class="path-box" id="account-identity-text"></div>
+          </div>
+          <div id="account-error" class="error" role="alert" aria-live="polite"></div>
+          <div class="actions">
+            <button class="btn btn-primary" id="btn-account-connect" type="button">Connect to TFD</button>
+            <button class="btn btn-secondary" id="btn-account-reopen" type="button">Reopen browser</button>
+            <button class="btn btn-secondary" id="btn-account-cancel" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </main>
 
@@ -628,7 +669,7 @@
       const status = await invoke('get_onboarding_status');
 
       if (!status.needsOnboarding) {
-        showRunning(status.currentPath, status.launchOnLogin);
+        await completeFolderOnboarding(status.currentPath, status.launchOnLogin);
       } else {
         showOnboarding(status.detected);
       }
@@ -639,6 +680,24 @@
     }
     // Reflect the persisted profile-link target preference on the dashboard.
     initLinkTarget();
+  }
+
+  // Folder onboarding is deterministically first; the mandatory account gate
+  // is evaluated immediately after it completes (fresh install) or stands
+  // alone (an upgrading user whose folder onboarding is already done). ALL
+  // THREE places that used to call showRunning() directly (init, and the two
+  // folder-completion handlers below) route through this one idempotent
+  // function instead, so folder-complete always means the SAME thing: "now
+  // decide, safely, whether to show the connect screen or the dashboard."
+  let accountGateStarted = false;
+  async function completeFolderOnboarding(path, launchOnLogin) {
+    document.getElementById('onboarding').style.display = 'none';
+    // Populates the dashboard's fields; visibility stays controlled by the
+    // account gate below — showRunning() never shows #main-status itself.
+    showRunning(path, launchOnLogin);
+    if (accountGateStarted) return; // idempotent: never start a second poll chain
+    accountGateStarted = true;
+    await pollAccountOnce();
   }
 
   function setDashboardToggle(enabled) {
@@ -653,7 +712,10 @@
   }
 
   function showRunning(path, launchOnLogin) {
-    document.getElementById('main-status').style.display = 'block';
+    // Visibility of #main-status is NOT set here — the account gate
+    // (renderAccount) is the single place that decides whether the running
+    // dashboard, the connect screen, or folder onboarding is shown
+    // (td-980190: account-dependent views are gated, not just their buttons).
     if (path) {
       const el = document.getElementById('current-path');
       document.getElementById('current-path-text').textContent = path;
@@ -827,8 +889,7 @@
       const result = await invoke('confirm_replays_path', { path });
       if (result.ok) {
         await applyLaunchOnLogin();
-        document.getElementById('onboarding').style.display = 'none';
-        showRunning(result.path, getLaunchOnLoginPref());
+        await completeFolderOnboarding(result.path, getLaunchOnLoginPref());
         notifyIfCorrected(result);
       } else if (result.error) {
         showError(result.error);
@@ -844,8 +905,7 @@
       const result = await invoke('pick_replays_folder');
       if (result.ok) {
         await applyLaunchOnLogin();
-        document.getElementById('onboarding').style.display = 'none';
-        showRunning(result.path, getLaunchOnLoginPref());
+        await completeFolderOnboarding(result.path, getLaunchOnLoginPref());
         notifyIfCorrected(result);
       } else if (result.error) {
         showError(result.error);
@@ -867,6 +927,227 @@
     el.textContent = '';
     el.style.display = 'none';
   }
+
+  // ── Mandatory account connection (td-980190) ───────────────────────────
+  // Folder onboarding is unchanged and always resolves first (see
+  // completeFolderOnboarding above); this is the one safe renderer that
+  // decides, from the live `account_status`, whether the connect screen or
+  // the running dashboard is shown. No Later/skip control exists anywhere
+  // in this section. Native code is the actual authority for whether
+  // protected navigation is allowed (commands.rs/lib.rs gate every
+  // account-dependent route independently) — this UI only reflects status,
+  // it never itself grants access.
+
+  // Copy for every actionable, distinguishable connect-screen state. Errors
+  // are never color-only: each state has its own heading + body text.
+  const ACCOUNT_COPY = {
+    signed_out: {
+      heading: 'Connect to TFD',
+      body: 'Connect your TFD account to use Bridge — Battle Monitor, sharing and RePlayer all need it.',
+      dot: 'idle',
+    },
+    awaiting_browser: {
+      heading: 'Continue in your browser',
+      body: 'Finish signing in in the browser window we opened. Didn\u2019t see it?',
+      dot: 'pending',
+    },
+    exchanging: {
+      heading: 'Finishing sign-in\u2026',
+      body: 'Completing your connection to TFD.',
+      dot: 'pending',
+    },
+    canceled: {
+      heading: 'Sign-in canceled',
+      body: 'You canceled signing in. Connect again when you\u2019re ready.',
+      dot: 'error',
+    },
+    denied: {
+      heading: 'Access denied',
+      body: 'TFD login was denied. Try connecting again.',
+      dot: 'error',
+    },
+    account_not_authorized: {
+      heading: 'TFD access required',
+      body: 'This Wargaming account isn\u2019t linked to TFD access. Sign in with a different account, or try again.',
+      dot: 'error',
+    },
+    expired: {
+      heading: 'Sign-in link expired',
+      body: 'That sign-in attempt expired. Start again.',
+      dot: 'error',
+    },
+    open_failed: {
+      heading: 'Couldn\u2019t open your browser',
+      body: 'TFD Bridge couldn\u2019t open your default browser. Check your default browser, then try again.',
+      dot: 'error',
+    },
+    store_unavailable: {
+      heading: 'Secure storage unavailable',
+      body: 'TFD Bridge couldn\u2019t reach secure credential storage on this device. Try again.',
+      dot: 'error',
+    },
+    renewal_failed: {
+      heading: 'Reconnect to TFD',
+      body: 'Your session couldn\u2019t renew automatically. Sign in again to keep using Bridge.',
+      dot: 'error',
+    },
+    ipc_error: {
+      heading: 'Couldn\u2019t check your connection',
+      body: 'Something went wrong checking your TFD connection. Try again.',
+      dot: 'error',
+    },
+  };
+
+  function formatIdentity(status) {
+    if (!status || !status.nickname) return '';
+    return status.clan_tag ? `${status.nickname} [${status.clan_tag}]` : status.nickname;
+  }
+
+  // Exactly one of folder onboarding / the connect screen / the dashboard is
+  // visible at a time — the deterministic folder-then-account-then-dashboard
+  // order. #onboarding's own display is owned by showOnboarding/
+  // completeFolderOnboarding above; this only ever chooses between the
+  // other two.
+  function setAccountScreen(showDashboard) {
+    document.getElementById('account').style.display = showDashboard ? 'none' : 'block';
+    document.getElementById('main-status').style.display = showDashboard ? 'block' : 'none';
+  }
+
+  function renderConnectedIdentity(status) {
+    const row = document.getElementById('account-identity-row');
+    if (!row) return;
+    row.style.display = 'flex';
+    document.getElementById('account-identity-label').textContent = 'Signed in as ' + formatIdentity(status);
+  }
+
+  // Stable-nodes rendering: identical state never touches the DOM twice in a
+  // row, so focus is never stolen and the polite live region never
+  // re-announces unchanged text (this is also what makes a persistent
+  // failure banner like renewal_failed render once per occurrence instead
+  // of flashing on every subsequent poll of the same still-failing state).
+  let lastAccountRenderKey = null;
+  function renderAccount(status, connectError) {
+    const state = (status && status.state) || 'ipc_error';
+    const key = JSON.stringify([state, status && status.nickname, status && status.clan_tag,
+      status && status.realm, connectError || null]);
+    if (key === lastAccountRenderKey) return;
+    lastAccountRenderKey = key;
+
+    if (state === 'connected') {
+      setAccountScreen(true);
+      renderConnectedIdentity(status);
+      return;
+    }
+    setAccountScreen(false);
+
+    const copy = ACCOUNT_COPY[state] || ACCOUNT_COPY.ipc_error;
+    document.getElementById('account-heading').textContent = copy.heading;
+    document.getElementById('account-body').textContent = copy.body;
+    document.getElementById('account-dot').dataset.state = copy.dot;
+
+    const identityRow = document.getElementById('account-identity');
+    if (state === 'renewal_failed' && status && status.nickname) {
+      identityRow.style.display = 'block';
+      document.getElementById('account-identity-text').textContent = formatIdentity(status);
+    } else {
+      identityRow.style.display = 'none';
+    }
+
+    const errEl = document.getElementById('account-error');
+    if (connectError) {
+      errEl.textContent = connectError;
+      errEl.style.display = 'block';
+    } else {
+      errEl.style.display = 'none';
+    }
+
+    const connectBtn = document.getElementById('btn-account-connect');
+    const reopenBtn = document.getElementById('btn-account-reopen');
+    const cancelBtn = document.getElementById('btn-account-cancel');
+    if (state === 'awaiting_browser') {
+      connectBtn.style.display = 'none';
+      reopenBtn.style.display = 'inline-flex';
+      cancelBtn.style.display = 'inline-flex';
+      reopenBtn.disabled = false;
+      cancelBtn.disabled = false;
+    } else if (state === 'exchanging') {
+      connectBtn.style.display = 'none';
+      reopenBtn.style.display = 'none';
+      cancelBtn.style.display = 'none';
+    } else {
+      connectBtn.style.display = 'inline-flex';
+      connectBtn.textContent = state === 'renewal_failed' ? 'Reconnect' : 'Connect to TFD';
+      connectBtn.disabled = false;
+      reopenBtn.style.display = 'none';
+      cancelBtn.style.display = 'none';
+    }
+  }
+
+  // Serial polling, no overlap: the next `account_status` read is only
+  // scheduled after the previous one resolved AND rendered. `pollGeneration`
+  // is bumped by every explicit action and on unload, so a completion that
+  // resolves after its generation was invalidated is ignored rather than
+  // acted on (a stale AwaitingBrowser response landing after Cancel, or any
+  // in-flight read outliving a page navigate/unload).
+  const ACCOUNT_POLL_INTERVAL_MS = 4000;
+  let pollGeneration = 0;
+  let pollTimer = null;
+  let lastConnectError = null;
+
+  function invalidatePendingPoll() {
+    pollGeneration++;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  async function pollAccountOnce() {
+    const myGen = pollGeneration;
+    let status;
+    try {
+      status = await invoke('account_status');
+    } catch (err) {
+      // Fail closed: an IPC failure never shows a connected/usable view.
+      console.error('account_status failed:', err);
+      status = { state: 'ipc_error' };
+    }
+    if (myGen !== pollGeneration) return; // stale completion — ignore
+    renderAccount(status, lastConnectError);
+    if (myGen !== pollGeneration) return;
+    pollTimer = setTimeout(() => {
+      if (myGen === pollGeneration) pollAccountOnce();
+    }, ACCOUNT_POLL_INTERVAL_MS);
+  }
+
+  // Explicit user action → invalidate any in-flight/scheduled poll, run the
+  // action, then read+render fresh status immediately (never wait out the
+  // interval) and resume the regular serial poll from there.
+  async function performAccountAction(action) {
+    invalidatePendingPoll();
+    lastConnectError = null;
+    try {
+      await action();
+    } catch (err) {
+      console.error('account action failed:', err);
+      lastConnectError = String(err);
+    }
+    await pollAccountOnce();
+  }
+
+  document.getElementById('btn-account-connect').addEventListener('click', () => {
+    performAccountAction(() => invoke('account_begin_login'));
+  });
+  document.getElementById('btn-account-reopen').addEventListener('click', () => {
+    performAccountAction(() => invoke('account_reopen_pending'));
+  });
+  document.getElementById('btn-account-cancel').addEventListener('click', () => {
+    performAccountAction(() => invoke('account_cancel_login'));
+  });
+
+  // A window unload (e.g. Rust navigates this window to Monitor/RePlayer)
+  // must never let an in-flight poll act after the fact.
+  window.addEventListener('pagehide', invalidatePendingPoll);
 
   init();
 </script>
