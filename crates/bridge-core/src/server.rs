@@ -331,14 +331,31 @@ pub enum AuthCallbackOutcome {
     ExpiredRequest,
 }
 
+/// The callback response is sent synchronously, before the (async) `/token`
+/// exchange and the durable secure-store writes it depends on have run — so
+/// it must never claim a connection exists yet. Every variant below maps to
+/// wording that is true at the moment the response is written; only a later
+/// `status()` poll may report `Connected`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthCallbackAck {
-    Accepted,
+    /// A code was consumed and the exchange was handed off to run
+    /// asynchronously. Its outcome (success or failure) is not yet known.
+    Pending,
+    Denied,
+    AccountNotAuthorized,
+    Expired,
+    /// Malformed, replayed, unknown-state, or otherwise invalid callback.
     Rejected,
 }
 
-const AUTH_CALLBACK_ACCEPTED_BODY: &str =
-    "TFD Bridge is now connected. You can close this tab and return to the app.";
+const AUTH_CALLBACK_PENDING_BODY: &str =
+    "Authorization received; return to TFD Bridge while connection completes.";
+const AUTH_CALLBACK_DENIED_BODY: &str =
+    "Sign-in was denied. Return to TFD Bridge to try again.";
+const AUTH_CALLBACK_ACCOUNT_NOT_AUTHORIZED_BODY: &str =
+    "This account is not authorized for TFD Bridge. Return to TFD Bridge for details.";
+const AUTH_CALLBACK_EXPIRED_BODY: &str =
+    "This sign-in link expired. Return to TFD Bridge and retry.";
 const AUTH_CALLBACK_REJECTED_BODY: &str =
     "This sign-in link is no longer valid. Close this tab and retry from TFD Bridge.";
 const AUTH_CALLBACK_UNAVAILABLE_BODY: &str = "Sign-in is not available right now.";
@@ -362,7 +379,12 @@ fn handle_auth_callback(
         return auth_callback_response(400, AUTH_CALLBACK_REJECTED_BODY);
     };
     match sink.handle_callback(callback) {
-        AuthCallbackAck::Accepted => auth_callback_response(200, AUTH_CALLBACK_ACCEPTED_BODY),
+        AuthCallbackAck::Pending => auth_callback_response(200, AUTH_CALLBACK_PENDING_BODY),
+        AuthCallbackAck::Denied => auth_callback_response(200, AUTH_CALLBACK_DENIED_BODY),
+        AuthCallbackAck::AccountNotAuthorized => {
+            auth_callback_response(200, AUTH_CALLBACK_ACCOUNT_NOT_AUTHORIZED_BODY)
+        }
+        AuthCallbackAck::Expired => auth_callback_response(200, AUTH_CALLBACK_EXPIRED_BODY),
         AuthCallbackAck::Rejected => auth_callback_response(400, AUTH_CALLBACK_REJECTED_BODY),
     }
 }
@@ -1985,7 +2007,7 @@ mod tests {
     fn auth_callback_works_before_replays_attached_then_replay_routes_activate() {
         let sink = Arc::new(RecordingSink {
             calls: Mutex::new(Vec::new()),
-            ack: AuthCallbackAck::Accepted,
+            ack: AuthCallbackAck::Pending,
         });
         let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
             .expect("bridge start failed");
@@ -2004,7 +2026,9 @@ mod tests {
         let (status, body, headers) =
             get(&format!("{base}/auth/callback?code=abc123&state=xyz789"));
         assert_eq!(status, 200);
-        assert!(body.contains("connected"));
+        // Never claims a connection exists yet: the exchange has not run.
+        assert_eq!(body, AUTH_CALLBACK_PENDING_BODY);
+        assert!(!body.to_lowercase().contains("connected"));
         assert!(!body.contains("abc123") && !body.contains("xyz789"), "must not reflect request values");
         assert_eq!(find_header(&headers, "cache-control").as_deref(), Some("no-store"));
         assert_eq!(find_header(&headers, "referrer-policy").as_deref(), Some("no-referrer"));
@@ -2042,7 +2066,7 @@ mod tests {
     fn auth_callback_maps_known_error_values() {
         let sink = Arc::new(RecordingSink {
             calls: Mutex::new(Vec::new()),
-            ack: AuthCallbackAck::Accepted,
+            ack: AuthCallbackAck::Pending,
         });
         let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
             .expect("bridge start failed");
@@ -2067,7 +2091,7 @@ mod tests {
     fn auth_callback_rejects_malformed_queries_without_calling_the_sink() {
         let sink = Arc::new(RecordingSink {
             calls: Mutex::new(Vec::new()),
-            ack: AuthCallbackAck::Accepted,
+            ack: AuthCallbackAck::Pending,
         });
         let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
             .expect("bridge start failed");
@@ -2109,13 +2133,45 @@ mod tests {
         assert!(!body.contains("secretcodevalue"));
     }
 
+    /// Exact wording + status for every ack outcome. `Pending` must never
+    /// claim a connection exists: the exchange it triggers is async and may
+    /// still fail (invalid grant, transport error, or a secure-store write
+    /// failure), so the synchronous response can only ever promise receipt.
+    /// The other terminal wordings must be accurate to what actually
+    /// happened, and no variant may reflect request-supplied values.
+    #[test]
+    fn auth_callback_response_bodies_are_exact_and_never_claim_connected() {
+        for (ack, expected_status, expected_body) in [
+            (AuthCallbackAck::Pending, 200, AUTH_CALLBACK_PENDING_BODY),
+            (AuthCallbackAck::Denied, 200, AUTH_CALLBACK_DENIED_BODY),
+            (
+                AuthCallbackAck::AccountNotAuthorized,
+                200,
+                AUTH_CALLBACK_ACCOUNT_NOT_AUTHORIZED_BODY,
+            ),
+            (AuthCallbackAck::Expired, 200, AUTH_CALLBACK_EXPIRED_BODY),
+            (AuthCallbackAck::Rejected, 400, AUTH_CALLBACK_REJECTED_BODY),
+        ] {
+            let sink = Arc::new(RecordingSink { calls: Mutex::new(Vec::new()), ack });
+            let bridge = start_on_ports_with_auth(&[0], None, Some(sink))
+                .expect("bridge start failed");
+            let base = format!("http://127.0.0.1:{}", bridge.port());
+            let (status, body, _) =
+                get(&format!("{base}/auth/callback?code=canary-value&state=s"));
+            assert_eq!(status, expected_status, "ack {ack:?}");
+            assert_eq!(body, expected_body, "ack {ack:?}");
+            assert!(!body.to_lowercase().contains("connected"), "ack {ack:?} must not claim connection");
+            assert!(!body.contains("canary-value"), "ack {ack:?} must not reflect request values");
+        }
+    }
+
     /// The pre-existing DNS-rebinding Host guard runs before ANY routing, so
     /// it must cover the new callback route exactly like every other one.
     #[test]
     fn auth_callback_still_enforces_the_host_guard() {
         let sink = Arc::new(RecordingSink {
             calls: Mutex::new(Vec::new()),
-            ack: AuthCallbackAck::Accepted,
+            ack: AuthCallbackAck::Pending,
         });
         let bridge = start_on_ports_with_auth(&[0], None, Some(sink.clone()))
             .expect("bridge start failed");

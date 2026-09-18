@@ -17,7 +17,7 @@ use super::traits::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bridge_core::dpop::DeviceKey;
-use bridge_core::login_flow::{ConsumedLogin, LoginFlow, TerminalReason};
+use bridge_core::login_flow::{ConsumedLogin, LoginFlow, LoginFlowError, TerminalReason};
 use bridge_core::server::{AuthCallback, AuthCallbackAck, AuthCallbackOutcome, AuthCallbackSink};
 use serde_json::json;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -27,9 +27,6 @@ use std::time::{Duration, Instant};
 /// `bridge.submit bridge.share bridge.profile` (contract v5 section 4.3
 /// example) — the one scope this native client ever requests.
 const SCOPE: &str = "bridge.submit bridge.share bridge.profile";
-/// Fallback only used if the Engine ever omits the absolute cap (contract
-/// always sends it in practice): 365 days, matching v5 section 2.
-const ABSOLUTE_FALLBACK_SECONDS: u64 = 365 * 24 * 3600;
 
 // ── Public status ────────────────────────────────────────────────────────────
 
@@ -152,9 +149,17 @@ struct TokenResponse {
     access_token: String,
     expires_in: u64,
     refresh_token: String,
-    refresh_expires_in: u64,
-    #[serde(default)]
-    refresh_absolute_expires_in: Option<u64>,
+    /// Frozen v5 section 4.4: the absolute UTC instant this refresh token's
+    /// own (90-day sliding) window expires, RFC 3339. Required — the
+    /// contract always sends an absolute timestamp here, never a relative
+    /// duration the client would have to trust its own clock to convert.
+    refresh_expires_at: String,
+    /// Frozen v5 section 4.4: the absolute UTC instant of the 365-day
+    /// vacation-guarantee cap, RFC 3339. Required, and always persisted
+    /// verbatim from this field — never locally recomputed from "now", so a
+    /// later refresh/restart can never silently push this cap into the
+    /// future.
+    refresh_absolute_expires_at: String,
     account: AccountObject,
 }
 
@@ -170,6 +175,55 @@ struct AccountObject {
 fn base64_decode_32(value: &str) -> Result<[u8; 32], ()> {
     let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|_| ())?;
     bytes.try_into().map_err(|_| ())
+}
+
+/// Parses one of the frozen v5 RFC 3339 absolute-UTC expiry fields
+/// (`refresh_expires_at`, `refresh_absolute_expires_at`) into Unix seconds.
+/// Malformed or pre-epoch values are rejected outright — this never falls
+/// back to a locally-guessed duration, which is exactly the defect that let
+/// a refresh silently reset the 365-day absolute cap.
+fn parse_rfc3339_unix(value: &str) -> Result<u64, ()> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(value).map_err(|_| ())?;
+    u64::try_from(parsed.timestamp()).map_err(|_| ())
+}
+
+/// The Engine's own production origin, the only value this checks against
+/// — matches `http::PRODUCTION_BASE_URL`'s origin.
+const ENGINE_ORIGIN_HOST: &str = "engine.tfd.rocks";
+/// The frozen v5 browser-authorization route. Any other path is rejected
+/// outright rather than accepted as an unspecified "variant".
+const AUTHORIZATION_URL_PATH: &str = "/auth/bridge";
+
+/// Validates a `POST /authorize` response's `authorization_url` against the
+/// frozen v5 contract shape before it is ever stored (for reopen) or handed
+/// to the OS browser opener: exact Engine origin, default HTTPS port only,
+/// the frozen `/auth/bridge` route, no embedded credentials, no fragment.
+/// Query parameters (e.g. `request_id`) are the only variable part. A
+/// compromised/misrouted Engine returning anything else must never reach
+/// the browser opener.
+fn validate_authorization_url(url: &str) -> Result<(), ()> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| ())?;
+    if parsed.scheme() != "https" {
+        return Err(());
+    }
+    if parsed.host_str() != Some(ENGINE_ORIGIN_HOST) {
+        return Err(());
+    }
+    // `Url::port()` is `None` exactly when the port is the scheme's default
+    // (443 for https); any explicit port — default or not — is rejected.
+    if parsed.port().is_some() {
+        return Err(());
+    }
+    if parsed.path() != AUTHORIZATION_URL_PATH {
+        return Err(());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(());
+    }
+    if parsed.fragment().is_some() {
+        return Err(());
+    }
+    Ok(())
 }
 
 impl AccountService {
@@ -201,7 +255,17 @@ impl AccountService {
 
     /// Safe, IPC-exposable status. No tokens, no device key, no flow state.
     pub fn status(&self) -> AccountStatus {
-        let inner = self.inner.lock().unwrap();
+        let now = self.clock.now_instant();
+        let mut inner = self.inner.lock().unwrap();
+        // Production expiry path: nothing else polls the pending attempt's
+        // own deadline when the browser is simply never brought back (no
+        // callback, no manual reopen), so without this every such attempt
+        // would report `AwaitingBrowser` forever. `expire_if_due` is a
+        // no-op once nothing is pending (including after a normal
+        // consume/cancel), so this is safe to call unconditionally.
+        if inner.login_flow.expire_if_due(now) {
+            inner.phase = Phase::Expired;
+        }
         if matches!(
             inner.session.status(),
             bridge_core::account::AccountStatus::Connected
@@ -350,6 +414,10 @@ impl AccountService {
         }
         let parsed: AuthorizeResponse =
             serde_json::from_value(response.body).map_err(|_| AccountError::InvalidResponse)?;
+        // Validate BEFORE it is ever stored or handed to the OS browser
+        // opener: a compromised/misrouted Engine returning anything outside
+        // the frozen contract shape must never reach either.
+        validate_authorization_url(&parsed.authorization_url).map_err(|_| AccountError::InvalidResponse)?;
         let ttl = Duration::from_secs(parsed.expires_in.min(bridge_core::login_flow::MAX_TTL.as_secs()));
         let now = self.clock.now_instant();
         {
@@ -412,7 +480,7 @@ impl AccountService {
         let now = self.clock.now_instant();
         enum Outcome {
             Exchange(String, ConsumedLogin),
-            Terminal,
+            Terminal(AuthCallbackAck),
             Rejected,
         }
         let outcome = {
@@ -423,13 +491,25 @@ impl AccountService {
                         inner.phase = Phase::Exchanging;
                         Outcome::Exchange(code, consumed)
                     }
+                    // A late callback whose own deadline already passed is
+                    // reported as Expired (not a generic rejection), and the
+                    // safe status must reflect that without waiting for a
+                    // separate `status()` poll to notice.
+                    Err(LoginFlowError::Expired) => {
+                        inner.phase = Phase::Expired;
+                        Outcome::Terminal(AuthCallbackAck::Expired)
+                    }
                     Err(_) => Outcome::Rejected,
                 },
                 AuthCallbackOutcome::AccessDenied => {
                     match inner.login_flow.consume_terminal(&callback.state, now, TerminalReason::Denied) {
                         Ok(_) => {
                             inner.phase = Phase::Denied;
-                            Outcome::Terminal
+                            Outcome::Terminal(AuthCallbackAck::Denied)
+                        }
+                        Err(LoginFlowError::Expired) => {
+                            inner.phase = Phase::Expired;
+                            Outcome::Terminal(AuthCallbackAck::Expired)
                         }
                         Err(_) => Outcome::Rejected,
                     }
@@ -441,7 +521,11 @@ impl AccountService {
                     {
                         Ok(_) => {
                             inner.phase = Phase::AccountNotAuthorized;
-                            Outcome::Terminal
+                            Outcome::Terminal(AuthCallbackAck::AccountNotAuthorized)
+                        }
+                        Err(LoginFlowError::Expired) => {
+                            inner.phase = Phase::Expired;
+                            Outcome::Terminal(AuthCallbackAck::Expired)
                         }
                         Err(_) => Outcome::Rejected,
                     }
@@ -450,7 +534,11 @@ impl AccountService {
                     match inner.login_flow.consume_terminal(&callback.state, now, TerminalReason::Expired) {
                         Ok(_) => {
                             inner.phase = Phase::Expired;
-                            Outcome::Terminal
+                            Outcome::Terminal(AuthCallbackAck::Expired)
+                        }
+                        Err(LoginFlowError::Expired) => {
+                            inner.phase = Phase::Expired;
+                            Outcome::Terminal(AuthCallbackAck::Expired)
                         }
                         Err(_) => Outcome::Rejected,
                     }
@@ -459,13 +547,17 @@ impl AccountService {
         };
         match outcome {
             Outcome::Rejected => AuthCallbackAck::Rejected,
-            Outcome::Terminal => AuthCallbackAck::Accepted,
+            Outcome::Terminal(ack) => ack,
             Outcome::Exchange(code, consumed) => {
                 let service = Arc::clone(self);
                 tauri::async_runtime::spawn(async move {
                     service.complete_exchange(code, consumed).await;
                 });
-                AuthCallbackAck::Accepted
+                // Never claim a connection here: the exchange above still
+                // has to succeed AND its refresh credentials still have to
+                // be durably persisted before `status()` may ever report
+                // `Connected` (see `finish_login_exchange`).
+                AuthCallbackAck::Pending
             }
         }
     }
@@ -497,13 +589,23 @@ impl AccountService {
             Ok(v) => v,
             Err(_) => return,
         };
+        // Both fields are required, absolute UTC timestamps (v5 section
+        // 4.4). A malformed/missing value is rejected outright rather than
+        // guessed at — never commit a credential whose expiry we could not
+        // establish, and never log the response that carried it.
+        let Ok(refresh_expires_at_unix) = parse_rfc3339_unix(&parsed.refresh_expires_at) else {
+            return;
+        };
+        let Ok(refresh_absolute_expires_at_unix) =
+            parse_rfc3339_unix(&parsed.refresh_absolute_expires_at)
+        else {
+            return;
+        };
         let now_instant = self.clock.now_instant();
-        let now_unix = self.clock.now_unix().as_secs();
         let refresh = StoredRefresh {
             refresh_token: parsed.refresh_token,
-            refresh_expires_at_unix: now_unix + parsed.refresh_expires_in,
-            refresh_absolute_expires_at_unix: now_unix
-                + parsed.refresh_absolute_expires_in.unwrap_or(ABSOLUTE_FALLBACK_SECONDS),
+            refresh_expires_at_unix,
+            refresh_absolute_expires_at_unix,
             account: StoredAccount {
                 nickname: parsed.account.nickname,
                 clan_tag: parsed.account.clan_tag,
@@ -631,13 +733,23 @@ impl AccountService {
             Ok(v) => v,
             Err(_) => return false,
         };
+        // Same required, absolute-UTC parsing as the initial exchange (v5
+        // section 4.4) — never re-derive either expiry from "now" here,
+        // which is exactly what let a refresh silently reset the 365-day
+        // absolute cap.
+        let Ok(refresh_expires_at_unix) = parse_rfc3339_unix(&parsed.refresh_expires_at) else {
+            return false;
+        };
+        let Ok(refresh_absolute_expires_at_unix) =
+            parse_rfc3339_unix(&parsed.refresh_absolute_expires_at)
+        else {
+            return false;
+        };
         let now_instant = self.clock.now_instant();
-        let now_unix = self.clock.now_unix().as_secs();
         let new_refresh = StoredRefresh {
             refresh_token: parsed.refresh_token,
-            refresh_expires_at_unix: now_unix + parsed.refresh_expires_in,
-            refresh_absolute_expires_at_unix: now_unix
-                + parsed.refresh_absolute_expires_in.unwrap_or(ABSOLUTE_FALLBACK_SECONDS),
+            refresh_expires_at_unix,
+            refresh_absolute_expires_at_unix,
             account: StoredAccount {
                 nickname: parsed.account.nickname,
                 clan_tag: parsed.account.clan_tag,
@@ -1041,9 +1153,12 @@ mod tests {
             "access_token_expires_at": "2030-01-01T12:15:00Z",
             "web_lease_expires_at": "2030-01-01T12:15:00Z",
             "refresh_token": refresh_token,
+            // `refresh_expires_in` is a real contract field alongside the
+            // absolute timestamps, deliberately kept in this fixture to
+            // prove the parser ignores it rather than trusting it.
             "refresh_expires_in": 7776000,
             "refresh_expires_at": "2030-03-31T12:00:00Z",
-            "refresh_absolute_expires_in": 31536000,
+            "refresh_absolute_expires_at": "2031-01-01T12:00:00Z",
             "scope": "bridge.submit bridge.share bridge.profile",
             "account": {"user_id":1,"account_id":591735977,"realm":"eu","nickname":"FrankDrake","clan_tag":"TFX","role":"member","linked_account_verified":true},
         })
@@ -1099,6 +1214,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn begin_login_rejects_a_malicious_or_out_of_contract_authorization_url() {
+        let malicious_urls = [
+            "http://engine.tfd.rocks/auth/bridge?request_id=1",       // wrong scheme
+            "https://evil.example/auth/bridge?request_id=1",          // wrong host entirely
+            "https://engine.tfd.rocks.evil.example/auth/bridge",      // host-confusable suffix
+            "https://evil.example/?engine.tfd.rocks/auth/bridge",     // host-confusable prefix trick
+            "https://engine.tfd.rocks:8443/auth/bridge?request_id=1", // non-default port
+            "https://engine.tfd.rocks/auth/other?request_id=1",       // wrong path
+            "https://engine.tfd.rocks/auth/bridge/",                  // trailing-slash path variant
+            "https://user:pass@engine.tfd.rocks/auth/bridge",         // embedded credentials
+            "https://engine.tfd.rocks/auth/bridge#fragment",          // fragment
+            "not a url at all",                                       // unparseable
+        ];
+        for url in malicious_urls {
+            let f = make_fixture(true);
+            f.transport.push_ok(201, device_response());
+            f.transport.push_ok(
+                200,
+                json!({"authorization_url": url, "request_id": "areq_1", "expires_in": 300}),
+            );
+            let result = f.service.begin_login().await;
+            assert_eq!(result, Err(AccountError::InvalidResponse), "url: {url}");
+            // Never opened, and never stored as a pending attempt to reopen.
+            assert!(f.browser.opened.lock().unwrap().is_empty(), "url: {url}");
+            assert_eq!(f.service.reopen_pending(), Err(AccountError::NoPendingLogin), "url: {url}");
+        }
+    }
+
+    #[tokio::test]
     async fn browser_open_failure_is_visible_and_reopen_retries_the_same_url_without_a_second_authorize_call() {
         let f = make_fixture(false);
         f.transport.push_ok(201, device_response());
@@ -1123,6 +1267,42 @@ mod tests {
     async fn reopen_without_any_pending_login_fails() {
         let f = make_fixture(true);
         assert_eq!(f.service.reopen_pending(), Err(AccountError::NoPendingLogin));
+    }
+
+    #[tokio::test]
+    async fn status_expires_a_pending_attempt_with_no_callback_once_its_own_ttl_passes() {
+        let f = make_fixture(true);
+        f.transport.push_ok(201, device_response());
+        f.transport.push_ok(200, authorize_response());
+        f.service.begin_login().await.unwrap();
+        assert_eq!(f.service.status(), AccountStatus::AwaitingBrowser);
+
+        // No callback ever arrives (browser closed) and nobody calls
+        // reopen — `status()` is the only thing still being polled, and it
+        // alone must still notice the TTL passing (contract v5 section 4.3:
+        // "the Bridge times out after `expires_in`").
+        f.clock.advance(301); // authorize_response()'s expires_in is 300
+        assert_eq!(f.service.status(), AccountStatus::Expired);
+        // Idempotent: polling again does not panic or flip back.
+        assert_eq!(f.service.status(), AccountStatus::Expired);
+    }
+
+    #[tokio::test]
+    async fn reopen_after_expiry_reports_expired_and_never_reopens_the_browser() {
+        let f = make_fixture(true);
+        f.transport.push_ok(201, device_response());
+        f.transport.push_ok(200, authorize_response());
+        f.service.begin_login().await.unwrap();
+        let opened_before = f.browser.opened.lock().unwrap().len();
+
+        f.clock.advance(301);
+        assert_eq!(f.service.reopen_pending(), Err(AccountError::NoPendingLogin));
+        assert_eq!(f.service.status(), AccountStatus::Expired);
+        assert_eq!(
+            f.browser.opened.lock().unwrap().len(),
+            opened_before,
+            "an expired attempt must never be reopened in the browser"
+        );
     }
 
     #[tokio::test]
@@ -1164,7 +1344,9 @@ mod tests {
             &f.service,
             AuthCallback { state, outcome: AuthCallbackOutcome::Code("test-code".into()) },
         );
-        assert_eq!(ack, AuthCallbackAck::Accepted);
+        // The ack must never claim a connection: the exchange has not even
+        // started yet, let alone succeeded and been durably persisted.
+        assert_eq!(ack, AuthCallbackAck::Pending);
         assert_eq!(f.service.status(), AccountStatus::Exchanging);
     }
 
@@ -1176,7 +1358,7 @@ mod tests {
             state: state.clone(),
             outcome: AuthCallbackOutcome::Code("test-code".into()),
         };
-        assert_eq!(AccountService::on_callback(&f.service, callback()), AuthCallbackAck::Accepted);
+        assert_eq!(AccountService::on_callback(&f.service, callback()), AuthCallbackAck::Pending);
         // A second, "concurrent" callback for the same already-consumed
         // attempt can only ever be Rejected — the exchange it could trigger
         // therefore happens at most once.
@@ -1200,22 +1382,39 @@ mod tests {
             &f.service,
             AuthCallback { state, outcome: AuthCallbackOutcome::Code("real-code".into()) },
         );
-        assert_eq!(ack2, AuthCallbackAck::Accepted);
+        assert_eq!(ack2, AuthCallbackAck::Pending);
     }
 
     #[tokio::test]
-    async fn distinct_terminal_outcomes_map_to_distinct_statuses() {
-        for (error, expected) in [
-            (AuthCallbackOutcome::AccessDenied, AccountStatus::Denied),
-            (AuthCallbackOutcome::AccountNotAuthorized, AccountStatus::AccountNotAuthorized),
-            (AuthCallbackOutcome::ExpiredRequest, AccountStatus::Expired),
+    async fn distinct_terminal_outcomes_map_to_distinct_statuses_and_acks() {
+        for (error, expected_status, expected_ack) in [
+            (AuthCallbackOutcome::AccessDenied, AccountStatus::Denied, AuthCallbackAck::Denied),
+            (
+                AuthCallbackOutcome::AccountNotAuthorized,
+                AccountStatus::AccountNotAuthorized,
+                AuthCallbackAck::AccountNotAuthorized,
+            ),
+            (AuthCallbackOutcome::ExpiredRequest, AccountStatus::Expired, AuthCallbackAck::Expired),
         ] {
             let f = make_fixture(true);
             let state = begin_and_get_state(&f).await;
             let ack = AccountService::on_callback(&f.service, AuthCallback { state, outcome: error });
-            assert_eq!(ack, AuthCallbackAck::Accepted);
-            assert_eq!(f.service.status(), expected);
+            assert_eq!(ack, expected_ack);
+            assert_eq!(f.service.status(), expected_status);
         }
+    }
+
+    #[tokio::test]
+    async fn a_late_callback_past_its_own_deadline_is_reported_as_expired_not_a_generic_rejection() {
+        let f = make_fixture(true);
+        let state = begin_and_get_state(&f).await;
+        f.clock.advance(301); // past the 300s pending-attempt TTL
+        let ack = AccountService::on_callback(
+            &f.service,
+            AuthCallback { state, outcome: AuthCallbackOutcome::Code("late-code".into()) },
+        );
+        assert_eq!(ack, AuthCallbackAck::Expired);
+        assert_eq!(f.service.status(), AccountStatus::Expired);
     }
 
     // ── Full exchange + two-slot persistence (direct, race-free) ────────────
@@ -1252,10 +1451,100 @@ mod tests {
         assert_eq!(stored.refresh_current.as_ref().unwrap().refresh_token, "refresh-abc");
         assert!(stored.refresh_pending.is_none(), "must be promoted, not left pending");
         assert_eq!(stored.device_id.as_deref(), Some("dev_test_001"));
+        // Both v5 expiry fields are parsed as absolute UTC timestamps and
+        // persisted verbatim: 2030-03-31T12:00:00Z / 2031-01-01T12:00:00Z,
+        // never `now + a locally chosen duration`.
+        let current = stored.refresh_current.as_ref().unwrap();
+        assert_eq!(current.refresh_expires_at_unix, 1_901_188_800);
+        assert_eq!(current.refresh_absolute_expires_at_unix, 1_925_035_200);
 
         // Access token is never written to the store.
         let stored_json = serde_json::to_string(&stored).unwrap();
         assert!(!stored_json.contains("eyTestAccessToken"));
+    }
+
+    #[tokio::test]
+    async fn exchange_rejects_missing_or_malformed_v5_expiry_fields_without_persisting_anything() {
+        let malformed_bodies: Vec<(&str, serde_json::Value)> = vec![
+            ("missing refresh_expires_at", {
+                let mut b = token_response("x");
+                b.as_object_mut().unwrap().remove("refresh_expires_at");
+                b
+            }),
+            ("missing refresh_absolute_expires_at", {
+                let mut b = token_response("x");
+                b.as_object_mut().unwrap().remove("refresh_absolute_expires_at");
+                b
+            }),
+            ("malformed refresh_expires_at", {
+                let mut b = token_response("x");
+                b["refresh_expires_at"] = json!("not-a-timestamp");
+                b
+            }),
+            ("malformed refresh_absolute_expires_at", {
+                let mut b = token_response("x");
+                b["refresh_absolute_expires_at"] = json!("not-a-timestamp");
+                b
+            }),
+        ];
+        for (label, body) in malformed_bodies {
+            let f = make_fixture(true);
+            let state = begin_and_get_state(&f).await;
+            f.transport.push_ok(200, body);
+
+            consume_and_exchange(&f, state, "auth-code").await;
+
+            assert!(
+                !matches!(f.service.status(), AccountStatus::Connected { .. }),
+                "{label}: must never report Connected"
+            );
+            assert!(
+                f.store
+                    .profiles
+                    .lock()
+                    .unwrap()
+                    .get("release")
+                    .and_then(|d| d.refresh_current.clone())
+                    .is_none(),
+                "{label}: must never persist a credential"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_persists_the_engine_provided_absolute_cap_verbatim_never_recomputed_from_now() {
+        let f = make_fixture(true);
+        f.store.profiles.lock().unwrap().insert(
+            "release",
+            StoredProfileData {
+                schema_version: STORED_PROFILE_SCHEMA_VERSION,
+                device_key_scalar_b64: URL_SAFE_NO_PAD.encode([9u8; 32]),
+                device_id: Some("dev_restart".into()),
+                refresh_current: Some(StoredRefresh {
+                    refresh_token: "refresh-current".into(),
+                    refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
+                    // Deliberately much smaller than the fixture's server
+                    // response so a "now + fallback duration" bug would be
+                    // trivially distinguishable from the correct, verbatim
+                    // server value asserted below.
+                    refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
+                    account: StoredAccount { nickname: "Old".into(), clan_tag: None, realm: None },
+                }),
+                refresh_pending: None,
+            },
+        );
+        f.transport.push_ok(200, token_response("refresh-rotated"));
+        f.service.bootstrap().await;
+        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+
+        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        let current = stored.refresh_current.unwrap();
+        assert_eq!(current.refresh_token, "refresh-rotated");
+        // Exactly the `token_response` fixture's contract fields — never a
+        // value derived from the clock, and never the stale value it
+        // replaced.
+        assert_eq!(current.refresh_expires_at_unix, 1_901_188_800);
+        assert_eq!(current.refresh_absolute_expires_at_unix, 1_925_035_200);
     }
 
     #[tokio::test]
