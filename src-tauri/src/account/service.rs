@@ -109,6 +109,14 @@ struct Inner {
     /// by `status()`.
     access_token: Option<(String, Instant)>,
     session: bridge_core::account::AccountSession,
+    /// The ONE credential-commit generation, advanced every time the active
+    /// credential set changes: a successful login-exchange commit, a
+    /// successful refresh commit, or `invalidate_local`'s wipe (advanced
+    /// BEFORE the wipe, so a check made just after still sees it moved). A
+    /// bootstrap refresh (or anything else) captures this value before its
+    /// network call and rechecks it under `commit_lock` immediately before
+    /// writing anything — a mismatch means zero writes, zero status change.
+    credential_generation: u64,
 }
 
 impl Default for Inner {
@@ -121,6 +129,7 @@ impl Default for Inner {
             account_display: None,
             access_token: None,
             session: bridge_core::account::AccountSession::default(),
+            credential_generation: 0,
         }
     }
 }
@@ -134,6 +143,15 @@ pub struct AccountService {
     profile: ClientProfile,
     port: AtomicU16,
     inner: Mutex<Inner>,
+    /// The ONE shared serialization boundary for every credential-mutation
+    /// and key-initialization commit: device-key load/generate/save, device
+    /// registration, the login-exchange commit, refresh persistence and
+    /// invalidate/logout's wipe. Never held across the login/refresh network
+    /// `.await` itself (that response is produced uncommitted, then this
+    /// lock guards only the recheck-and-commit phase); device registration
+    /// is the sole intentional exception, since making that single network
+    /// call itself single-flight is the point (see `ensure_registered`).
+    commit_lock: tokio::sync::Mutex<()>,
 }
 
 // ── Wire-shape response fragments (only the fields this service needs) ──────
@@ -244,6 +262,7 @@ impl AccountService {
             profile,
             port: AtomicU16::new(0),
             inner: Mutex::new(Inner::default()),
+            commit_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -298,7 +317,24 @@ impl AccountService {
 
     // ── Device key / registration ────────────────────────────────────────────
 
-    fn ensure_device_key(&self) -> Result<DeviceKey, AccountError> {
+    /// Serializes the device-key load/generate/save sequence through
+    /// `commit_lock` so two concurrent callers (e.g. two `begin_login`
+    /// clicks) can never each generate and save a distinct key. A caller
+    /// that finds `device_key` already set (either originally, or set by
+    /// whoever held `commit_lock` first while this call was waiting for it)
+    /// never touches the store at all.
+    async fn ensure_device_key(&self) -> Result<DeviceKey, AccountError> {
+        if let Some(key) = self.inner.lock().unwrap().device_key.clone() {
+            return Ok(key);
+        }
+        let _commit = self.commit_lock.lock().await;
+        self.ensure_device_key_locked()
+    }
+
+    /// The load/generate/save body, factored out so `ensure_registered` can
+    /// run it while already holding `commit_lock` for the whole
+    /// registration flow, instead of re-entering the (non-reentrant) lock.
+    fn ensure_device_key_locked(&self) -> Result<DeviceKey, AccountError> {
         if let Some(key) = self.inner.lock().unwrap().device_key.clone() {
             return Ok(key);
         }
@@ -339,11 +375,21 @@ impl AccountService {
         Ok(key)
     }
 
+    /// Registration is single-flight through `commit_lock`, held across the
+    /// one `/device` network call: a second concurrent `begin_login` blocks
+    /// here instead of generating a second key or registering a second,
+    /// inconsistent device — it re-checks `device_id` after acquiring the
+    /// lock and, finding it already set by the first caller, returns the
+    /// same cached metadata without ever calling the network again.
     async fn ensure_registered(&self) -> Result<String, AccountError> {
         if let Some(id) = self.inner.lock().unwrap().device_id.clone() {
             return Ok(id);
         }
-        let device_key = self.ensure_device_key()?;
+        let _commit = self.commit_lock.lock().await;
+        if let Some(id) = self.inner.lock().unwrap().device_id.clone() {
+            return Ok(id);
+        }
+        let device_key = self.ensure_device_key_locked()?;
         let install_id = self.store.install_id().map_err(AccountError::Store)?;
         let jwk = device_key.public_jwk();
         let body = json!({
@@ -573,14 +619,17 @@ impl AccountService {
             "redirect_uri": consumed.redirect_uri,
         });
         let result = self.call("POST", "/token", body, None).await;
-        self.finish_login_exchange(consumed.generation, result);
+        self.finish_login_exchange(consumed.generation, result).await;
     }
 
-    /// Generation recheck + durable persistence happen under ONE lock
-    /// acquisition, so a `cancel_login`/`invalidate_local` that lands while
-    /// the network call was in flight cannot be raced by a response that
-    /// commits credentials afterwards.
-    fn finish_login_exchange(&self, generation: u64, result: Result<HttpResponse, AccountError>) {
+    /// Parsing happens first and produces an uncommitted result; only the
+    /// generation recheck, durable persistence and `Inner`/session update
+    /// happen under `commit_lock` — the SAME boundary `try_refresh` and
+    /// `invalidate_local` use — so a `cancel_login`/`invalidate_local`/
+    /// racing refresh that lands while this network call was in flight
+    /// cannot be raced by a response that commits credentials afterwards,
+    /// and this commit cannot be raced by one of theirs either.
+    async fn finish_login_exchange(&self, generation: u64, result: Result<HttpResponse, AccountError>) {
         let response = match result {
             Ok(r) if r.status == 200 => r,
             _ => return,
@@ -615,6 +664,7 @@ impl AccountService {
         let lifetime = Duration::from_secs(parsed.expires_in.max(1));
         let renew_in = lifetime.mul_f32(0.5);
 
+        let _commit = self.commit_lock.lock().await;
         let mut inner = self.inner.lock().unwrap();
         if inner.login_flow.current_generation() != generation {
             // Stale: cancelled, replaced by a new attempt, or logged out
@@ -637,6 +687,7 @@ impl AccountService {
             inner.access_token = Some((parsed.access_token, now_instant + lifetime));
             inner.account_display = Some(refresh.account);
             inner.phase = Phase::Idle;
+            inner.credential_generation = inner.credential_generation.wrapping_add(1);
         }
     }
 
@@ -685,11 +736,22 @@ impl AccountService {
                 return;
             }
         };
-        if let Ok(bytes) = base64_decode_32(&existing.device_key_scalar_b64) {
-            if let Ok(key) = DeviceKey::from_scalar_bytes(&bytes) {
-                let mut inner = self.inner.lock().unwrap();
-                inner.device_key = Some(key);
-                inner.device_id = existing.device_id.clone();
+        {
+            // Same boundary as `ensure_device_key`: a concurrent
+            // `begin_login` may be generating/saving a fresh key right now
+            // (true first run) or may already have primed `Inner` from this
+            // same stored profile while this read was racing it — either
+            // way, never overwrite an already-primed key with a redundant
+            // decode of a possibly-stale read.
+            let _commit = self.commit_lock.lock().await;
+            let mut inner = self.inner.lock().unwrap();
+            if inner.device_key.is_none() {
+                if let Ok(bytes) = base64_decode_32(&existing.device_key_scalar_b64) {
+                    if let Ok(key) = DeviceKey::from_scalar_bytes(&bytes) {
+                        inner.device_key = Some(key);
+                        inner.device_id = existing.device_id.clone();
+                    }
+                }
             }
         }
         let now_unix = self.clock.now_unix().as_secs();
@@ -716,9 +778,23 @@ impl AccountService {
         // Nothing usable: stays disconnected, requires fresh login.
     }
 
+    /// Network parse produces an uncommitted result: the request is built
+    /// from a `device_id`/`credential_generation` fingerprint captured
+    /// BEFORE the network call, and nothing is written to the store or
+    /// `Inner` until that fingerprint is rechecked under `commit_lock` —
+    /// the SAME boundary `finish_login_exchange` and `invalidate_local`
+    /// use — immediately before the two-slot persist and the
+    /// session/access/display update. A response for a credential set that
+    /// is no longer current (a fresh login committed, a refresh already
+    /// rotated it, or `invalidate_local` ran) performs zero writes and zero
+    /// status changes.
     async fn try_refresh(&self, refresh: StoredRefresh) -> bool {
-        let Some(device_id) = self.inner.lock().unwrap().device_id.clone() else {
-            return false;
+        let (device_id, generation_before) = {
+            let inner = self.inner.lock().unwrap();
+            let Some(device_id) = inner.device_id.clone() else {
+                return false;
+            };
+            (device_id, inner.credential_generation)
         };
         let body = json!({
             "grant_type": "refresh_token",
@@ -758,9 +834,18 @@ impl AccountService {
         };
         let lifetime = Duration::from_secs(parsed.expires_in.max(1));
         let renew_in = lifetime.mul_f32(0.5);
-        let device_key = match self.inner.lock().unwrap().device_key.clone() {
-            Some(k) => k,
-            None => return false,
+
+        let _commit = self.commit_lock.lock().await;
+        let mut inner = self.inner.lock().unwrap();
+        if inner.credential_generation != generation_before || inner.device_id.as_deref() != Some(device_id.as_str())
+        {
+            // Stale: a newer login/refresh committed, or invalidate_local
+            // wiped the account, while this response was in flight. Never
+            // commit it — zero writes, zero status change.
+            return false;
+        }
+        let Some(device_key) = inner.device_key.clone() else {
+            return false;
         };
         let scalar_b64 = URL_SAFE_NO_PAD.encode(device_key.to_scalar_bytes());
         if self
@@ -769,11 +854,11 @@ impl AccountService {
         {
             return false;
         }
-        let mut inner = self.inner.lock().unwrap();
         if inner.session.connect(now_instant, lifetime, renew_in) {
             inner.access_token = Some((parsed.access_token, now_instant + lifetime));
             inner.account_display = Some(new_refresh.account);
             inner.phase = Phase::Idle;
+            inner.credential_generation = inner.credential_generation.wrapping_add(1);
         }
         true
     }
@@ -817,15 +902,27 @@ impl AccountService {
     /// response can never commit), drops the memory-only access token, and
     /// wipes the durable profile. Does not touch `install_id` or the other
     /// `ClientProfile` namespace. A reusable primitive for td-96a620.
+    /// Advances `credential_generation` (alongside `login_flow`'s own
+    /// generation and `session.disconnect`'s) BEFORE wiping the store, all
+    /// under `commit_lock` — the SAME boundary `try_refresh` and
+    /// `finish_login_exchange` use. Holding the lock across the whole
+    /// function (both the generation advance and the store wipe) means no
+    /// bootstrap refresh or login exchange in flight can land its commit
+    /// between the two: it either already rechecked and lost before this
+    /// runs, or it is still waiting for `commit_lock` and will recheck
+    /// against the now-advanced generation once it gets it.
     #[allow(dead_code)]
-    pub fn invalidate_local(&self) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.login_flow.cancel();
-        inner.session.disconnect();
-        inner.account_display = None;
-        inner.access_token = None;
-        inner.phase = Phase::Idle;
-        drop(inner);
+    pub async fn invalidate_local(&self) {
+        let _commit = self.commit_lock.lock().await;
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.login_flow.cancel();
+            inner.session.disconnect();
+            inner.account_display = None;
+            inner.access_token = None;
+            inner.phase = Phase::Idle;
+            inner.credential_generation = inner.credential_generation.wrapping_add(1);
+        }
         let _ = self.store.clear_profile(self.profile);
     }
 
@@ -838,7 +935,7 @@ impl AccountService {
         body: serde_json::Value,
         access_token: Option<&str>,
     ) -> Result<HttpResponse, AccountError> {
-        let device_key = self.ensure_device_key()?;
+        let device_key = self.ensure_device_key().await?;
         let htu = format!("{}{}", super::http::PRODUCTION_BASE_URL, path);
         let response = self
             .transport
@@ -1772,6 +1869,245 @@ mod tests {
         );
     }
 
+    // ── Credential-mutation serialization boundary (td-27bcc9 rejection
+    // cycle 1): bootstrap's one-shot refresh, login-exchange commit,
+    // invalidate/logout and device registration all share one commit
+    // boundary (`commit_lock` + `credential_generation`). These tests use a
+    // deterministic gate on a specific in-flight network call instead of
+    // real timing, so the interleaving is exact and repeatable. ───────────
+
+    /// Wraps a `ScriptedTransport` and blocks the FIRST request matching
+    /// `predicate(path, body)` until the test calls `release.notify_one()`
+    /// — the deterministic stand-in for "this network response is still in
+    /// flight". Every other request (and every later request, once the one
+    /// match has been gated) passes straight through untouched.
+    struct GateOnMatch {
+        inner: Arc<ScriptedTransport>,
+        predicate: Box<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>,
+        gated: AtomicBool,
+        reached: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+    impl GateOnMatch {
+        fn new(
+            inner: Arc<ScriptedTransport>,
+            predicate: impl Fn(&str, &serde_json::Value) -> bool + Send + Sync + 'static,
+        ) -> (Arc<Self>, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+            let reached = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let gate = Arc::new(Self {
+                inner,
+                predicate: Box::new(predicate),
+                gated: AtomicBool::new(false),
+                reached: reached.clone(),
+                release: release.clone(),
+            });
+            (gate, reached, release)
+        }
+        fn calls(&self) -> Vec<RecordedCall> {
+            self.inner.calls()
+        }
+    }
+    #[async_trait]
+    impl AccountTransport for GateOnMatch {
+        async fn post_json(
+            &self,
+            path: &str,
+            headers: Vec<(String, String)>,
+            body: serde_json::Value,
+        ) -> Result<HttpResponse, TransportError> {
+            if !self.gated.swap(true, Ordering::SeqCst) && (self.predicate)(path, &body) {
+                self.reached.notify_one();
+                self.release.notified().await;
+            }
+            self.inner.post_json(path, headers, body).await
+        }
+    }
+
+    fn stored_old_account(device_id: &str, refresh_token: &str, now_unix: u64) -> StoredProfileData {
+        StoredProfileData {
+            schema_version: STORED_PROFILE_SCHEMA_VERSION,
+            device_key_scalar_b64: URL_SAFE_NO_PAD.encode([9u8; 32]),
+            device_id: Some(device_id.to_string()),
+            refresh_current: Some(StoredRefresh {
+                refresh_token: refresh_token.to_string(),
+                refresh_expires_at_unix: now_unix + 1_000,
+                refresh_absolute_expires_at_unix: now_unix + 100_000,
+                account: StoredAccount { nickname: "OldAccount".into(), clan_tag: None, realm: None },
+            }),
+            refresh_pending: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn deferred_bootstrap_refresh_response_after_a_fresh_login_commits_writes_nothing() {
+        let store = Arc::new(InMemoryStore::default());
+        let now_unix = 1_700_000_000u64;
+        store.profiles.lock().unwrap().insert("release", stored_old_account("dev_race", "refresh-old", now_unix));
+
+        let (gate, reached, release) =
+            GateOnMatch::new(ScriptedTransport::new(), |path, body| {
+                path == "/token" && body["grant_type"] == "refresh_token"
+            });
+        // Consumption order matches invocation order, not push order: the
+        // gated bootstrap refresh call blocks BEFORE popping a response, so
+        // the fresh login's unblocked `/authorize` then `/token` calls pop
+        // the first two queued responses; the refresh response is popped
+        // last, once released.
+        gate.inner.push_ok(200, authorize_response());
+        gate.inner.push_ok(200, token_response("refresh-new"));
+        gate.inner.push_ok(200, token_response("refresh-old-late"));
+
+        let clock = FixedClock::new();
+        let service = Arc::new(AccountService::new(
+            gate.clone(),
+            store.clone(),
+            RecordingBrowser::new(true),
+            clock.clone(),
+            CountingRandom::new(),
+            ClientProfile::Release,
+        ));
+        service.set_port(43210);
+
+        let bootstrap_service = service.clone();
+        let bootstrap_task = tokio::spawn(async move { bootstrap_service.bootstrap().await });
+
+        // Wait until the bootstrap refresh's network call is in flight.
+        reached.notified().await;
+
+        // A brand-new interactive login now runs to full completion while
+        // the old refresh response is still withheld.
+        service.begin_login().await.unwrap();
+        let state = gate
+            .calls()
+            .iter()
+            .find(|c| c.path == "/authorize")
+            .unwrap()
+            .body["state"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let now = clock.now_instant();
+        let consumed = {
+            let mut inner = service.inner.lock().unwrap();
+            inner.login_flow.consume_code(&state, now).unwrap()
+        };
+        Arc::clone(&service).complete_exchange("auth-code".into(), consumed).await;
+        assert!(
+            matches!(service.status(), AccountStatus::Connected { .. }),
+            "the fresh login must have fully committed before the old refresh is released"
+        );
+
+        // Now release the old bootstrap refresh's response.
+        release.notify_one();
+        bootstrap_task.await.unwrap();
+
+        // The stale refresh must have performed zero writes and zero status
+        // changes: the new login's creds/slots/display/status must remain.
+        match service.status() {
+            AccountStatus::Connected { nickname, .. } => assert_eq!(nickname, "FrankDrake"),
+            other => panic!("expected the fresh login's Connected status to survive, got {other:?}"),
+        }
+        let stored = store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        assert_eq!(stored.refresh_current.unwrap().refresh_token, "refresh-new");
+    }
+
+    #[tokio::test]
+    async fn invalidate_during_a_delayed_bootstrap_refresh_leaves_no_writes() {
+        let store = Arc::new(InMemoryStore::default());
+        let now_unix = 1_700_000_000u64;
+        store.profiles.lock().unwrap().insert("release", stored_old_account("dev_inv", "refresh-old", now_unix));
+
+        let (gate, reached, release) =
+            GateOnMatch::new(ScriptedTransport::new(), |path, body| {
+                path == "/token" && body["grant_type"] == "refresh_token"
+            });
+        gate.inner.push_ok(200, token_response("refresh-old-late"));
+
+        let clock = FixedClock::new();
+        let service = Arc::new(AccountService::new(
+            gate.clone(),
+            store.clone(),
+            RecordingBrowser::new(true),
+            clock.clone(),
+            CountingRandom::new(),
+            ClientProfile::Release,
+        ));
+        service.set_port(43210);
+
+        let bootstrap_service = service.clone();
+        let bootstrap_task = tokio::spawn(async move { bootstrap_service.bootstrap().await });
+        reached.notified().await;
+
+        // Invalidate (logout / account switch) lands while the refresh is
+        // still in flight.
+        service.invalidate_local().await;
+        assert!(store.profiles.lock().unwrap().get("release").is_none(), "invalidate must have wiped the store");
+        let saves_before_release = store.save_calls.load(Ordering::SeqCst);
+
+        release.notify_one();
+        bootstrap_task.await.unwrap();
+
+        // The stale refresh must not have resurrected anything.
+        assert_eq!(service.status(), AccountStatus::SignedOut);
+        assert!(store.profiles.lock().unwrap().get("release").is_none());
+        assert_eq!(
+            store.save_calls.load(Ordering::SeqCst),
+            saves_before_release,
+            "the stale refresh must not have written to the store at all"
+        );
+    }
+
+    #[tokio::test]
+    async fn simultaneous_begin_login_registers_the_device_exactly_once() {
+        let (gate, reached, release) = GateOnMatch::new(ScriptedTransport::new(), |path, _| path == "/device");
+        gate.inner.push_ok(201, device_response());
+        gate.inner.push_ok(200, authorize_response());
+        gate.inner.push_ok(200, authorize_response());
+
+        let store = Arc::new(InMemoryStore::default());
+        let service = Arc::new(AccountService::new(
+            gate.clone(),
+            store.clone(),
+            RecordingBrowser::new(true),
+            FixedClock::new(),
+            CountingRandom::new(),
+            ClientProfile::Release,
+        ));
+        service.set_port(43210);
+
+        let s1 = service.clone();
+        let s2 = service.clone();
+        let t1 = tokio::spawn(async move { AccountService::begin_login(&s1).await });
+        let t2 = tokio::spawn(async move { AccountService::begin_login(&s2).await });
+
+        // Whichever call reaches `/device` first blocks there; the other
+        // cannot even start its own `/device` call while `commit_lock` is
+        // held, so releasing here is safe regardless of which one it was.
+        reached.notified().await;
+        release.notify_one();
+
+        t1.await.unwrap().unwrap();
+        t2.await.unwrap().unwrap();
+
+        let calls = gate.calls();
+        let device_calls: Vec<_> = calls.iter().filter(|c| c.path == "/device").collect();
+        assert_eq!(device_calls.len(), 1, "concurrent begin_login must register the device exactly once");
+        let authorize_device_ids: std::collections::HashSet<_> = calls
+            .iter()
+            .filter(|c| c.path == "/authorize")
+            .map(|c| c.body["device_id"].clone())
+            .collect();
+        assert_eq!(
+            authorize_device_ids.len(),
+            1,
+            "both concurrent begin_login calls must end up using the same registered device_id"
+        );
+        // Exactly one key generated + saved, one device_id saved — no
+        // duplicate key material ever written to the store.
+        assert_eq!(store.save_calls.load(Ordering::SeqCst), 2);
+    }
+
     // ── Nonce retry ──────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -1844,7 +2180,7 @@ mod tests {
         consume_and_exchange(&f, state, "auth-code").await;
         assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
 
-        f.service.invalidate_local();
+        f.service.invalidate_local().await;
         assert_eq!(f.service.status(), AccountStatus::SignedOut);
         assert!(f.store.profiles.lock().unwrap().get("release").is_none());
     }

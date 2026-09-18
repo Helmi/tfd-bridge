@@ -29,7 +29,7 @@ bridge-core = { path = "../crates/bridge-core" }
 tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "sync"] }
 # Engine-facing HTTP client (src/engine.rs). The feature choice mirrors
 # tauri-plugin-updater's stack exactly (reqwest with rustls-no-provider, plus
 # the ring provider pinned on rustls directly) so no second TLS stack is
@@ -59,7 +59,7 @@ keyring = { version = "=3.6.3", features = ["windows-native"] }
 # Local mock engine for src/engine.rs + src/uploader.rs tests (no live
 # network in cargo test); already in the tree via bridge-core.
 tiny_http = "0.12"
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
 tempfile = "3"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
