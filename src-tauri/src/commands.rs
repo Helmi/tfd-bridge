@@ -136,10 +136,24 @@ pub(crate) fn gate_account_navigation(
 /// local dashboard that this command is reachable from already re-renders
 /// its own connect gate from the same `account_status` poll, so no
 /// additional navigation/recovery is needed here.
+///
+/// Split from the `#[tauri::command]` below into a plain function (the
+/// testable command implementation/action seam) so a test can invoke the
+/// EXACT decision `open_monitor` makes with a spy in place of
+/// `crate::open_monitor_window` — removing the gate from here fails those
+/// tests, unlike calling `gate_account_navigation` directly with an
+/// unrelated closure.
+pub(crate) fn open_monitor_impl(
+    snapshot: &crate::account::AccountSnapshot,
+    navigate: impl FnOnce(),
+) -> bool {
+    gate_account_navigation(snapshot, "open_monitor", navigate)
+}
+
 #[tauri::command]
 pub fn open_monitor(app: AppHandle) {
     let snapshot = app.state::<Arc<crate::account::AccountService>>().snapshot();
-    gate_account_navigation(&snapshot, "open_monitor", || crate::open_monitor_window(&app));
+    open_monitor_impl(&snapshot, || crate::open_monitor_window(&app));
 }
 
 /// Open the in-app RePlayer (WoWS replay player) by navigating the main window to
@@ -148,16 +162,37 @@ pub fn open_monitor(app: AppHandle) {
 /// double-right-click gesture on the brand (`MONITOR_EMBED_JS`). No-op (logged) if
 /// the account is not currently usable (checked first) or the bridge is not
 /// running.
+///
+/// Testable command implementation/action seam (see `open_monitor_impl`):
+/// `port` is the already-looked-up bridge port (or `None` if no bridge is
+/// running), and `navigate` is the exact `crate::navigate_to_replay_player`
+/// call `open_replay_player` makes. Returns whether it navigated.
+pub(crate) fn open_replay_player_impl(
+    snapshot: &crate::account::AccountSnapshot,
+    port: Option<u16>,
+    navigate: impl FnOnce(u16),
+) -> bool {
+    if !account_navigation_allowed(snapshot) {
+        log::info!("open_replay_player: refused, account not usable");
+        return false;
+    }
+    match port {
+        Some(port) => {
+            navigate(port);
+            true
+        }
+        None => {
+            log::info!("player: no bridge");
+            false
+        }
+    }
+}
+
 #[tauri::command]
 pub fn open_replay_player(app: AppHandle) {
     use crate::BridgeState;
 
     let snapshot = app.state::<Arc<crate::account::AccountService>>().snapshot();
-    if !account_navigation_allowed(&snapshot) {
-        log::info!("open_replay_player: refused, account not usable");
-        return;
-    }
-
     let port = app
         .state::<BridgeState>()
         .0
@@ -165,10 +200,7 @@ pub fn open_replay_player(app: AppHandle) {
         .unwrap()
         .as_ref()
         .map(|ab| ab.bridge.port());
-    match port {
-        Some(port) => crate::navigate_to_replay_player(&app, port),
-        None => log::info!("player: no bridge"),
-    }
+    open_replay_player_impl(&snapshot, port, |port| crate::navigate_to_replay_player(&app, port));
 }
 
 /// Navigate the main window to the engine home ("Dashboard" in the unified bar).
@@ -176,10 +208,19 @@ pub fn open_replay_player(app: AppHandle) {
 /// engine-page bar. Routed through `navigate_engine` so the dashboard return-URL
 /// is captured first (keeps "Settings" working). Refuses (log-and-no-op) when
 /// the account is not currently usable.
+///
+/// Testable command implementation/action seam (see `open_monitor_impl`).
+pub(crate) fn open_engine_home_impl(
+    snapshot: &crate::account::AccountSnapshot,
+    navigate: impl FnOnce(),
+) -> bool {
+    gate_account_navigation(snapshot, "open_engine_home", navigate)
+}
+
 #[tauri::command]
 pub fn open_engine_home(app: AppHandle) {
     let snapshot = app.state::<Arc<crate::account::AccountService>>().snapshot();
-    gate_account_navigation(&snapshot, "open_engine_home", || crate::navigate_engine(&app, "/"));
+    open_engine_home_impl(&snapshot, || crate::navigate_engine(&app, "/"));
 }
 
 /// Return the donation consent + remote-flag snapshot for the dashboard.
@@ -352,25 +393,29 @@ pub fn read_config(app: &AppHandle) -> AppConfig {
     load_config(app)
 }
 
-fn load_config(app: &AppHandle) -> AppConfig {
-    let store = match app.store(STORE_FILE) {
-        Ok(s) => s,
-        Err(_) => return AppConfig::new(),
-    };
-    let replays_path = store
-        .get(KEY_REPLAYS_PATH)
-        .and_then(|v| serde_json::from_value::<PathBuf>(v).ok());
-    let onboarding_done = store
-        .get(KEY_ONBOARDING_DONE)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let replay_watermark_ms = store.get(KEY_REPLAY_WATERMARK).and_then(|v| v.as_u64());
+/// The store-reading half of `load_config`, seamed behind a plain key getter
+/// instead of a live `tauri_plugin_store::Store` so a migration test can feed
+/// it a synthetic 0.18.0 `config.json` fixture and exercise the SAME parsing
+/// this function's only caller (`load_config`) uses — no separate manual
+/// `serde_json::Value` field lookup in the test.
+pub(crate) fn load_config_from(get: impl Fn(&str) -> Option<serde_json::Value>) -> AppConfig {
+    let replays_path = get(KEY_REPLAYS_PATH).and_then(|v| serde_json::from_value::<PathBuf>(v).ok());
+    let onboarding_done = get(KEY_ONBOARDING_DONE).and_then(|v| v.as_bool()).unwrap_or(false);
+    let replay_watermark_ms = get(KEY_REPLAY_WATERMARK).and_then(|v| v.as_u64());
 
     AppConfig {
         replays_path,
         onboarding_done,
         replay_watermark_ms,
     }
+}
+
+fn load_config(app: &AppHandle) -> AppConfig {
+    let store = match app.store(STORE_FILE) {
+        Ok(s) => s,
+        Err(_) => return AppConfig::new(),
+    };
+    load_config_from(|key| store.get(key))
 }
 
 fn save_config(app: &AppHandle, cfg: &AppConfig) {
@@ -445,11 +490,18 @@ pub fn emit_donation_status(app: &AppHandle) {
 /// Read the persisted donation consent from the store. Absent or garbled
 /// values read as `Unset` (see `DonationConsent::from_store_value`). Public
 /// so lib.rs can seed the uploader-facing cache at startup.
+/// Store-reading half of `read_donation_consent` (see `load_config_from`):
+/// same seam, so a migration test exercises the exact parsing the real
+/// reader uses against a synthetic fixture instead of a manual field lookup.
+pub(crate) fn read_donation_consent_from(get: impl Fn(&str) -> Option<serde_json::Value>) -> DonationConsent {
+    DonationConsent::from_store_value(get(KEY_DONATION_CONSENT).as_ref())
+}
+
 pub fn read_donation_consent(app: &AppHandle) -> DonationConsent {
     let Ok(store) = app.store(STORE_FILE) else {
         return DonationConsent::Unset;
     };
-    DonationConsent::from_store_value(store.get(KEY_DONATION_CONSENT).as_ref())
+    read_donation_consent_from(|key| store.get(key))
 }
 
 /// Persist the donation consent decision.
@@ -515,14 +567,16 @@ pub fn seed_fresh_install_launch_on_login(app: &AppHandle) {
 /// Read the persisted launch-on-login pref from the store. Returns `false` when
 /// the key is absent or unparseable — fresh installs still get launch-on-login
 /// via the pre-checked onboarding option, which persists the value on completion.
+/// Store-reading half of `read_launch_on_login_pref` (see `load_config_from`).
+pub(crate) fn read_launch_on_login_pref_from(get: impl Fn(&str) -> Option<serde_json::Value>) -> bool {
+    get(KEY_LAUNCH_ON_LOGIN).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
 fn read_launch_on_login_pref(app: &AppHandle) -> bool {
     let Ok(store) = app.store(STORE_FILE) else {
         return false;
     };
-    store
-        .get(KEY_LAUNCH_ON_LOGIN)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    read_launch_on_login_pref_from(|key| store.get(key))
 }
 
 /// Returns the platform-appropriate search roots.
@@ -773,34 +827,54 @@ mod tests {
 
     #[test]
     fn open_monitor_refuses_navigation_when_account_not_connected() {
+        // Calls the EXACT function `open_monitor` (the `#[tauri::command]`)
+        // delegates to, with a spy in place of `crate::open_monitor_window` —
+        // removing the account check from `open_monitor_impl` fails this test.
         let mut navigated = false;
-        let did = gate_account_navigation(&signed_out_snapshot(), "open_monitor", || navigated = true);
+        let did = open_monitor_impl(&signed_out_snapshot(), || navigated = true);
         assert!(!did, "open_monitor must not report navigation when signed out");
-        assert!(!navigated, "open_monitor must not call navigate_engine when signed out");
+        assert!(!navigated, "open_monitor must not call open_monitor_window when signed out");
     }
 
     #[test]
     fn open_monitor_navigates_when_connected() {
         let mut navigated = false;
-        let did = gate_account_navigation(&connected_usable_snapshot(), "open_monitor", || navigated = true);
+        let did = open_monitor_impl(&connected_usable_snapshot(), || navigated = true);
         assert!(did);
         assert!(navigated, "open_monitor must navigate when Connected");
     }
 
     #[test]
     fn open_replay_player_refuses_navigation_when_account_not_connected() {
-        assert!(!account_navigation_allowed(&signed_out_snapshot()));
+        // Same seam as `open_monitor_impl`: a spy in place of
+        // `crate::navigate_to_replay_player`, fed a bridge port that IS
+        // running, so a `None` result can only come from the account check.
+        let mut navigated = None;
+        let did = open_replay_player_impl(&signed_out_snapshot(), Some(43210), |port| navigated = Some(port));
+        assert!(!did, "open_replay_player must not report navigation when signed out");
+        assert_eq!(navigated, None, "open_replay_player must not navigate when signed out");
     }
 
     #[test]
     fn open_replay_player_allows_navigation_when_connected() {
-        assert!(account_navigation_allowed(&connected_usable_snapshot()));
+        let mut navigated = None;
+        let did = open_replay_player_impl(&connected_usable_snapshot(), Some(43210), |port| navigated = Some(port));
+        assert!(did);
+        assert_eq!(navigated, Some(43210), "open_replay_player must navigate to the running bridge's port");
+    }
+
+    #[test]
+    fn open_replay_player_no_ops_when_connected_but_no_bridge_running() {
+        let mut navigated = None;
+        let did = open_replay_player_impl(&connected_usable_snapshot(), None, |port| navigated = Some(port));
+        assert!(!did);
+        assert_eq!(navigated, None);
     }
 
     #[test]
     fn open_engine_home_refuses_navigation_when_account_not_connected() {
         let mut navigated = false;
-        let did = gate_account_navigation(&signed_out_snapshot(), "open_engine_home", || navigated = true);
+        let did = open_engine_home_impl(&signed_out_snapshot(), || navigated = true);
         assert!(!did);
         assert!(!navigated);
     }
@@ -808,7 +882,7 @@ mod tests {
     #[test]
     fn open_engine_home_navigates_when_connected() {
         let mut navigated = false;
-        let did = gate_account_navigation(&connected_usable_snapshot(), "open_engine_home", || navigated = true);
+        let did = open_engine_home_impl(&connected_usable_snapshot(), || navigated = true);
         assert!(did);
         assert!(navigated);
     }
@@ -861,21 +935,37 @@ mod tests {
 
     // ── 0.18.0 migration fixture (config.json: replaysPath, onboardingDone,
     // launchOnLogin, donationConsent, lastView; no account keys) ───────────
+    //
+    // Loads the fixture through the ACTUAL production readers
+    // (`load_config_from`, `read_donation_consent_from`,
+    // `read_launch_on_login_pref_from`, `lib::read_last_view_from`) via their
+    // shared key-getter seam, rather than a manual `serde_json::Value` field
+    // lookup — the fixture's only interface is the same `get(key)` closure
+    // the real `tauri_plugin_store::Store` handle is wrapped in at each
+    // reader's `AppHandle`-taking call site. The account-side half of "not
+    // yet migrated" (empty credential store → `SignedOut`, no real keyring)
+    // is `fresh_or_upgraded_profile_with_no_stored_credentials_starts_signed_out`
+    // below — `AccountService` never reads `config.json`/onboarding keys at
+    // all, so the two are asserted independently.
 
     #[test]
-    fn config_migration_0_18_0_fixture_all_fields_deserialise_unchanged() {
-        let json = r#"{
-            "replaysPath": "C:/Games/World_of_Warships/replays",
-            "onboardingDone": true,
-            "launchOnLogin": true,
-            "donationConsent": "opted_in",
-            "lastView": "monitor"
-        }"#;
-        let value: serde_json::Value = serde_json::from_str(json).expect("fixture must parse");
+    fn config_migration_0_18_0_fixture_loads_via_production_readers_unchanged() {
+        let fixture: serde_json::Value = serde_json::from_str(
+            r#"{
+                "replaysPath": "C:/Games/World_of_Warships/replays",
+                "onboardingDone": true,
+                "launchOnLogin": true,
+                "donationConsent": "opted_in",
+                "lastView": "monitor"
+            }"#,
+        )
+        .expect("fixture must parse");
+        let get = |key: &str| fixture.get(key).cloned();
 
-        // AppConfig (bridge_core) — the fields it owns deserialise unchanged;
+        // AppConfig (bridge_core), via the production loader `load_config`
+        // delegates to — the fields it owns deserialise unchanged;
         // replayWatermarkMs did not exist in 0.18.0 and stays None.
-        let cfg: AppConfig = serde_json::from_value(value.clone()).expect("AppConfig must load a 0.18.0 config.json");
+        let cfg: AppConfig = load_config_from(get);
         assert_eq!(
             cfg.replays_path,
             Some(std::path::PathBuf::from("C:/Games/World_of_Warships/replays"))
@@ -883,19 +973,16 @@ mod tests {
         assert!(cfg.onboarding_done);
         assert_eq!(cfg.replay_watermark_ms, None);
 
-        // Store-only keys this task must never read/clear/reset: the exact
-        // values `commands.rs`'s/`lib.rs`'s readers extract from the same
-        // raw store value a real `store.get(KEY)` would hand them.
-        assert_eq!(value.get(KEY_LAUNCH_ON_LOGIN).and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(
-            DonationConsent::from_store_value(value.get(KEY_DONATION_CONSENT)),
-            DonationConsent::OptedIn
-        );
-        assert_eq!(value.get("lastView").and_then(|v| v.as_str()), Some("monitor"));
+        // Store-only keys this task must never read/clear/reset, through the
+        // exact readers `commands.rs`'s/`lib.rs`'s `AppHandle`-taking
+        // functions delegate to.
+        assert!(read_launch_on_login_pref_from(get));
+        assert_eq!(read_donation_consent_from(get), DonationConsent::OptedIn);
+        assert_eq!(crate::read_last_view_from(get).as_deref(), Some("monitor"));
 
         // No account keys present in a 0.18.0 config.json.
-        assert!(value.get("account").is_none());
-        assert!(value.get("accountStatus").is_none());
+        assert!(fixture.get("account").is_none());
+        assert!(fixture.get("accountStatus").is_none());
     }
 
     // ── Account status starts SignedOut on a fresh/upgraded profile ────────

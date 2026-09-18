@@ -534,15 +534,21 @@ fn save_last_view(app: &tauri::AppHandle, view: &str) {
     }
 }
 
+/// Store-reading half of `read_last_view` (mirrors `commands::load_config_from`'s
+/// seam): a plain key getter instead of a live store, so a migration test can
+/// exercise the exact parsing this function's only caller uses against a
+/// synthetic fixture instead of a manual field lookup.
+pub(crate) fn read_last_view_from(get: impl Fn(&str) -> Option<serde_json::Value>) -> Option<String> {
+    get(KEY_LAST_VIEW).and_then(|v| v.as_str().map(|s| s.to_owned()))
+}
+
 /// Read the persisted last-active view.
 /// Returns `None` when the key is absent (first run) or cannot be parsed.
 fn read_last_view(app: &tauri::AppHandle) -> Option<String> {
     let Ok(store) = app.store(STORE_FILE) else {
         return None;
     };
-    store
-        .get(KEY_LAST_VIEW)
-        .and_then(|v| v.as_str().map(|s| s.to_owned()))
+    read_last_view_from(|key| store.get(key))
 }
 
 /// Toggle OS autostart, persist the pref, and sync the tray checkmark.
@@ -997,12 +1003,54 @@ fn dispatch_external(app: &AppHandle, raw: &str) {
         return;
     }
 
-    match link_target::read_link_target(app) {
-        link_target::LinkTarget::Browser => {
+    let snapshot = app.state::<Arc<account::AccountService>>().snapshot();
+    dispatch_external_link_target(
+        link_target::read_link_target(app),
+        &snapshot,
+        || {
             let _ = app.opener().open_url(parsed.as_str(), None::<&str>);
+        },
+        || open_profile_window(app, parsed.as_str()),
+        || navigate_main_in_place(app, parsed.as_str()),
+    );
+}
+
+/// Pure link-target decision for an already-validated `engine.tfd.rocks`
+/// http(s) target (td-980190, blocker 2): `Browser` is untouched — opening
+/// the OS browser is not a native protected route and this preference
+/// predates account gating entirely. `Window`/`SameWindow` each load Engine
+/// content IN-APP (a new top-level window / the main window in place), which
+/// is exactly the kind of Engine-host navigation every other native gate in
+/// this file refuses when the account is not usable, so both are gated on
+/// the same `AccountSnapshot.can_use_account`-backed predicate the tray arm
+/// and `commands.rs`'s open_* commands use. Log-and-no-op when refused,
+/// matching the rest of this file's native-gate convention. Split out from
+/// `dispatch_external` (which needs a real `AppHandle`/window/opener) so the
+/// decision itself is unit-testable with spy closures instead of real
+/// windows.
+fn dispatch_external_link_target(
+    target: link_target::LinkTarget,
+    snapshot: &account::AccountSnapshot,
+    open_browser: impl FnOnce(),
+    open_window: impl FnOnce(),
+    same_window: impl FnOnce(),
+) {
+    match target {
+        link_target::LinkTarget::Browser => open_browser(),
+        link_target::LinkTarget::Window => {
+            if commands::account_navigation_allowed(snapshot) {
+                open_window();
+            } else {
+                log::info!("dispatch_external: refused Window navigation, account not usable");
+            }
         }
-        link_target::LinkTarget::Window => open_profile_window(app, parsed.as_str()),
-        link_target::LinkTarget::SameWindow => navigate_main_in_place(app, parsed.as_str()),
+        link_target::LinkTarget::SameWindow => {
+            if commands::account_navigation_allowed(snapshot) {
+                same_window();
+            } else {
+                log::info!("dispatch_external: refused SameWindow navigation, account not usable");
+            }
+        }
     }
 }
 
@@ -1862,6 +1910,168 @@ mod tests {
     fn does_not_restore_monitor_when_saved_view_is_not_monitor() {
         assert!(!should_restore_monitor_view(true, Some("dashboard"), &native_connected_snapshot()));
         assert!(!should_restore_monitor_view(true, None, &native_connected_snapshot()));
+    }
+
+    // ── Account gate: SENTINEL_EXTERNAL / dispatch_external (td-980190,
+    // blocker 2) ─────────────────────────────────────────────────────────────
+    // `Window`/`SameWindow` navigate Engine content in-app and must refuse
+    // exactly like every other native gate; `Browser` opens the OS browser
+    // and is untouched (not a native protected route). Exercises the exact
+    // `dispatch_external_link_target` function `dispatch_external` calls,
+    // with spy closures standing in for `open_profile_window`/
+    // `navigate_main_in_place`/the opener call.
+
+    fn native_access_expired_while_renewing_snapshot() -> account::AccountSnapshot {
+        account::AccountSnapshot {
+            status: account::AccountStatus::Connected {
+                nickname: "Helmi".into(),
+                clan_tag: None,
+                realm: None,
+                web_lease_expires_at: None,
+            },
+            can_use_account: false,
+            lifecycle_epoch: 1,
+            nickname: Some("Helmi".into()),
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: None,
+        }
+    }
+
+    fn native_revoked_snapshot() -> account::AccountSnapshot {
+        account::AccountSnapshot {
+            status: account::AccountStatus::SignedOut,
+            can_use_account: false,
+            lifecycle_epoch: 2,
+            nickname: None,
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: Some(account::AccountEndReason::Revoked),
+        }
+    }
+
+    fn native_account_changed_snapshot() -> account::AccountSnapshot {
+        account::AccountSnapshot {
+            status: account::AccountStatus::SignedOut,
+            can_use_account: false,
+            lifecycle_epoch: 3,
+            nickname: None,
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: Some(account::AccountEndReason::AccountChanged),
+        }
+    }
+
+    fn native_renewal_exhausted_snapshot() -> account::AccountSnapshot {
+        account::AccountSnapshot {
+            status: account::AccountStatus::RenewalFailed {
+                nickname: "Helmi".into(),
+                clan_tag: None,
+                realm: None,
+            },
+            can_use_account: false,
+            lifecycle_epoch: 1,
+            nickname: Some("Helmi".into()),
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: Some(account::AccountEndReason::RenewalExhausted),
+        }
+    }
+
+    fn assert_window_and_same_window_refuse(snapshot: &account::AccountSnapshot) {
+        for target in [link_target::LinkTarget::Window, link_target::LinkTarget::SameWindow] {
+            let mut browser_called = false;
+            let mut window_called = false;
+            let mut same_window_called = false;
+            dispatch_external_link_target(
+                target,
+                snapshot,
+                || browser_called = true,
+                || window_called = true,
+                || same_window_called = true,
+            );
+            assert!(!browser_called, "{target:?}: must not fall back to the browser");
+            assert!(!window_called, "{target:?}: must refuse to open a profile window");
+            assert!(!same_window_called, "{target:?}: must refuse to navigate in place");
+        }
+    }
+
+    #[test]
+    fn dispatch_external_refuses_window_and_same_window_on_access_token_expiry() {
+        assert_window_and_same_window_refuse(&native_access_expired_while_renewing_snapshot());
+    }
+
+    #[test]
+    fn dispatch_external_refuses_window_and_same_window_on_revoked() {
+        assert_window_and_same_window_refuse(&native_revoked_snapshot());
+    }
+
+    #[test]
+    fn dispatch_external_refuses_window_and_same_window_on_account_changed() {
+        assert_window_and_same_window_refuse(&native_account_changed_snapshot());
+    }
+
+    #[test]
+    fn dispatch_external_refuses_window_and_same_window_on_renewal_exhausted() {
+        assert_window_and_same_window_refuse(&native_renewal_exhausted_snapshot());
+    }
+
+    #[test]
+    fn dispatch_external_permits_window_when_connected() {
+        let mut window_called = false;
+        dispatch_external_link_target(
+            link_target::LinkTarget::Window,
+            &native_connected_snapshot(),
+            || panic!("must not open the browser for the Window target"),
+            || window_called = true,
+            || panic!("must not navigate in place for the Window target"),
+        );
+        assert!(window_called);
+    }
+
+    #[test]
+    fn dispatch_external_permits_same_window_when_connected() {
+        let mut same_window_called = false;
+        dispatch_external_link_target(
+            link_target::LinkTarget::SameWindow,
+            &native_connected_snapshot(),
+            || panic!("must not open the browser for the SameWindow target"),
+            || panic!("must not open a profile window for the SameWindow target"),
+            || same_window_called = true,
+        );
+        assert!(same_window_called);
+    }
+
+    #[test]
+    fn dispatch_external_browser_target_is_never_gated_by_account_state() {
+        // Preserve Browser external behavior: opening the OS browser is not a
+        // native protected route and is reachable regardless of account state.
+        for snapshot in [
+            native_signed_out_snapshot(),
+            native_access_expired_while_renewing_snapshot(),
+            native_revoked_snapshot(),
+            native_account_changed_snapshot(),
+            native_renewal_exhausted_snapshot(),
+            native_connected_snapshot(),
+        ] {
+            let mut browser_called = false;
+            dispatch_external_link_target(
+                link_target::LinkTarget::Browser,
+                &snapshot,
+                || browser_called = true,
+                || panic!("Browser target must never open a profile window"),
+                || panic!("Browser target must never navigate in place"),
+            );
+            assert!(browser_called, "Browser target must always run regardless of account state");
+        }
     }
 
     // ── ui/index.html structural assertions (td-980190) ─────────────────────
