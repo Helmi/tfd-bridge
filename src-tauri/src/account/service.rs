@@ -11,11 +11,11 @@
 //! this module only exposes the primitives (`invalidate_local`,
 //! `revoke_device`) those tasks build on.
 use super::traits::{
-    AccountTransport, BrowserLauncher, Clock, ClientProfile, HttpResponse, SecretStore,
-    SecureRandom, StoreError, StoredAccount, StoredProfileData, StoredRefresh, TransportError,
-    STORED_PROFILE_SCHEMA_VERSION,
+    AccountTransport, BrowserLauncher, ClientProfile, Clock, HttpResponse,
+    STORED_PROFILE_SCHEMA_VERSION, SecretStore, SecureRandom, StoreError, StoredAccount,
+    StoredProfileData, StoredRefresh, TransportError,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bridge_core::account::{RenewalFailure, RenewalTicket};
 use bridge_core::dpop::DeviceKey;
 use bridge_core::login_flow::{ConsumedLogin, LoginFlow, LoginFlowError, TerminalReason};
@@ -69,6 +69,112 @@ pub enum AccountStatus {
     Expired,
     OpenFailed,
     StoreUnavailable,
+}
+
+// ── Native lifecycle snapshot / subscription / signing seam (td-811657) ─────
+
+/// Safe, non-network reason the account most recently stopped being usable.
+/// Derived from the SAME `RenewalFailure`/`invalid_grant` reason
+/// classification `perform_renewal_attempt` already computes (the frozen
+/// v5 section 11 `DEFINITIVE_REFRESH_REASONS` match) — never a second,
+/// independently-maintained taxonomy, and never the raw Engine error body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountEndReason {
+    /// `invalid_grant` reason `device_revoked`.
+    Revoked,
+    /// `invalid_grant` reason `account_changed`.
+    AccountChanged,
+    /// The recurring renewal scheduler exhausted its 3-attempt transient
+    /// retry budget (`AccountSession::status() == RenewalFailed`). Derived
+    /// live from session state, not stored — it is never a stale flag.
+    RenewalExhausted,
+    /// A manual `invalidate_local` (logout/reset), or an `invalid_grant`
+    /// reason whose only safe meaning is "sign in again" (`refresh_expired`,
+    /// `refresh_absolute_expired`, `refresh_reuse_detected`,
+    /// `refresh_orphaned`).
+    SignedOut,
+}
+
+/// One atomic, native-only read of everything a caller needs to decide
+/// "can I use this account right now" and "has the identity changed under
+/// me since I last looked" — without ever seeing a token, the device key or
+/// raw HTTP detail. Mirrors `AccountStatus`'s existing no-secrets boundary;
+/// carries the SAME safe `status` value `AccountService::status()` already
+/// exposes, plus the fields `status()` alone cannot express (contract
+/// td-811657: `status()` maps both `Connected` and `Renewing` to the same
+/// public `Connected` shape, so it cannot by itself tell "usable" from
+/// "access expired, renewal retrying").
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct AccountSnapshot {
+    /// The same safe status `AccountService::status()` returns.
+    pub status: AccountStatus,
+    /// Same semantics as `AccountSession::can_use_account` at the injected
+    /// clock's current instant: false at access expiry even while a
+    /// renewal retry is in flight or waiting.
+    pub can_use_account: bool,
+    /// Stable across ordinary access/refresh rotations; increments only on
+    /// a fresh login-exchange commit, `invalidate_local`, or a definitive
+    /// revoke/`invalid_grant` outcome. See `Inner::lifecycle_epoch`.
+    pub lifecycle_epoch: u64,
+    pub nickname: Option<String>,
+    pub clan_tag: Option<String>,
+    pub realm: Option<String>,
+    /// Contract v5 section 7.1.1: the current access token's own expiry
+    /// (Unix seconds), verbatim from the last successful `/token` response.
+    pub web_lease_expires_at: Option<u64>,
+    /// The same access-token expiry, independently derived from the
+    /// memory-only `Instant`-based expiry `AccountSession`/`can_use_account`
+    /// itself gate on — a caller doing its own `can_use_account`-style
+    /// comparison should use this rather than assume it always agrees with
+    /// `web_lease_expires_at` (the two are contractually equal today, but
+    /// this field tracks the value this service actually enforces).
+    pub access_expires_at_unix: Option<u64>,
+    /// `None` while usable, or while never having been connected at all.
+    pub end_reason: Option<AccountEndReason>,
+}
+
+/// The exact, task-owned allowlist of Engine endpoints the native signing
+/// seam may target — no caller-supplied URL/method, mirroring
+/// `BrowserLauncher`'s "never a caller-supplied URL" boundary in
+/// `traits.rs`. Exactly one entry today; `POST /handoff` itself is NOT
+/// called from here (td-9994bd owns that).
+// This native seam is consumed by follow-up tasks; it is intentionally not
+// wired to IPC in this task.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignedEndpoint {
+    /// `POST https://engine.tfd.rocks/api/v1/bridge/auth/handoff`.
+    Handoff,
+}
+
+#[allow(dead_code)]
+impl SignedEndpoint {
+    fn htm(self) -> &'static str {
+        match self {
+            Self::Handoff => "POST",
+        }
+    }
+
+    fn path(self) -> &'static str {
+        match self {
+            Self::Handoff => "/handoff",
+        }
+    }
+}
+
+/// Native request material for one allowlisted, DPoP-signed Engine call:
+/// the built headers (`DPoP`, `Authorization: DPoP <access token>`, version/
+/// User-Agent) and the `lifecycle_epoch` captured at signing time, so a
+/// consumer can recheck it immediately before applying any response —
+/// mirroring the existing stale-response rejection pattern already used by
+/// `renewal_tick`/`commit_renewal_*`. Deliberately NOT `Serialize`/`Debug`
+/// (the `Authorization` header carries the raw access token) and never
+/// passed to `log::*`.
+#[allow(dead_code)]
+pub struct SignedRequestMaterial {
+    pub headers: Vec<(String, String)>,
+    pub lifecycle_epoch: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +258,22 @@ struct Inner {
     /// per exhaustion episode. `status()`'s return value itself is a plain
     /// poll of current state and is unaffected by this flag.
     renewal_failure_logged: bool,
+    /// td-811657: a NEW counter, distinct from `credential_generation` and
+    /// from `AccountSession`'s own internal `generation` (both of which
+    /// already advance on an ordinary successful renewal). Stable across
+    /// ordinary access/refresh rotations; increments only at a fresh
+    /// login-exchange commit, `invalidate_local`, and a definitive
+    /// revoke/`invalid_grant` outcome (`RenewalFailure::ReauthenticationRequired`).
+    lifecycle_epoch: u64,
+    /// td-811657: the safe, non-network reason the account most recently
+    /// stopped being usable — set only at the same points that bump
+    /// `lifecycle_epoch` to a disconnected state (`invalidate_local`, a
+    /// definitive revoke/`invalid_grant`), cleared on the next successful
+    /// login-exchange commit. `None` for "never disconnected this way" —
+    /// the exhausted-transient-retry case is derived live from
+    /// `AccountSession::status()` instead of stored here (see
+    /// `snapshot_from_inner`).
+    last_end_reason: Option<AccountEndReason>,
 }
 
 impl Default for Inner {
@@ -168,6 +290,8 @@ impl Default for Inner {
             web_lease_expires_at: None,
             renewal_proof: None,
             renewal_failure_logged: false,
+            lifecycle_epoch: 0,
+            last_end_reason: None,
         }
     }
 }
@@ -188,11 +312,30 @@ struct PendingRenewalProof {
 /// set).
 enum RenewalAttemptOutcome {
     Success(ParsedRefresh),
-    /// `invalid_grant` with a reason in [`DEFINITIVE_REFRESH_REASONS`].
-    Definitive,
+    /// `invalid_grant` with a reason in [`DEFINITIVE_REFRESH_REASONS`],
+    /// carrying that SAME match's safe classification (td-811657) — never a
+    /// second, independent re-derivation of which of the six reasons this
+    /// was.
+    Definitive(AccountEndReason),
     /// Everything else — network/timeout/DPoP-proof errors, 429, 5xx, or a
     /// malformed 200 body — retries within the existing budget.
-    Transient { retry_after: Option<Duration> },
+    Transient {
+        retry_after: Option<Duration>,
+    },
+}
+
+/// The ONE place a raw `invalid_grant` reason (already confirmed to be in
+/// [`DEFINITIVE_REFRESH_REASONS`]) is mapped to a safe, no-raw-body end
+/// reason — called only from the same match that classifies it, so this can
+/// never disagree with [`DEFINITIVE_REFRESH_REASONS`] itself.
+fn map_definitive_reason(reason: &str) -> AccountEndReason {
+    match reason {
+        "device_revoked" => AccountEndReason::Revoked,
+        "account_changed" => AccountEndReason::AccountChanged,
+        // "refresh_expired" | "refresh_absolute_expired"
+        // | "refresh_reuse_detected" | "refresh_orphaned"
+        _ => AccountEndReason::SignedOut,
+    }
 }
 
 /// The frozen v5 section 11 `invalid_grant` reasons that mean the refresh
@@ -234,6 +377,15 @@ pub struct AccountService {
     /// is the sole intentional exception, since making that single network
     /// call itself single-flight is the point (see `ensure_registered`).
     commit_lock: tokio::sync::Mutex<()>,
+    /// td-811657: one `watch` sender owned by this service, seeded at
+    /// construction and re-sent on every mutation that already exists
+    /// (login-exchange commit, renewal success/failure commit,
+    /// `invalidate_local`, `revoke_device`, `status()`'s own expiry
+    /// transition) plus every renewal-scheduler tick — reusing the
+    /// scheduler's existing `watch` pattern (`renewal.rs`) rather than
+    /// adding a second timer/task. `watch` itself coalesces a slow
+    /// receiver to the latest value.
+    snapshot_tx: tokio::sync::watch::Sender<AccountSnapshot>,
 }
 
 // ── Wire-shape response fragments (only the fields this service needs) ──────
@@ -384,6 +536,20 @@ impl AccountService {
         rng: Arc<dyn SecureRandom>,
         profile: ClientProfile,
     ) -> Self {
+        // Matches `Inner::default()` exactly: signed out, unusable, epoch 0,
+        // no identity, no end reason — so a subscriber attaching before any
+        // mutation still observes a well-formed initial snapshot.
+        let (snapshot_tx, _) = tokio::sync::watch::channel(AccountSnapshot {
+            status: AccountStatus::SignedOut,
+            can_use_account: false,
+            lifecycle_epoch: 0,
+            nickname: None,
+            clan_tag: None,
+            realm: None,
+            web_lease_expires_at: None,
+            access_expires_at_unix: None,
+            end_reason: None,
+        });
         Self {
             transport,
             store,
@@ -394,6 +560,7 @@ impl AccountService {
             port: AtomicU16::new(0),
             inner: Mutex::new(Inner::default()),
             commit_lock: tokio::sync::Mutex::new(()),
+            snapshot_tx,
         }
     }
 
@@ -415,6 +582,11 @@ impl AccountService {
         // consume/cancel), so this is safe to call unconditionally.
         if inner.login_flow.expire_if_due(now) {
             inner.phase = Phase::Expired;
+            // td-811657: this phase transition is externally visible (a
+            // pending sign-in silently became `Expired`) and nothing else
+            // would otherwise notify a snapshot subscriber of it.
+            let snap = self.snapshot_from_inner(&inner, now);
+            self.snapshot_tx.send_replace(snap);
         }
         match inner.session.status() {
             bridge_core::account::AccountStatus::Connected
@@ -470,6 +642,171 @@ impl AccountService {
         }
     }
 
+    // ── Native lifecycle snapshot / subscription / signing seam (td-811657) ─
+
+    /// Pure mapping from internal state to the safe public `status` value —
+    /// no mutation, no logging (the log-once-per-exhaustion-episode side
+    /// effect stays exclusively `status()`'s own, so this can be called from
+    /// a context that already holds `inner`'s lock without re-entering it).
+    /// Deliberately mirrors `status()`'s own match arms so both stay in
+    /// agreement; kept separate rather than having `status()` call this (and
+    /// risk perturbing that hot, already-tested path) per the surgical-change
+    /// principle for this task.
+    fn account_status_pure(inner: &Inner) -> AccountStatus {
+        match inner.session.status() {
+            bridge_core::account::AccountStatus::Connected
+            | bridge_core::account::AccountStatus::Renewing => {
+                let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    nickname: String::new(),
+                    clan_tag: None,
+                    realm: None,
+                });
+                AccountStatus::Connected {
+                    nickname: account.nickname,
+                    clan_tag: account.clan_tag,
+                    realm: account.realm,
+                    web_lease_expires_at: inner.web_lease_expires_at,
+                }
+            }
+            bridge_core::account::AccountStatus::RenewalFailed => {
+                let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    nickname: String::new(),
+                    clan_tag: None,
+                    realm: None,
+                });
+                AccountStatus::RenewalFailed {
+                    nickname: account.nickname,
+                    clan_tag: account.clan_tag,
+                    realm: account.realm,
+                }
+            }
+            bridge_core::account::AccountStatus::SignInRequired => match inner.phase {
+                Phase::Idle => AccountStatus::SignedOut,
+                Phase::AwaitingBrowser => AccountStatus::AwaitingBrowser,
+                Phase::Exchanging => AccountStatus::Exchanging,
+                Phase::Canceled => AccountStatus::Canceled,
+                Phase::Denied => AccountStatus::Denied,
+                Phase::AccountNotAuthorized => AccountStatus::AccountNotAuthorized,
+                Phase::Expired => AccountStatus::Expired,
+                Phase::OpenFailed => AccountStatus::OpenFailed,
+                Phase::StoreUnavailable => AccountStatus::StoreUnavailable,
+            },
+        }
+    }
+
+    /// Builds one `AccountSnapshot` atomically from an already-locked
+    /// `Inner` and an injected `now` — used both by `snapshot()` (which
+    /// locks fresh) and by `status()`'s own expire-transition publish
+    /// (which already holds the lock and must not re-enter it).
+    fn snapshot_from_inner(&self, inner: &Inner, now: Instant) -> AccountSnapshot {
+        let status = Self::account_status_pure(inner);
+        // SAME semantics as `AccountSession::can_use_account`: false at
+        // access expiry even while a renewal retry is in flight or waiting.
+        // `status()` itself never surfaces this distinction (`Connected`
+        // and `Renewing` both map to the public `Connected` shape) — this
+        // is exactly the gap this snapshot exists to close.
+        let can_use_account = inner.session.can_use_account(now);
+        let account = inner.account_display.clone();
+        let access_expires_at_unix = inner.access_token.as_ref().map(|(_, expiry)| {
+            let now_unix = self.clock.now_unix().as_secs();
+            now_unix + expiry.saturating_duration_since(now).as_secs()
+        });
+        let end_reason = if can_use_account {
+            None
+        } else {
+            match inner.session.status() {
+                // Derived live from session state, never stored — exhaustion
+                // is a fact about the session, not a one-time event that
+                // could go stale.
+                bridge_core::account::AccountStatus::RenewalFailed => {
+                    Some(AccountEndReason::RenewalExhausted)
+                }
+                _ => inner.last_end_reason,
+            }
+        };
+        AccountSnapshot {
+            status,
+            can_use_account,
+            lifecycle_epoch: inner.lifecycle_epoch,
+            nickname: account.as_ref().map(|a| a.nickname.clone()),
+            clan_tag: account.as_ref().and_then(|a| a.clan_tag.clone()),
+            realm: account.as_ref().and_then(|a| a.realm.clone()),
+            web_lease_expires_at: inner.web_lease_expires_at,
+            access_expires_at_unix,
+            end_reason,
+        }
+    }
+
+    /// Safe, atomic, native-only snapshot: the same status `status()`
+    /// exposes, plus `can_use_account`/`lifecycle_epoch`/identity/expiries/
+    /// end-reason — built fresh from `Inner` at the injected clock's current
+    /// instant, so it fails closed even if nobody has polled `status()`
+    /// recently (an access-token expiry becomes visible here purely by
+    /// comparing `now`, with no stored mutation required).
+    pub fn snapshot(&self) -> AccountSnapshot {
+        let now = self.clock.now_instant();
+        let inner = self.inner.lock().unwrap();
+        self.snapshot_from_inner(&inner, now)
+    }
+
+    /// Re-derives the current snapshot and publishes it to every
+    /// subscriber. Called from every mutation that already exists — never a
+    /// second timer/service. `send_replace` retains the current value even
+    /// when no receiver is subscribed, so a later subscriber cannot miss a
+    /// completed lifecycle mutation.
+    fn publish_snapshot(&self) {
+        let snap = self.snapshot();
+        self.snapshot_tx.send_replace(snap);
+    }
+
+    /// A subscriber immediately observes the current snapshot (the `watch`
+    /// channel is seeded at construction and re-sent on every mutation), and
+    /// every later mutation without polling. `watch` itself coalesces a slow
+    /// receiver to the latest value.
+    #[allow(dead_code)]
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<AccountSnapshot> {
+        self.snapshot_tx.subscribe()
+    }
+
+    /// Native-only signed-request seam for the exact, task-owned allowlist
+    /// in [`SignedEndpoint`] — never a caller-supplied URL/method. Requires
+    /// `can_use_account` true at call time under `commit_lock` (the SAME
+    /// lock `invalidate_local`/renewal commits use), so this cannot race a
+    /// concurrent commit that is about to make the account unusable. Returns
+    /// native header material only; the consumer must recheck
+    /// `lifecycle_epoch` against a fresh `snapshot()` immediately before
+    /// applying any response built from these headers (mirroring the
+    /// existing stale-response rejection pattern in
+    /// `renewal_tick`/`commit_renewal_*`). Does NOT call the endpoint
+    /// itself — building the request is this task's whole job.
+    #[allow(dead_code)]
+    pub async fn sign_request(
+        &self,
+        endpoint: SignedEndpoint,
+    ) -> Result<SignedRequestMaterial, AccountError> {
+        let _commit = self.commit_lock.lock().await;
+        let now = self.clock.now_instant();
+        let inner = self.inner.lock().unwrap();
+        if !inner.session.can_use_account(now) {
+            return Err(AccountError::NotReady);
+        }
+        let Some(device_key) = inner.device_key.clone() else {
+            return Err(AccountError::NotReady);
+        };
+        let Some((access_token, _)) = inner.access_token.clone() else {
+            return Err(AccountError::NotReady);
+        };
+        let lifecycle_epoch = inner.lifecycle_epoch;
+        drop(inner);
+        let htu = format!("{}{}", super::http::PRODUCTION_BASE_URL, endpoint.path());
+        let headers =
+            self.build_headers(&device_key, endpoint.htm(), &htu, Some(&access_token), None);
+        Ok(SignedRequestMaterial {
+            headers,
+            lifecycle_epoch,
+        })
+    }
+
     // ── Device key / registration ────────────────────────────────────────────
 
     /// Serializes the device-key load/generate/save sequence through
@@ -493,7 +830,10 @@ impl AccountService {
         if let Some(key) = self.inner.lock().unwrap().device_key.clone() {
             return Ok(key);
         }
-        let existing = self.store.load_profile(self.profile).map_err(AccountError::Store)?;
+        let existing = self
+            .store
+            .load_profile(self.profile)
+            .map_err(AccountError::Store)?;
         if let Some(data) = &existing {
             if let Ok(bytes) = base64_decode_32(&data.device_key_scalar_b64) {
                 if let Ok(key) = DeviceKey::from_scalar_bytes(&bytes) {
@@ -525,7 +865,9 @@ impl AccountService {
             refresh_current: existing.as_ref().and_then(|d| d.refresh_current.clone()),
             refresh_pending: existing.as_ref().and_then(|d| d.refresh_pending.clone()),
         };
-        self.store.save_profile(self.profile, &data).map_err(AccountError::Store)?;
+        self.store
+            .save_profile(self.profile, &data)
+            .map_err(AccountError::Store)?;
         self.inner.lock().unwrap().device_key = Some(key.clone());
         Ok(key)
     }
@@ -578,7 +920,9 @@ impl AccountService {
                 refresh_pending: None,
             });
         data.device_id = Some(device_id.clone());
-        self.store.save_profile(self.profile, &data).map_err(AccountError::Store)?;
+        self.store
+            .save_profile(self.profile, &data)
+            .map_err(AccountError::Store)?;
         self.inner.lock().unwrap().device_id = Some(device_id.clone());
         Ok(device_id)
     }
@@ -618,14 +962,26 @@ impl AccountService {
         // Validate BEFORE it is ever stored or handed to the OS browser
         // opener: a compromised/misrouted Engine returning anything outside
         // the frozen contract shape must never reach either.
-        validate_authorization_url(&parsed.authorization_url).map_err(|_| AccountError::InvalidResponse)?;
-        let ttl = Duration::from_secs(parsed.expires_in.min(bridge_core::login_flow::MAX_TTL.as_secs()));
+        validate_authorization_url(&parsed.authorization_url)
+            .map_err(|_| AccountError::InvalidResponse)?;
+        let ttl = Duration::from_secs(
+            parsed
+                .expires_in
+                .min(bridge_core::login_flow::MAX_TTL.as_secs()),
+        );
         let now = self.clock.now_instant();
         {
             let mut inner = self.inner.lock().unwrap();
             inner
                 .login_flow
-                .begin(state, verifier, redirect_uri, parsed.authorization_url.clone(), now, ttl)
+                .begin(
+                    state,
+                    verifier,
+                    redirect_uri,
+                    parsed.authorization_url.clone(),
+                    now,
+                    ttl,
+                )
                 .map_err(|_| AccountError::InvalidResponse)?;
             inner.phase = Phase::AwaitingBrowser;
         }
@@ -687,23 +1043,29 @@ impl AccountService {
         let outcome = {
             let mut inner = self.inner.lock().unwrap();
             match callback.outcome {
-                AuthCallbackOutcome::Code(code) => match inner.login_flow.consume_code(&callback.state, now) {
-                    Ok(consumed) => {
-                        inner.phase = Phase::Exchanging;
-                        Outcome::Exchange(code, consumed)
+                AuthCallbackOutcome::Code(code) => {
+                    match inner.login_flow.consume_code(&callback.state, now) {
+                        Ok(consumed) => {
+                            inner.phase = Phase::Exchanging;
+                            Outcome::Exchange(code, consumed)
+                        }
+                        // A late callback whose own deadline already passed is
+                        // reported as Expired (not a generic rejection), and the
+                        // safe status must reflect that without waiting for a
+                        // separate `status()` poll to notice.
+                        Err(LoginFlowError::Expired) => {
+                            inner.phase = Phase::Expired;
+                            Outcome::Terminal(AuthCallbackAck::Expired)
+                        }
+                        Err(_) => Outcome::Rejected,
                     }
-                    // A late callback whose own deadline already passed is
-                    // reported as Expired (not a generic rejection), and the
-                    // safe status must reflect that without waiting for a
-                    // separate `status()` poll to notice.
-                    Err(LoginFlowError::Expired) => {
-                        inner.phase = Phase::Expired;
-                        Outcome::Terminal(AuthCallbackAck::Expired)
-                    }
-                    Err(_) => Outcome::Rejected,
-                },
+                }
                 AuthCallbackOutcome::AccessDenied => {
-                    match inner.login_flow.consume_terminal(&callback.state, now, TerminalReason::Denied) {
+                    match inner.login_flow.consume_terminal(
+                        &callback.state,
+                        now,
+                        TerminalReason::Denied,
+                    ) {
                         Ok(_) => {
                             inner.phase = Phase::Denied;
                             Outcome::Terminal(AuthCallbackAck::Denied)
@@ -716,10 +1078,11 @@ impl AccountService {
                     }
                 }
                 AuthCallbackOutcome::AccountNotAuthorized => {
-                    match inner
-                        .login_flow
-                        .consume_terminal(&callback.state, now, TerminalReason::AccountNotAuthorized)
-                    {
+                    match inner.login_flow.consume_terminal(
+                        &callback.state,
+                        now,
+                        TerminalReason::AccountNotAuthorized,
+                    ) {
                         Ok(_) => {
                             inner.phase = Phase::AccountNotAuthorized;
                             Outcome::Terminal(AuthCallbackAck::AccountNotAuthorized)
@@ -732,7 +1095,11 @@ impl AccountService {
                     }
                 }
                 AuthCallbackOutcome::ExpiredRequest => {
-                    match inner.login_flow.consume_terminal(&callback.state, now, TerminalReason::Expired) {
+                    match inner.login_flow.consume_terminal(
+                        &callback.state,
+                        now,
+                        TerminalReason::Expired,
+                    ) {
                         Ok(_) => {
                             inner.phase = Phase::Expired;
                             Outcome::Terminal(AuthCallbackAck::Expired)
@@ -774,7 +1141,8 @@ impl AccountService {
             "redirect_uri": consumed.redirect_uri,
         });
         let result = self.call("POST", "/token", body, None).await;
-        self.finish_login_exchange(consumed.generation, result).await;
+        self.finish_login_exchange(consumed.generation, result)
+            .await;
     }
 
     /// Parsing happens first and produces an uncommitted result; only the
@@ -784,7 +1152,24 @@ impl AccountService {
     /// racing refresh that lands while this network call was in flight
     /// cannot be raced by a response that commits credentials afterwards,
     /// and this commit cannot be raced by one of theirs either.
-    async fn finish_login_exchange(&self, generation: u64, result: Result<HttpResponse, AccountError>) {
+    async fn finish_login_exchange(
+        &self,
+        generation: u64,
+        result: Result<HttpResponse, AccountError>,
+    ) {
+        self.finish_login_exchange_impl(generation, result).await;
+        // td-811657: a fresh login-exchange commit is a lifecycle mutation
+        // (identity establishment/replacement) even when this call ends up
+        // being a stale/rejected no-op — publishing the unchanged current
+        // snapshot in that case is harmless (watch coalesces).
+        self.publish_snapshot();
+    }
+
+    async fn finish_login_exchange_impl(
+        &self,
+        generation: u64,
+        result: Result<HttpResponse, AccountError>,
+    ) {
         let response = match result {
             Ok(r) if r.status == 200 => r,
             _ => return,
@@ -806,8 +1191,12 @@ impl AccountService {
             // while the network call was outstanding. Never commit it.
             return;
         }
-        let Some(device_id) = inner.device_id.clone() else { return };
-        let Some(device_key) = inner.device_key.clone() else { return };
+        let Some(device_id) = inner.device_id.clone() else {
+            return;
+        };
+        let Some(device_key) = inner.device_key.clone() else {
+            return;
+        };
         let scalar_b64 = URL_SAFE_NO_PAD.encode(device_key.to_scalar_bytes());
         if self
             .persist_new_refresh(parsed.refresh.clone(), &device_id, &scalar_b64)
@@ -818,7 +1207,10 @@ impl AccountService {
             inner.phase = Phase::StoreUnavailable;
             return;
         }
-        if inner.session.connect(now_instant, parsed.lifetime, parsed.renew_in) {
+        if inner
+            .session
+            .connect(now_instant, parsed.lifetime, parsed.renew_in)
+        {
             inner.access_token = Some((parsed.access_token, now_instant + parsed.lifetime));
             inner.account_display = Some(parsed.refresh.account);
             inner.web_lease_expires_at = Some(parsed.web_lease_expires_at_unix);
@@ -826,6 +1218,13 @@ impl AccountService {
             inner.credential_generation = inner.credential_generation.wrapping_add(1);
             inner.renewal_failure_logged = false;
             inner.renewal_proof = None;
+            // td-811657: a fresh login-exchange commit — first login OR an
+            // account switch — always establishes/replaces identity, so it
+            // always advances the lifecycle epoch and clears any prior
+            // end reason, distinct from `credential_generation` above (which
+            // an ordinary renewal also advances).
+            inner.lifecycle_epoch = inner.lifecycle_epoch.wrapping_add(1);
+            inner.last_end_reason = None;
         }
     }
 
@@ -927,6 +1326,15 @@ impl AccountService {
     /// rotated it, or `invalidate_local` ran) performs zero writes and zero
     /// status changes.
     async fn try_refresh(&self, refresh: StoredRefresh) -> bool {
+        let ok = self.try_refresh_impl(refresh).await;
+        // td-811657: bootstrap's one-shot refresh is a "refresh" mutation
+        // like any other — publish, but (per contract) never touch
+        // `lifecycle_epoch` here; see `try_refresh_impl`.
+        self.publish_snapshot();
+        ok
+    }
+
+    async fn try_refresh_impl(&self, refresh: StoredRefresh) -> bool {
         let (device_id, generation_before) = {
             let inner = self.inner.lock().unwrap();
             let Some(device_id) = inner.device_id.clone() else {
@@ -954,7 +1362,8 @@ impl AccountService {
 
         let _commit = self.commit_lock.lock().await;
         let mut inner = self.inner.lock().unwrap();
-        if inner.credential_generation != generation_before || inner.device_id.as_deref() != Some(device_id.as_str())
+        if inner.credential_generation != generation_before
+            || inner.device_id.as_deref() != Some(device_id.as_str())
         {
             // Stale: a newer login/refresh committed, or invalidate_local
             // wiped the account, while this response was in flight. Never
@@ -971,7 +1380,10 @@ impl AccountService {
         {
             return false;
         }
-        if inner.session.connect(now_instant, parsed.lifetime, parsed.renew_in) {
+        if inner
+            .session
+            .connect(now_instant, parsed.lifetime, parsed.renew_in)
+        {
             inner.access_token = Some((parsed.access_token, now_instant + parsed.lifetime));
             inner.account_display = Some(parsed.refresh.account);
             inner.web_lease_expires_at = Some(parsed.web_lease_expires_at_unix);
@@ -991,17 +1403,29 @@ impl AccountService {
     /// minted `iat` back for the next attempt's section 5.5 reuse-window
     /// decision, which `build_headers`'s existing signature does not
     /// expose.
-    fn mint_renewal_headers(&self, device_key: &DeviceKey, htu: &str, nonce: Option<&str>) -> PendingRenewalProof {
+    fn mint_renewal_headers(
+        &self,
+        device_key: &DeviceKey,
+        htu: &str,
+        nonce: Option<&str>,
+    ) -> PendingRenewalProof {
         let mut jti_bytes = [0u8; 16];
         self.rng.fill(&mut jti_bytes);
         let jti = bridge_core::dpop::jti_from_bytes(jti_bytes);
         let iat_unix = self.clock.now_unix().as_secs();
-        let proof = bridge_core::dpop::build_proof(device_key, "POST", htu, iat_unix, &jti, nonce, None)
-            .expect("htu is built from a constant base + path, never a query/fragment");
+        let proof =
+            bridge_core::dpop::build_proof(device_key, "POST", htu, iat_unix, &jti, nonce, None)
+                .expect("htu is built from a constant base + path, never a query/fragment");
         let headers = vec![
             ("DPoP".to_string(), proof),
-            (crate::engine::VERSION_HEADER.to_string(), crate::engine::BRIDGE_VERSION.to_string()),
-            ("User-Agent".to_string(), crate::engine::user_agent(crate::engine::BRIDGE_VERSION)),
+            (
+                crate::engine::VERSION_HEADER.to_string(),
+                crate::engine::BRIDGE_VERSION.to_string(),
+            ),
+            (
+                "User-Agent".to_string(),
+                crate::engine::user_agent(crate::engine::BRIDGE_VERSION),
+            ),
         ];
         PendingRenewalProof { headers, iat_unix }
     }
@@ -1030,7 +1454,10 @@ impl AccountService {
                 // error rather than panicking.
                 return (
                     Err(TransportError::Network),
-                    reuse.unwrap_or(PendingRenewalProof { headers: Vec::new(), iat_unix: 0 }),
+                    reuse.unwrap_or(PendingRenewalProof {
+                        headers: Vec::new(),
+                        iat_unix: 0,
+                    }),
                 );
             }
         };
@@ -1040,7 +1467,11 @@ impl AccountService {
             Some(prev) if now_unix.saturating_sub(prev.iat_unix) < 60 => prev,
             _ => self.mint_renewal_headers(&device_key, &htu, None),
         };
-        let response = match self.transport.post_json("/token", used.headers.clone(), body.clone()).await {
+        let response = match self
+            .transport
+            .post_json("/token", used.headers.clone(), body.clone())
+            .await
+        {
             Ok(r) => r,
             Err(e) => return (Err(e), used),
         };
@@ -1048,9 +1479,14 @@ impl AccountService {
             let use_nonce = response
                 .header("www-authenticate")
                 .is_some_and(|v| v.contains("use_dpop_nonce"));
-            if let (true, Some(nonce)) = (use_nonce, response.header("dpop-nonce").map(str::to_string)) {
+            if let (true, Some(nonce)) =
+                (use_nonce, response.header("dpop-nonce").map(str::to_string))
+            {
                 let retried = self.mint_renewal_headers(&device_key, &htu, Some(&nonce));
-                let response2 = self.transport.post_json("/token", retried.headers.clone(), body).await;
+                let response2 = self
+                    .transport
+                    .post_json("/token", retried.headers.clone(), body)
+                    .await;
                 return (response2, retried);
             }
         }
@@ -1091,8 +1527,11 @@ impl AccountService {
             && response.body.get("error").and_then(|v| v.as_str()) == Some("invalid_grant")
         {
             let reason = response.body.get("reason").and_then(|v| v.as_str());
-            if matches!(reason, Some(r) if DEFINITIVE_REFRESH_REASONS.contains(&r)) {
-                return (RenewalAttemptOutcome::Definitive, used);
+            if let Some(r) = reason.filter(|r| DEFINITIVE_REFRESH_REASONS.contains(r)) {
+                return (
+                    RenewalAttemptOutcome::Definitive(map_definitive_reason(r)),
+                    used,
+                );
             }
         }
         let retry_after = response
@@ -1114,6 +1553,15 @@ impl AccountService {
     /// trusting elapsed wall time, so this self-heals after sleep/suspend/
     /// offline without any special-case detection.
     pub async fn renewal_tick(&self) {
+        self.renewal_tick_impl().await;
+        // td-811657: extends this existing tick — not a second timer/
+        // service — so an access-expiry-while-renewal-pending transition
+        // (or any other tick outcome, including a no-op "nothing due" tick)
+        // always reaches a subscriber without requiring a `status()` poll.
+        self.publish_snapshot();
+    }
+
+    async fn renewal_tick_impl(&self) {
         let now = self.clock.now_instant();
         let ticket = {
             let mut inner = self.inner.lock().unwrap();
@@ -1136,7 +1584,12 @@ impl AccountService {
             (inner.device_id.clone(), inner.renewal_proof.clone())
         };
         let Some(device_id) = device_id else {
-            self.commit_renewal_failure(ticket, RenewalFailure::Transient { retry_after: None }).await;
+            self.commit_renewal_failure(
+                ticket,
+                RenewalFailure::Transient { retry_after: None },
+                None,
+            )
+            .await;
             return;
         };
         let refresh = match self.store.load_profile(self.profile) {
@@ -1144,21 +1597,36 @@ impl AccountService {
             _ => None,
         };
         let Some(refresh) = refresh else {
-            self.commit_renewal_failure(ticket, RenewalFailure::Transient { retry_after: None }).await;
+            self.commit_renewal_failure(
+                ticket,
+                RenewalFailure::Transient { retry_after: None },
+                None,
+            )
+            .await;
             return;
         };
-        let (outcome, used_proof) = self.perform_renewal_attempt(&refresh, &device_id, reuse).await;
+        let (outcome, used_proof) = self
+            .perform_renewal_attempt(&refresh, &device_id, reuse)
+            .await;
         {
             let mut inner = self.inner.lock().unwrap();
             inner.renewal_proof = Some(used_proof);
         }
         match outcome {
-            RenewalAttemptOutcome::Success(parsed) => self.commit_renewal_success(ticket, parsed).await,
-            RenewalAttemptOutcome::Definitive => {
-                self.commit_renewal_failure(ticket, RenewalFailure::ReauthenticationRequired).await
+            RenewalAttemptOutcome::Success(parsed) => {
+                self.commit_renewal_success(ticket, parsed).await
+            }
+            RenewalAttemptOutcome::Definitive(reason) => {
+                self.commit_renewal_failure(
+                    ticket,
+                    RenewalFailure::ReauthenticationRequired,
+                    Some(reason),
+                )
+                .await
             }
             RenewalAttemptOutcome::Transient { retry_after } => {
-                self.commit_renewal_failure(ticket, RenewalFailure::Transient { retry_after }).await
+                self.commit_renewal_failure(ticket, RenewalFailure::Transient { retry_after }, None)
+                    .await
             }
         }
     }
@@ -1199,8 +1667,12 @@ impl AccountService {
             if !inner.session.is_current(ticket) {
                 return;
             }
-            let Some(device_id) = inner.device_id.clone() else { return };
-            let Some(device_key) = inner.device_key.clone() else { return };
+            let Some(device_id) = inner.device_id.clone() else {
+                return;
+            };
+            let Some(device_key) = inner.device_key.clone() else {
+                return;
+            };
             (device_id, device_key)
         };
         let scalar_b64 = URL_SAFE_NO_PAD.encode(device_key.to_scalar_bytes());
@@ -1216,11 +1688,18 @@ impl AccountService {
             // written) rather than leaving the session waiting forever for
             // a tick that will never come.
             let mut inner = self.inner.lock().unwrap();
-            inner.session.renewal_failed(ticket, now, RenewalFailure::Transient { retry_after: None });
+            inner.session.renewal_failed(
+                ticket,
+                now,
+                RenewalFailure::Transient { retry_after: None },
+            );
             return;
         }
         let mut inner = self.inner.lock().unwrap();
-        if inner.session.renewed(ticket, now, parsed.lifetime, parsed.renew_in) {
+        if inner
+            .session
+            .renewed(ticket, now, parsed.lifetime, parsed.renew_in)
+        {
             inner.access_token = Some((parsed.access_token, now + parsed.lifetime));
             inner.account_display = Some(parsed.refresh.account);
             inner.web_lease_expires_at = Some(parsed.web_lease_expires_at_unix);
@@ -1238,7 +1717,12 @@ impl AccountService {
     /// display and wipes the durable store — mirroring `invalidate_local`,
     /// but only once the ticket check confirms this response was not
     /// superseded by the user already re-authenticating in the meantime.
-    async fn commit_renewal_failure(&self, ticket: RenewalTicket, failure: RenewalFailure) {
+    async fn commit_renewal_failure(
+        &self,
+        ticket: RenewalTicket,
+        failure: RenewalFailure,
+        end_reason: Option<AccountEndReason>,
+    ) {
         let _commit = self.commit_lock.lock().await;
         let now = self.clock.now_instant();
         let mut inner = self.inner.lock().unwrap();
@@ -1255,6 +1739,13 @@ impl AccountService {
             inner.phase = Phase::Idle;
             inner.renewal_proof = None;
             inner.credential_generation = inner.credential_generation.wrapping_add(1);
+            // td-811657: a definitive revoke/`invalid_grant` outcome is a
+            // reauthentication-required boundary, distinct from an ordinary
+            // renewal commit — advance the lifecycle epoch and record the
+            // safe end reason carried from the single classification match
+            // in `perform_renewal_attempt`.
+            inner.lifecycle_epoch = inner.lifecycle_epoch.wrapping_add(1);
+            inner.last_end_reason = Some(end_reason.unwrap_or(AccountEndReason::SignedOut));
             drop(inner);
             let _ = self.store.clear_profile(self.profile);
         }
@@ -1267,9 +1758,23 @@ impl AccountService {
     /// not wired to any IPC command in this task.
     #[allow(dead_code)]
     pub async fn revoke_device(&self, reason: &str) -> Result<(), AccountError> {
+        let result = self.revoke_device_impl(reason).await;
+        // td-811657: `revoke_device` itself performs no local commit today
+        // (it only calls the Engine), but is one of this task's named
+        // publish points — re-sending the unchanged current snapshot here
+        // is harmless (watch coalesces) and keeps this call-site future-
+        // proof against a later task adding a local commit here.
+        self.publish_snapshot();
+        result
+    }
+
+    async fn revoke_device_impl(&self, reason: &str) -> Result<(), AccountError> {
         let (device_id, access_token) = {
             let inner = self.inner.lock().unwrap();
-            (inner.device_id.clone(), inner.access_token.clone().map(|(t, _)| t))
+            (
+                inner.device_id.clone(),
+                inner.access_token.clone().map(|(t, _)| t),
+            )
         };
         let Some(device_id) = device_id else {
             return Err(AccountError::NotReady);
@@ -1286,7 +1791,9 @@ impl AccountService {
             "scope": "device",
             "reason": reason,
         });
-        let response = self.call("POST", "/revoke", body, access_token.as_deref()).await?;
+        let response = self
+            .call("POST", "/revoke", body, access_token.as_deref())
+            .await?;
         if response.status == 200 {
             Ok(())
         } else {
@@ -1322,8 +1829,13 @@ impl AccountService {
             inner.renewal_failure_logged = false;
             inner.phase = Phase::Idle;
             inner.credential_generation = inner.credential_generation.wrapping_add(1);
+            // td-811657: logout/reset is a definitive lifecycle boundary —
+            // advance the epoch and record the safe end reason.
+            inner.lifecycle_epoch = inner.lifecycle_epoch.wrapping_add(1);
+            inner.last_end_reason = Some(AccountEndReason::SignedOut);
         }
         let _ = self.store.clear_profile(self.profile);
+        self.publish_snapshot();
     }
 
     // ── DPoP-signed call with one nonce-retry boundary ──────────────────────
@@ -1339,13 +1851,19 @@ impl AccountService {
         let htu = format!("{}{}", super::http::PRODUCTION_BASE_URL, path);
         let response = self
             .transport
-            .post_json(path, self.build_headers(&device_key, htm, &htu, access_token, None), body.clone())
+            .post_json(
+                path,
+                self.build_headers(&device_key, htm, &htu, access_token, None),
+                body.clone(),
+            )
             .await?;
         if response.status == 401 {
             let use_nonce = response
                 .header("www-authenticate")
                 .is_some_and(|v| v.contains("use_dpop_nonce"));
-            if let (true, Some(nonce)) = (use_nonce, response.header("dpop-nonce").map(str::to_string)) {
+            if let (true, Some(nonce)) =
+                (use_nonce, response.header("dpop-nonce").map(str::to_string))
+            {
                 // Exactly one retry, with a freshly built proof (new jti/iat).
                 return Ok(self
                     .transport
@@ -1373,15 +1891,22 @@ impl AccountService {
         let jti = bridge_core::dpop::jti_from_bytes(jti_bytes);
         let iat = self.clock.now_unix().as_secs();
         let ath = access_token.map(bridge_core::dpop::ath_claim);
-        let proof = bridge_core::dpop::build_proof(device_key, htm, htu, iat, &jti, nonce, ath.as_deref())
-            .expect("htu is built from a constant base + path, never a query/fragment");
+        let proof =
+            bridge_core::dpop::build_proof(device_key, htm, htu, iat, &jti, nonce, ath.as_deref())
+                .expect("htu is built from a constant base + path, never a query/fragment");
         // Explicitly set here (not only relying on the shared client's
         // defaults) so both the real transport and a scripted test double
         // carry the mandatory native headers (contract v5 section 4).
         let mut headers = vec![
             ("DPoP".to_string(), proof),
-            (crate::engine::VERSION_HEADER.to_string(), crate::engine::BRIDGE_VERSION.to_string()),
-            ("User-Agent".to_string(), crate::engine::user_agent(crate::engine::BRIDGE_VERSION)),
+            (
+                crate::engine::VERSION_HEADER.to_string(),
+                crate::engine::BRIDGE_VERSION.to_string(),
+            ),
+            (
+                "User-Agent".to_string(),
+                crate::engine::user_agent(crate::engine::BRIDGE_VERSION),
+            ),
         ];
         if let Some(token) = access_token {
             headers.push(("Authorization".to_string(), format!("DPoP {token}")));
@@ -1397,7 +1922,10 @@ fn error_from_body(response: HttpResponse) -> AccountError {
         .and_then(|v| v.as_str())
         .unwrap_or("unknown_error")
         .to_string();
-    AccountError::Http { status: response.status, error }
+    AccountError::Http {
+        status: response.status,
+        error,
+    }
 }
 
 fn device_name() -> String {
@@ -1435,8 +1963,8 @@ mod tests {
     };
     use async_trait::async_trait;
     use std::collections::{HashMap, VecDeque};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     // ── Test doubles ─────────────────────────────────────────────────────────
 
@@ -1504,7 +2032,10 @@ mod tests {
             *guard = Some(id.clone());
             Ok(id)
         }
-        fn load_profile(&self, profile: ClientProfile) -> Result<Option<StoredProfileData>, StoreError> {
+        fn load_profile(
+            &self,
+            profile: ClientProfile,
+        ) -> Result<Option<StoredProfileData>, StoreError> {
             if self.unsupported.load(Ordering::SeqCst) {
                 return Err(StoreError::UnsupportedPlatform);
             }
@@ -1513,7 +2044,11 @@ mod tests {
             }
             Ok(self.profiles.lock().unwrap().get(profile.as_str()).cloned())
         }
-        fn save_profile(&self, profile: ClientProfile, data: &StoredProfileData) -> Result<(), StoreError> {
+        fn save_profile(
+            &self,
+            profile: ClientProfile,
+            data: &StoredProfileData,
+        ) -> Result<(), StoreError> {
             if self.unsupported.load(Ordering::SeqCst) {
                 return Err(StoreError::UnsupportedPlatform);
             }
@@ -1521,7 +2056,10 @@ mod tests {
             if *self.fail_save_on_call.lock().unwrap() == Some(call_number) {
                 return Err(StoreError::Backend("forced save failure".into()));
             }
-            self.profiles.lock().unwrap().insert(profile.as_str(), data.clone());
+            self.profiles
+                .lock()
+                .unwrap()
+                .insert(profile.as_str(), data.clone());
             Ok(())
         }
         fn clear_profile(&self, profile: ClientProfile) -> Result<(), StoreError> {
@@ -1576,8 +2114,17 @@ mod tests {
                 body,
             }));
         }
-        fn push_ok_with_headers(&self, status: u16, headers: Vec<(String, String)>, body: serde_json::Value) {
-            self.responses.lock().unwrap().push_back(Ok(HttpResponse { status, headers, body }));
+        fn push_ok_with_headers(
+            &self,
+            status: u16,
+            headers: Vec<(String, String)>,
+            body: serde_json::Value,
+        ) {
+            self.responses.lock().unwrap().push_back(Ok(HttpResponse {
+                status,
+                headers,
+                body,
+            }));
         }
         fn calls(&self) -> Vec<RecordedCall> {
             self.calls.lock().unwrap().clone()
@@ -1627,7 +2174,13 @@ mod tests {
             ClientProfile::Release,
         ));
         service.set_port(43210);
-        Fixture { service, transport, store, browser, clock }
+        Fixture {
+            service,
+            transport,
+            store,
+            browser,
+            clock,
+        }
     }
 
     fn device_response() -> serde_json::Value {
@@ -1674,7 +2227,10 @@ mod tests {
         assert_eq!(f.service.status(), AccountStatus::AwaitingBrowser);
         let opened = f.browser.opened.lock().unwrap();
         assert_eq!(opened.len(), 1);
-        assert_eq!(opened[0], "https://engine.tfd.rocks/auth/bridge?request_id=areq_1");
+        assert_eq!(
+            opened[0],
+            "https://engine.tfd.rocks/auth/bridge?request_id=areq_1"
+        );
 
         let calls = f.transport.calls();
         assert_eq!(calls[0].path, "/device");
@@ -1684,14 +2240,19 @@ mod tests {
         // token (no access token exists yet).
         for call in &calls {
             assert!(call.headers.iter().any(|(k, _)| k == "DPoP"));
-            assert!(call
-                .headers
-                .iter()
-                .any(|(k, v)| k == crate::engine::VERSION_HEADER && v == crate::engine::BRIDGE_VERSION));
+            assert!(
+                call.headers
+                    .iter()
+                    .any(|(k, v)| k == crate::engine::VERSION_HEADER
+                        && v == crate::engine::BRIDGE_VERSION)
+            );
             assert!(call.headers.iter().any(|(k, _)| k == "User-Agent"));
             assert!(!call.headers.iter().any(|(k, _)| k == "Authorization"));
         }
-        assert_eq!(calls[1].body["redirect_uri"], "http://127.0.0.1:43210/auth/callback");
+        assert_eq!(
+            calls[1].body["redirect_uri"],
+            "http://127.0.0.1:43210/auth/callback"
+        );
         assert_eq!(calls[1].body["code_challenge_method"], "S256");
     }
 
@@ -1704,7 +2265,12 @@ mod tests {
         let store = Arc::new(InMemoryStore::default());
         let browser = RecordingBrowser::new(true);
         let service = Arc::new(AccountService::new(
-            transport, store, browser, FixedClock::new(), CountingRandom::new(), ClientProfile::Release,
+            transport,
+            store,
+            browser,
+            FixedClock::new(),
+            CountingRandom::new(),
+            ClientProfile::Release,
         ));
         assert_eq!(service.begin_login().await, Err(AccountError::NotReady));
         let _ = f;
@@ -1713,16 +2279,16 @@ mod tests {
     #[tokio::test]
     async fn begin_login_rejects_a_malicious_or_out_of_contract_authorization_url() {
         let malicious_urls = [
-            "http://engine.tfd.rocks/auth/bridge?request_id=1",       // wrong scheme
-            "https://evil.example/auth/bridge?request_id=1",          // wrong host entirely
-            "https://engine.tfd.rocks.evil.example/auth/bridge",      // host-confusable suffix
-            "https://evil.example/?engine.tfd.rocks/auth/bridge",     // host-confusable prefix trick
+            "http://engine.tfd.rocks/auth/bridge?request_id=1", // wrong scheme
+            "https://evil.example/auth/bridge?request_id=1",    // wrong host entirely
+            "https://engine.tfd.rocks.evil.example/auth/bridge", // host-confusable suffix
+            "https://evil.example/?engine.tfd.rocks/auth/bridge", // host-confusable prefix trick
             "https://engine.tfd.rocks:8443/auth/bridge?request_id=1", // non-default port
-            "https://engine.tfd.rocks/auth/other?request_id=1",       // wrong path
-            "https://engine.tfd.rocks/auth/bridge/",                  // trailing-slash path variant
-            "https://user:pass@engine.tfd.rocks/auth/bridge",         // embedded credentials
-            "https://engine.tfd.rocks/auth/bridge#fragment",          // fragment
-            "not a url at all",                                       // unparseable
+            "https://engine.tfd.rocks/auth/other?request_id=1", // wrong path
+            "https://engine.tfd.rocks/auth/bridge/",            // trailing-slash path variant
+            "https://user:pass@engine.tfd.rocks/auth/bridge",   // embedded credentials
+            "https://engine.tfd.rocks/auth/bridge#fragment",    // fragment
+            "not a url at all",                                 // unparseable
         ];
         for url in malicious_urls {
             let f = make_fixture(true);
@@ -1735,12 +2301,17 @@ mod tests {
             assert_eq!(result, Err(AccountError::InvalidResponse), "url: {url}");
             // Never opened, and never stored as a pending attempt to reopen.
             assert!(f.browser.opened.lock().unwrap().is_empty(), "url: {url}");
-            assert_eq!(f.service.reopen_pending(), Err(AccountError::NoPendingLogin), "url: {url}");
+            assert_eq!(
+                f.service.reopen_pending(),
+                Err(AccountError::NoPendingLogin),
+                "url: {url}"
+            );
         }
     }
 
     #[tokio::test]
-    async fn browser_open_failure_is_visible_and_reopen_retries_the_same_url_without_a_second_authorize_call() {
+    async fn browser_open_failure_is_visible_and_reopen_retries_the_same_url_without_a_second_authorize_call()
+     {
         let f = make_fixture(false);
         f.transport.push_ok(201, device_response());
         f.transport.push_ok(200, authorize_response());
@@ -1755,7 +2326,10 @@ mod tests {
 
         let opened = f.browser.opened.lock().unwrap();
         assert_eq!(opened.len(), 2);
-        assert_eq!(opened[0], opened[1], "reopen must use the exact same stored URL");
+        assert_eq!(
+            opened[0], opened[1],
+            "reopen must use the exact same stored URL"
+        );
         // No second /authorize call was made for the reopen.
         assert_eq!(f.transport.calls().len(), 2);
     }
@@ -1763,7 +2337,10 @@ mod tests {
     #[tokio::test]
     async fn reopen_without_any_pending_login_fails() {
         let f = make_fixture(true);
-        assert_eq!(f.service.reopen_pending(), Err(AccountError::NoPendingLogin));
+        assert_eq!(
+            f.service.reopen_pending(),
+            Err(AccountError::NoPendingLogin)
+        );
     }
 
     #[tokio::test]
@@ -1793,7 +2370,10 @@ mod tests {
         let opened_before = f.browser.opened.lock().unwrap().len();
 
         f.clock.advance(301);
-        assert_eq!(f.service.reopen_pending(), Err(AccountError::NoPendingLogin));
+        assert_eq!(
+            f.service.reopen_pending(),
+            Err(AccountError::NoPendingLogin)
+        );
         assert_eq!(f.service.status(), AccountStatus::Expired);
         assert_eq!(
             f.browser.opened.lock().unwrap().len(),
@@ -1811,12 +2391,21 @@ mod tests {
 
         f.service.cancel_login();
         assert_eq!(f.service.status(), AccountStatus::Canceled);
-        assert_eq!(f.service.reopen_pending(), Err(AccountError::NoPendingLogin));
+        assert_eq!(
+            f.service.reopen_pending(),
+            Err(AccountError::NoPendingLogin)
+        );
 
-        let state = f.transport.calls()[1].body["state"].as_str().unwrap().to_string();
+        let state = f.transport.calls()[1].body["state"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let ack = AccountService::on_callback(
             &f.service,
-            AuthCallback { state, outcome: AuthCallbackOutcome::Code("late-code".into()) },
+            AuthCallback {
+                state,
+                outcome: AuthCallbackOutcome::Code("late-code".into()),
+            },
         );
         assert_eq!(ack, AuthCallbackAck::Rejected);
     }
@@ -1827,7 +2416,10 @@ mod tests {
         f.transport.push_ok(201, device_response());
         f.transport.push_ok(200, authorize_response());
         f.service.begin_login().await.unwrap();
-        f.transport.calls()[1].body["state"].as_str().unwrap().to_string()
+        f.transport.calls()[1].body["state"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     #[tokio::test]
@@ -1839,7 +2431,10 @@ mod tests {
         // assertion is race-free regardless of scheduling.
         let ack = AccountService::on_callback(
             &f.service,
-            AuthCallback { state, outcome: AuthCallbackOutcome::Code("test-code".into()) },
+            AuthCallback {
+                state,
+                outcome: AuthCallbackOutcome::Code("test-code".into()),
+            },
         );
         // The ack must never claim a connection: the exchange has not even
         // started yet, let alone succeeded and been durably persisted.
@@ -1855,11 +2450,17 @@ mod tests {
             state: state.clone(),
             outcome: AuthCallbackOutcome::Code("test-code".into()),
         };
-        assert_eq!(AccountService::on_callback(&f.service, callback()), AuthCallbackAck::Pending);
+        assert_eq!(
+            AccountService::on_callback(&f.service, callback()),
+            AuthCallbackAck::Pending
+        );
         // A second, "concurrent" callback for the same already-consumed
         // attempt can only ever be Rejected — the exchange it could trigger
         // therefore happens at most once.
-        assert_eq!(AccountService::on_callback(&f.service, callback()), AuthCallbackAck::Rejected);
+        assert_eq!(
+            AccountService::on_callback(&f.service, callback()),
+            AuthCallbackAck::Rejected
+        );
     }
 
     #[tokio::test]
@@ -1868,7 +2469,10 @@ mod tests {
         let state = begin_and_get_state(&f).await;
         let ack = AccountService::on_callback(
             &f.service,
-            AuthCallback { state: "totally-unrelated-guess".into(), outcome: AuthCallbackOutcome::Code("x".into()) },
+            AuthCallback {
+                state: "totally-unrelated-guess".into(),
+                outcome: AuthCallbackOutcome::Code("x".into()),
+            },
         );
         assert_eq!(ack, AuthCallbackAck::Rejected);
         assert_eq!(f.service.status(), AccountStatus::AwaitingBrowser);
@@ -1877,7 +2481,10 @@ mod tests {
         // ... and still consumable with its real state.
         let ack2 = AccountService::on_callback(
             &f.service,
-            AuthCallback { state, outcome: AuthCallbackOutcome::Code("real-code".into()) },
+            AuthCallback {
+                state,
+                outcome: AuthCallbackOutcome::Code("real-code".into()),
+            },
         );
         assert_eq!(ack2, AuthCallbackAck::Pending);
     }
@@ -1885,30 +2492,48 @@ mod tests {
     #[tokio::test]
     async fn distinct_terminal_outcomes_map_to_distinct_statuses_and_acks() {
         for (error, expected_status, expected_ack) in [
-            (AuthCallbackOutcome::AccessDenied, AccountStatus::Denied, AuthCallbackAck::Denied),
+            (
+                AuthCallbackOutcome::AccessDenied,
+                AccountStatus::Denied,
+                AuthCallbackAck::Denied,
+            ),
             (
                 AuthCallbackOutcome::AccountNotAuthorized,
                 AccountStatus::AccountNotAuthorized,
                 AuthCallbackAck::AccountNotAuthorized,
             ),
-            (AuthCallbackOutcome::ExpiredRequest, AccountStatus::Expired, AuthCallbackAck::Expired),
+            (
+                AuthCallbackOutcome::ExpiredRequest,
+                AccountStatus::Expired,
+                AuthCallbackAck::Expired,
+            ),
         ] {
             let f = make_fixture(true);
             let state = begin_and_get_state(&f).await;
-            let ack = AccountService::on_callback(&f.service, AuthCallback { state, outcome: error });
+            let ack = AccountService::on_callback(
+                &f.service,
+                AuthCallback {
+                    state,
+                    outcome: error,
+                },
+            );
             assert_eq!(ack, expected_ack);
             assert_eq!(f.service.status(), expected_status);
         }
     }
 
     #[tokio::test]
-    async fn a_late_callback_past_its_own_deadline_is_reported_as_expired_not_a_generic_rejection() {
+    async fn a_late_callback_past_its_own_deadline_is_reported_as_expired_not_a_generic_rejection()
+    {
         let f = make_fixture(true);
         let state = begin_and_get_state(&f).await;
         f.clock.advance(301); // past the 300s pending-attempt TTL
         let ack = AccountService::on_callback(
             &f.service,
-            AuthCallback { state, outcome: AuthCallbackOutcome::Code("late-code".into()) },
+            AuthCallback {
+                state,
+                outcome: AuthCallbackOutcome::Code("late-code".into()),
+            },
         );
         assert_eq!(ack, AuthCallbackAck::Expired);
         assert_eq!(f.service.status(), AccountStatus::Expired);
@@ -1924,7 +2549,9 @@ mod tests {
             let mut inner = f.service.inner.lock().unwrap();
             inner.login_flow.consume_code(&state, now).unwrap()
         };
-        Arc::clone(&f.service).complete_exchange(code.to_string(), consumed).await;
+        Arc::clone(&f.service)
+            .complete_exchange(code.to_string(), consumed)
+            .await;
     }
 
     #[tokio::test]
@@ -1936,7 +2563,12 @@ mod tests {
         consume_and_exchange(&f, state, "auth-code").await;
 
         match f.service.status() {
-            AccountStatus::Connected { nickname, clan_tag, realm, web_lease_expires_at } => {
+            AccountStatus::Connected {
+                nickname,
+                clan_tag,
+                realm,
+                web_lease_expires_at,
+            } => {
                 assert_eq!(nickname, "FrankDrake");
                 assert_eq!(clan_tag.as_deref(), Some("TFX"));
                 assert_eq!(realm.as_deref(), Some("eu"));
@@ -1946,9 +2578,22 @@ mod tests {
             other => panic!("expected Connected, got {other:?}"),
         }
 
-        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
-        assert_eq!(stored.refresh_current.as_ref().unwrap().refresh_token, "refresh-abc");
-        assert!(stored.refresh_pending.is_none(), "must be promoted, not left pending");
+        let stored = f
+            .store
+            .profiles
+            .lock()
+            .unwrap()
+            .get("release")
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            stored.refresh_current.as_ref().unwrap().refresh_token,
+            "refresh-abc"
+        );
+        assert!(
+            stored.refresh_pending.is_none(),
+            "must be promoted, not left pending"
+        );
         assert_eq!(stored.device_id.as_deref(), Some("dev_test_001"));
         // Both v5 expiry fields are parsed as absolute UTC timestamps and
         // persisted verbatim: 2030-03-31T12:00:00Z / 2031-01-01T12:00:00Z,
@@ -1972,7 +2617,9 @@ mod tests {
             }),
             ("missing refresh_absolute_expires_at", {
                 let mut b = token_response("x");
-                b.as_object_mut().unwrap().remove("refresh_absolute_expires_at");
+                b.as_object_mut()
+                    .unwrap()
+                    .remove("refresh_absolute_expires_at");
                 b
             }),
             ("malformed refresh_expires_at", {
@@ -2021,7 +2668,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_persists_the_engine_provided_absolute_cap_verbatim_never_recomputed_from_now() {
+    async fn refresh_persists_the_engine_provided_absolute_cap_verbatim_never_recomputed_from_now()
+    {
         let f = make_fixture(true);
         f.store.profiles.lock().unwrap().insert(
             "release",
@@ -2037,16 +2685,30 @@ mod tests {
                     // trivially distinguishable from the correct, verbatim
                     // server value asserted below.
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
-                    account: StoredAccount { nickname: "Old".into(), clan_tag: None, realm: None },
+                    account: StoredAccount {
+                        nickname: "Old".into(),
+                        clan_tag: None,
+                        realm: None,
+                    },
                 }),
                 refresh_pending: None,
             },
         );
         f.transport.push_ok(200, token_response("refresh-rotated"));
         f.service.bootstrap().await;
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
 
-        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        let stored = f
+            .store
+            .profiles
+            .lock()
+            .unwrap()
+            .get("release")
+            .cloned()
+            .unwrap();
         let current = stored.refresh_current.unwrap();
         assert_eq!(current.refresh_token, "refresh-rotated");
         // Exactly the `token_response` fixture's contract fields — never a
@@ -2068,9 +2730,12 @@ mod tests {
         // Cancel (e.g. the user backed out, or logged out) while the network
         // call is conceptually "in flight" — bumps the login_flow generation.
         f.service.cancel_login();
-        f.transport.push_ok(200, token_response("refresh-should-not-land"));
+        f.transport
+            .push_ok(200, token_response("refresh-should-not-land"));
 
-        Arc::clone(&f.service).complete_exchange("auth-code".into(), consumed).await;
+        Arc::clone(&f.service)
+            .complete_exchange("auth-code".into(), consumed)
+            .await;
 
         assert_eq!(f.service.status(), AccountStatus::Canceled);
         // A device-key/device_id record from `begin_login` may already be
@@ -2102,7 +2767,13 @@ mod tests {
 
         assert_eq!(f.service.status(), AccountStatus::StoreUnavailable);
         assert!(
-            f.store.profiles.lock().unwrap().get("release").and_then(|d| d.refresh_current.clone()).is_none(),
+            f.store
+                .profiles
+                .lock()
+                .unwrap()
+                .get("release")
+                .and_then(|d| d.refresh_current.clone())
+                .is_none(),
             "no credential must be committed on a store failure"
         );
     }
@@ -2111,7 +2782,8 @@ mod tests {
     async fn secret_fields_never_appear_in_a_debug_or_serialized_status() {
         let f = make_fixture(true);
         let state = begin_and_get_state(&f).await;
-        f.transport.push_ok(200, token_response("super-secret-refresh-canary"));
+        f.transport
+            .push_ok(200, token_response("super-secret-refresh-canary"));
         consume_and_exchange(&f, state, "auth-code-canary").await;
 
         let status = f.service.status();
@@ -2129,7 +2801,8 @@ mod tests {
     async fn crash_between_pending_write_and_promotion_recovers_via_pending_on_restart() {
         let f = make_fixture(true);
         let state = begin_and_get_state(&f).await;
-        f.transport.push_ok(200, token_response("refresh-crash-recovery"));
+        f.transport
+            .push_ok(200, token_response("refresh-crash-recovery"));
         // Fail exactly the promotion write (the 4th save_profile call: 1 key
         // persist + 1 device_id persist + 1 pending write + [fails] promote).
         *f.store.fail_save_on_call.lock().unwrap() = Some(4);
@@ -2137,8 +2810,18 @@ mod tests {
         consume_and_exchange(&f, state, "auth-code").await;
         assert_eq!(f.service.status(), AccountStatus::StoreUnavailable);
 
-        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
-        assert!(stored.refresh_current.is_none(), "promotion must not have happened");
+        let stored = f
+            .store
+            .profiles
+            .lock()
+            .unwrap()
+            .get("release")
+            .cloned()
+            .unwrap();
+        assert!(
+            stored.refresh_current.is_none(),
+            "promotion must not have happened"
+        );
         assert_eq!(
             stored.refresh_pending.as_ref().unwrap().refresh_token,
             "refresh-crash-recovery",
@@ -2159,7 +2842,10 @@ mod tests {
         service2.bootstrap().await;
         assert!(matches!(service2.status(), AccountStatus::Connected { .. }));
         assert_eq!(transport2.calls()[0].body["grant_type"], "refresh_token");
-        assert_eq!(transport2.calls()[0].body["refresh_token"], "refresh-crash-recovery");
+        assert_eq!(
+            transport2.calls()[0].body["refresh_token"],
+            "refresh-crash-recovery"
+        );
     }
 
     #[tokio::test]
@@ -2175,15 +2861,25 @@ mod tests {
                     refresh_token: "refresh-current".into(),
                     refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
-                    account: StoredAccount { nickname: "Old".into(), clan_tag: None, realm: None },
+                    account: StoredAccount {
+                        nickname: "Old".into(),
+                        clan_tag: None,
+                        realm: None,
+                    },
                 }),
                 refresh_pending: None,
             },
         );
         f.transport.push_ok(200, token_response("refresh-rotated"));
         f.service.bootstrap().await;
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
-        assert_eq!(f.transport.calls()[0].body["refresh_token"], "refresh-current");
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
+        assert_eq!(
+            f.transport.calls()[0].body["refresh_token"],
+            "refresh-current"
+        );
     }
 
     #[tokio::test]
@@ -2199,19 +2895,30 @@ mod tests {
                     refresh_token: "refresh-revoked".into(),
                     refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
-                    account: StoredAccount { nickname: "Old".into(), clan_tag: None, realm: None },
+                    account: StoredAccount {
+                        nickname: "Old".into(),
+                        clan_tag: None,
+                        realm: None,
+                    },
                 }),
                 refresh_pending: Some(StoredRefresh {
                     refresh_token: "refresh-pending-but-unsafe".into(),
                     refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
-                    account: StoredAccount { nickname: "Old".into(), clan_tag: None, realm: None },
+                    account: StoredAccount {
+                        nickname: "Old".into(),
+                        clan_tag: None,
+                        realm: None,
+                    },
                 }),
             },
         );
         // The Engine rejects `current` outright (e.g. reuse/theft detected —
         // the whole family, `pending` included, is revoked server-side).
-        f.transport.push_ok(400, json!({"error":"invalid_grant","error_description":"reuse detected","request_id":"r1"}));
+        f.transport.push_ok(
+            400,
+            json!({"error":"invalid_grant","error_description":"reuse detected","request_id":"r1"}),
+        );
         f.service.bootstrap().await;
         assert_eq!(f.service.status(), AccountStatus::SignedOut);
         // `pending` must never have been tried.
@@ -2231,14 +2938,21 @@ mod tests {
                     refresh_token: "refresh-too-old".into(),
                     refresh_expires_at_unix: 1,
                     refresh_absolute_expires_at_unix: 1,
-                    account: StoredAccount { nickname: "Old".into(), clan_tag: None, realm: None },
+                    account: StoredAccount {
+                        nickname: "Old".into(),
+                        clan_tag: None,
+                        realm: None,
+                    },
                 }),
                 refresh_pending: None,
             },
         );
         f.service.bootstrap().await;
         assert_eq!(f.service.status(), AccountStatus::SignedOut);
-        assert!(f.transport.calls().is_empty(), "an absolutely-expired refresh must never be sent to the Engine");
+        assert!(
+            f.transport.calls().is_empty(),
+            "an absolutely-expired refresh must never be sent to the Engine"
+        );
     }
 
     #[tokio::test]
@@ -2265,8 +2979,11 @@ mod tests {
         f.transport.push_ok(200, authorize_response());
         f.service.begin_login().await.unwrap();
 
-        f.transport.push_ok(200, token_response("refresh-from-stale-attempt"));
-        Arc::clone(&f.service).complete_exchange("stale-code".into(), consumed_1).await;
+        f.transport
+            .push_ok(200, token_response("refresh-from-stale-attempt"));
+        Arc::clone(&f.service)
+            .complete_exchange("stale-code".into(), consumed_1)
+            .await;
 
         // The stale exchange must not have connected anything.
         assert_eq!(f.service.status(), AccountStatus::AwaitingBrowser);
@@ -2304,7 +3021,11 @@ mod tests {
         fn new(
             inner: Arc<ScriptedTransport>,
             predicate: impl Fn(&str, &serde_json::Value) -> bool + Send + Sync + 'static,
-        ) -> (Arc<Self>, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+        ) -> (
+            Arc<Self>,
+            Arc<tokio::sync::Notify>,
+            Arc<tokio::sync::Notify>,
+        ) {
             let reached = Arc::new(tokio::sync::Notify::new());
             let release = Arc::new(tokio::sync::Notify::new());
             let gate = Arc::new(Self {
@@ -2340,7 +3061,11 @@ mod tests {
         }
     }
 
-    fn stored_old_account(device_id: &str, refresh_token: &str, now_unix: u64) -> StoredProfileData {
+    fn stored_old_account(
+        device_id: &str,
+        refresh_token: &str,
+        now_unix: u64,
+    ) -> StoredProfileData {
         StoredProfileData {
             schema_version: STORED_PROFILE_SCHEMA_VERSION,
             device_key_scalar_b64: URL_SAFE_NO_PAD.encode([9u8; 32]),
@@ -2349,7 +3074,11 @@ mod tests {
                 refresh_token: refresh_token.to_string(),
                 refresh_expires_at_unix: now_unix + 1_000,
                 refresh_absolute_expires_at_unix: now_unix + 100_000,
-                account: StoredAccount { nickname: "OldAccount".into(), clan_tag: None, realm: None },
+                account: StoredAccount {
+                    nickname: "OldAccount".into(),
+                    clan_tag: None,
+                    realm: None,
+                },
             }),
             refresh_pending: None,
         }
@@ -2359,12 +3088,14 @@ mod tests {
     async fn deferred_bootstrap_refresh_response_after_a_fresh_login_commits_writes_nothing() {
         let store = Arc::new(InMemoryStore::default());
         let now_unix = 1_700_000_000u64;
-        store.profiles.lock().unwrap().insert("release", stored_old_account("dev_race", "refresh-old", now_unix));
+        store.profiles.lock().unwrap().insert(
+            "release",
+            stored_old_account("dev_race", "refresh-old", now_unix),
+        );
 
-        let (gate, reached, release) =
-            GateOnMatch::new(ScriptedTransport::new(), |path, body| {
-                path == "/token" && body["grant_type"] == "refresh_token"
-            });
+        let (gate, reached, release) = GateOnMatch::new(ScriptedTransport::new(), |path, body| {
+            path == "/token" && body["grant_type"] == "refresh_token"
+        });
         // Consumption order matches invocation order, not push order: the
         // gated bootstrap refresh call blocks BEFORE popping a response, so
         // the fresh login's unblocked `/authorize` then `/token` calls pop
@@ -2408,7 +3139,9 @@ mod tests {
             let mut inner = service.inner.lock().unwrap();
             inner.login_flow.consume_code(&state, now).unwrap()
         };
-        Arc::clone(&service).complete_exchange("auth-code".into(), consumed).await;
+        Arc::clone(&service)
+            .complete_exchange("auth-code".into(), consumed)
+            .await;
         assert!(
             matches!(service.status(), AccountStatus::Connected { .. }),
             "the fresh login must have fully committed before the old refresh is released"
@@ -2422,9 +3155,17 @@ mod tests {
         // changes: the new login's creds/slots/display/status must remain.
         match service.status() {
             AccountStatus::Connected { nickname, .. } => assert_eq!(nickname, "FrankDrake"),
-            other => panic!("expected the fresh login's Connected status to survive, got {other:?}"),
+            other => {
+                panic!("expected the fresh login's Connected status to survive, got {other:?}")
+            }
         }
-        let stored = store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        let stored = store
+            .profiles
+            .lock()
+            .unwrap()
+            .get("release")
+            .cloned()
+            .unwrap();
         assert_eq!(stored.refresh_current.unwrap().refresh_token, "refresh-new");
     }
 
@@ -2432,12 +3173,14 @@ mod tests {
     async fn invalidate_during_a_delayed_bootstrap_refresh_leaves_no_writes() {
         let store = Arc::new(InMemoryStore::default());
         let now_unix = 1_700_000_000u64;
-        store.profiles.lock().unwrap().insert("release", stored_old_account("dev_inv", "refresh-old", now_unix));
+        store.profiles.lock().unwrap().insert(
+            "release",
+            stored_old_account("dev_inv", "refresh-old", now_unix),
+        );
 
-        let (gate, reached, release) =
-            GateOnMatch::new(ScriptedTransport::new(), |path, body| {
-                path == "/token" && body["grant_type"] == "refresh_token"
-            });
+        let (gate, reached, release) = GateOnMatch::new(ScriptedTransport::new(), |path, body| {
+            path == "/token" && body["grant_type"] == "refresh_token"
+        });
         gate.inner.push_ok(200, token_response("refresh-old-late"));
 
         let clock = FixedClock::new();
@@ -2458,7 +3201,10 @@ mod tests {
         // Invalidate (logout / account switch) lands while the refresh is
         // still in flight.
         service.invalidate_local().await;
-        assert!(store.profiles.lock().unwrap().get("release").is_none(), "invalidate must have wiped the store");
+        assert!(
+            store.profiles.lock().unwrap().get("release").is_none(),
+            "invalidate must have wiped the store"
+        );
         let saves_before_release = store.save_calls.load(Ordering::SeqCst);
 
         release.notify_one();
@@ -2476,7 +3222,8 @@ mod tests {
 
     #[tokio::test]
     async fn simultaneous_begin_login_registers_the_device_exactly_once() {
-        let (gate, reached, release) = GateOnMatch::new(ScriptedTransport::new(), |path, _| path == "/device");
+        let (gate, reached, release) =
+            GateOnMatch::new(ScriptedTransport::new(), |path, _| path == "/device");
         gate.inner.push_ok(201, device_response());
         gate.inner.push_ok(200, authorize_response());
         gate.inner.push_ok(200, authorize_response());
@@ -2508,7 +3255,11 @@ mod tests {
 
         let calls = gate.calls();
         let device_calls: Vec<_> = calls.iter().filter(|c| c.path == "/device").collect();
-        assert_eq!(device_calls.len(), 1, "concurrent begin_login must register the device exactly once");
+        assert_eq!(
+            device_calls.len(),
+            1,
+            "concurrent begin_login must register the device exactly once"
+        );
         let authorize_device_ids: std::collections::HashSet<_> = calls
             .iter()
             .filter(|c| c.path == "/authorize")
@@ -2543,10 +3294,29 @@ mod tests {
         f.service.begin_login().await.unwrap();
 
         let calls = f.transport.calls();
-        assert_eq!(calls.len(), 3, "the 401 attempt plus exactly one retry, then the next real call");
-        let first_proof = calls[0].headers.iter().find(|(k, _)| k == "DPoP").unwrap().1.clone();
-        let retry_proof = calls[1].headers.iter().find(|(k, _)| k == "DPoP").unwrap().1.clone();
-        assert_ne!(first_proof, retry_proof, "the retry must rebuild the proof (fresh jti/iat), never reuse it verbatim");
+        assert_eq!(
+            calls.len(),
+            3,
+            "the 401 attempt plus exactly one retry, then the next real call"
+        );
+        let first_proof = calls[0]
+            .headers
+            .iter()
+            .find(|(k, _)| k == "DPoP")
+            .unwrap()
+            .1
+            .clone();
+        let retry_proof = calls[1]
+            .headers
+            .iter()
+            .find(|(k, _)| k == "DPoP")
+            .unwrap()
+            .1
+            .clone();
+        assert_ne!(
+            first_proof, retry_proof,
+            "the retry must rebuild the proof (fresh jti/iat), never reuse it verbatim"
+        );
         // The retried proof embeds the server nonce in its payload.
         let payload_b64 = retry_proof.split('.').nth(1).unwrap();
         let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(payload_b64).unwrap()).unwrap();
@@ -2592,9 +3362,13 @@ mod tests {
     async fn invalidate_local_disconnects_clears_store_and_bumps_generation_against_stale_work() {
         let f = make_fixture(true);
         let state = begin_and_get_state(&f).await;
-        f.transport.push_ok(200, token_response("refresh-to-be-cleared"));
+        f.transport
+            .push_ok(200, token_response("refresh-to-be-cleared"));
         consume_and_exchange(&f, state, "auth-code").await;
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
 
         f.service.invalidate_local().await;
         assert_eq!(f.service.status(), AccountStatus::SignedOut);
@@ -2606,10 +3380,20 @@ mod tests {
         let transport = ScriptedTransport::new();
         let store = Arc::new(InMemoryStore::default());
         let release = Arc::new(AccountService::new(
-            transport.clone(), store.clone(), RecordingBrowser::new(true), FixedClock::new(), CountingRandom::new(), ClientProfile::Release,
+            transport.clone(),
+            store.clone(),
+            RecordingBrowser::new(true),
+            FixedClock::new(),
+            CountingRandom::new(),
+            ClientProfile::Release,
         ));
         let debug = Arc::new(AccountService::new(
-            transport.clone(), store.clone(), RecordingBrowser::new(true), FixedClock::new(), CountingRandom::new(), ClientProfile::Debug,
+            transport.clone(),
+            store.clone(),
+            RecordingBrowser::new(true),
+            FixedClock::new(),
+            CountingRandom::new(),
+            ClientProfile::Debug,
         ));
         release.set_port(43210);
         debug.set_port(43210);
@@ -2632,7 +3416,10 @@ mod tests {
         let state = begin_and_get_state(&f).await;
         f.transport.push_ok(200, token_response("refresh-initial"));
         consume_and_exchange(&f, state, "auth-code").await;
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
         f
     }
 
@@ -2647,7 +3434,12 @@ mod tests {
     }
 
     fn dpop_header(call: &RecordedCall) -> String {
-        call.headers.iter().find(|(k, _)| k == "DPoP").unwrap().1.clone()
+        call.headers
+            .iter()
+            .find(|(k, _)| k == "DPoP")
+            .unwrap()
+            .1
+            .clone()
     }
 
     /// Decodes the `jti` claim out of a DPoP proof's payload segment, for
@@ -2667,14 +3459,21 @@ mod tests {
 
         f.service.renewal_tick().await; // attempt 1 (transport queue empty -> network error)
         assert_eq!(refresh_calls(&f).len(), 1);
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }), "a retry in flight stays silent");
+        assert!(
+            matches!(f.service.status(), AccountStatus::Connected { .. }),
+            "a retry in flight stays silent"
+        );
 
         // Not due yet before the 5 s local delay elapses.
         f.service.renewal_tick().await;
         assert_eq!(refresh_calls(&f).len(), 1);
         f.clock.advance(4);
         f.service.renewal_tick().await;
-        assert_eq!(refresh_calls(&f).len(), 1, "must not fire before its scheduled time");
+        assert_eq!(
+            refresh_calls(&f).len(),
+            1,
+            "must not fire before its scheduled time"
+        );
         f.clock.advance(1); // total 5s elapsed
 
         f.service.renewal_tick().await; // attempt 2
@@ -2684,18 +3483,28 @@ mod tests {
         assert_eq!(refresh_calls(&f).len(), 2);
         f.clock.advance(29);
         f.service.renewal_tick().await;
-        assert_eq!(refresh_calls(&f).len(), 2, "must not fire before the 30s delay elapses");
+        assert_eq!(
+            refresh_calls(&f).len(),
+            2,
+            "must not fire before the 30s delay elapses"
+        );
         f.clock.advance(1); // total 30s elapsed since attempt 2's failure
 
         f.service.renewal_tick().await; // attempt 3
         assert_eq!(refresh_calls(&f).len(), 3);
-        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::RenewalFailed { .. }
+        ));
 
         // Never a 4th attempt, no matter how much later the next tick runs.
         f.clock.advance(3600);
         f.service.renewal_tick().await;
         assert_eq!(refresh_calls(&f).len(), 3);
-        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::RenewalFailed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -2712,12 +3521,20 @@ mod tests {
 
         f.clock.advance(89);
         f.service.renewal_tick().await;
-        assert_eq!(refresh_calls(&f).len(), 1, "the server's 90s Retry-After beats the local 5s delay");
+        assert_eq!(
+            refresh_calls(&f).len(),
+            1,
+            "the server's 90s Retry-After beats the local 5s delay"
+        );
         f.clock.advance(1); // exactly 90s elapsed
-        f.transport.push_ok(200, token_response("refresh-after-retry-after"));
+        f.transport
+            .push_ok(200, token_response("refresh-after-retry-after"));
         f.service.renewal_tick().await; // attempt 2, now due
         assert_eq!(refresh_calls(&f).len(), 2);
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
     }
 
     #[tokio::test]
@@ -2731,7 +3548,10 @@ mod tests {
         f.service.renewal_tick().await;
         let proof2 = dpop_header(&refresh_calls(&f)[1]);
 
-        assert_eq!(proof1, proof2, "a retry under 60s old must reuse the exact same proof/jti");
+        assert_eq!(
+            proof1, proof2,
+            "a retry under 60s old must reuse the exact same proof/jti"
+        );
         assert_eq!(dpop_jti(&proof1), dpop_jti(&proof2));
     }
 
@@ -2751,12 +3571,20 @@ mod tests {
         let proof1 = dpop_header(&refresh_calls(&f)[0]);
 
         f.clock.advance(90); // 90s later: proof1's iat is now 90s old (>60s)
-        f.transport.push_ok(200, token_response("refresh-fresh-proof"));
+        f.transport
+            .push_ok(200, token_response("refresh-fresh-proof"));
         f.service.renewal_tick().await; // attempt 2
         let proof2 = dpop_header(&refresh_calls(&f)[1]);
 
-        assert_ne!(proof1, proof2, "a retry sent 90s later must mint a fresh proof");
-        assert_ne!(dpop_jti(&proof1), dpop_jti(&proof2), "and therefore a fresh jti");
+        assert_ne!(
+            proof1, proof2,
+            "a retry sent 90s later must mint a fresh proof"
+        );
+        assert_ne!(
+            dpop_jti(&proof1),
+            dpop_jti(&proof2),
+            "and therefore a fresh jti"
+        );
     }
 
     #[tokio::test]
@@ -2772,11 +3600,16 @@ mod tests {
         for reason in reasons {
             let f = connected_fixture().await;
             f.clock.advance(450);
-            f.transport.push_ok(400, json!({"error": "invalid_grant", "reason": reason}));
+            f.transport
+                .push_ok(400, json!({"error": "invalid_grant", "reason": reason}));
 
             f.service.renewal_tick().await;
 
-            assert_eq!(refresh_calls(&f).len(), 1, "{reason}: must not retry a definitive reason");
+            assert_eq!(
+                refresh_calls(&f).len(),
+                1,
+                "{reason}: must not retry a definitive reason"
+            );
             assert_eq!(
                 f.service.status(),
                 AccountStatus::SignedOut,
@@ -2786,7 +3619,11 @@ mod tests {
             // No zombie retries even much later.
             f.clock.advance(3600);
             f.service.renewal_tick().await;
-            assert_eq!(refresh_calls(&f).len(), 1, "{reason}: a signed-out session must never renew again");
+            assert_eq!(
+                refresh_calls(&f).len(),
+                1,
+                "{reason}: a signed-out session must never renew again"
+            );
         }
     }
 
@@ -2803,22 +3640,35 @@ mod tests {
             f.clock.advance(450);
             f.transport.push_ok(status, body.clone());
             f.service.renewal_tick().await;
-            assert_eq!(refresh_calls(&f).len(), 1, "status {status}: must have attempted once");
+            assert_eq!(
+                refresh_calls(&f).len(),
+                1,
+                "status {status}: must have attempted once"
+            );
             assert!(
                 matches!(f.service.status(), AccountStatus::Connected { .. }),
                 "status {status}: a transient failure must stay silently Connected, not disconnect"
             );
             // The retry budget is still available: the next attempt fires.
             f.clock.advance(5);
-            f.transport.push_ok(200, token_response("refresh-recovered"));
+            f.transport
+                .push_ok(200, token_response("refresh-recovered"));
             f.service.renewal_tick().await;
-            assert_eq!(refresh_calls(&f).len(), 2, "status {status}: must still have a retry left");
-            assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+            assert_eq!(
+                refresh_calls(&f).len(),
+                2,
+                "status {status}: must still have a retry left"
+            );
+            assert!(matches!(
+                f.service.status(),
+                AccountStatus::Connected { .. }
+            ));
         }
     }
 
     #[tokio::test]
-    async fn a_store_write_failure_during_scheduled_commit_leaves_a_usable_slot_for_the_next_attempt() {
+    async fn a_store_write_failure_during_scheduled_commit_leaves_a_usable_slot_for_the_next_attempt()
+     {
         let f = connected_fixture().await;
         // 4 prior save_profile calls happened during connected_fixture's own
         // login: device-key persist, device_id persist, pending write,
@@ -2829,14 +3679,25 @@ mod tests {
         // Fail exactly the PROMOTION write (save #6) of the scheduler's own
         // persist_new_refresh (save #5 = pending, #6 = promote).
         *f.store.fail_save_on_call.lock().unwrap() = Some(6);
-        f.transport.push_ok(200, token_response("refresh-crash-recovery"));
+        f.transport
+            .push_ok(200, token_response("refresh-crash-recovery"));
 
         f.service.renewal_tick().await;
 
         // Treated like a transient failure: still silently Connected on the
         // OLD (still valid) access token, not exhausted and not corrupted.
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
-        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
+        let stored = f
+            .store
+            .profiles
+            .lock()
+            .unwrap()
+            .get("release")
+            .cloned()
+            .unwrap();
         assert_eq!(
             stored.refresh_current.as_ref().unwrap().refresh_token,
             "refresh-initial",
@@ -2851,11 +3712,25 @@ mod tests {
         // The next scheduled attempt (backoff already applied, save-failure
         // was one-shot, not sticky) succeeds normally and promotes cleanly.
         f.clock.advance(5);
-        f.transport.push_ok(200, token_response("refresh-crash-recovery"));
+        f.transport
+            .push_ok(200, token_response("refresh-crash-recovery"));
         f.service.renewal_tick().await;
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
-        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
-        assert_eq!(stored.refresh_current.as_ref().unwrap().refresh_token, "refresh-crash-recovery");
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
+        let stored = f
+            .store
+            .profiles
+            .lock()
+            .unwrap()
+            .get("release")
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            stored.refresh_current.as_ref().unwrap().refresh_token,
+            "refresh-crash-recovery"
+        );
         assert!(stored.refresh_pending.is_none());
 
         // A fresh restart also still reconnects cleanly from the same store.
@@ -2872,20 +3747,29 @@ mod tests {
         transport2.push_ok(200, token_response("refresh-after-restart"));
         service2.bootstrap().await;
         assert!(matches!(service2.status(), AccountStatus::Connected { .. }));
-        assert_eq!(transport2.calls()[0].body["refresh_token"], "refresh-crash-recovery");
+        assert_eq!(
+            transport2.calls()[0].body["refresh_token"],
+            "refresh-crash-recovery"
+        );
     }
 
     #[tokio::test]
     async fn scheduled_renewal_response_after_invalidate_local_writes_nothing() {
         let store = Arc::new(InMemoryStore::default());
         let now_unix = 1_700_000_000u64;
-        store.profiles.lock().unwrap().insert("release", stored_old_account("dev_sched_inv", "refresh-seed", now_unix));
+        store.profiles.lock().unwrap().insert(
+            "release",
+            stored_old_account("dev_sched_inv", "refresh-seed", now_unix),
+        );
 
         let (gate, reached, release) = GateOnMatch::new(ScriptedTransport::new(), |path, body| {
-            path == "/token" && body["grant_type"] == "refresh_token" && body["refresh_token"] == "refresh-boot"
+            path == "/token"
+                && body["grant_type"] == "refresh_token"
+                && body["refresh_token"] == "refresh-boot"
         });
         gate.inner.push_ok(200, token_response("refresh-boot")); // bootstrap's own refresh, ungated
-        gate.inner.push_ok(200, token_response("refresh-after-invalidate")); // the scheduler's gated attempt
+        gate.inner
+            .push_ok(200, token_response("refresh-after-invalidate")); // the scheduler's gated attempt
 
         let clock = FixedClock::new();
         let service = Arc::new(AccountService::new(
@@ -2921,7 +3805,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_stale_attempt_ticket_cannot_commit_once_a_newer_attempt_in_the_same_chain_has_begun() {
+    async fn a_stale_attempt_ticket_cannot_commit_once_a_newer_attempt_in_the_same_chain_has_begun()
+    {
         let f = connected_fixture().await;
         f.clock.advance(450);
         // Attempt 1 of the chain, captured directly so the test still holds
@@ -2934,17 +3819,31 @@ mod tests {
         // scheduler starts attempt 2 (empty transport script = network
         // error), so `stale_ticket` is no longer the current attempt.
         f.service
-            .commit_renewal_failure(stale_ticket, RenewalFailure::Transient { retry_after: None })
+            .commit_renewal_failure(
+                stale_ticket,
+                RenewalFailure::Transient { retry_after: None },
+                None,
+            )
             .await;
         f.clock.advance(5);
         f.service.renewal_tick().await;
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
 
         // A late SUCCESS response for the now-superseded attempt-1 ticket
         // must never commit.
         let parsed = parse_token_response(&token_response("refresh-late-attempt-1")).unwrap();
         f.service.commit_renewal_success(stale_ticket, parsed).await;
-        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        let stored = f
+            .store
+            .profiles
+            .lock()
+            .unwrap()
+            .get("release")
+            .cloned()
+            .unwrap();
         assert_eq!(
             stored.refresh_current.as_ref().unwrap().refresh_token,
             "refresh-initial",
@@ -2953,8 +3852,13 @@ mod tests {
 
         // A late DEFINITIVE failure for the same stale ticket must not tear
         // down the still-live (later-attempt) chain either.
-        f.service.commit_renewal_failure(stale_ticket, RenewalFailure::ReauthenticationRequired).await;
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        f.service
+            .commit_renewal_failure(stale_ticket, RenewalFailure::ReauthenticationRequired, None)
+            .await;
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
         assert!(f.store.profiles.lock().unwrap().get("release").is_some());
     }
 
@@ -2975,14 +3879,24 @@ mod tests {
         f.clock.advance(3600);
         f.service.renewal_tick().await; // attempt 3
         assert_eq!(refresh_calls(&f).len(), 3);
-        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::RenewalFailed { .. }
+        ));
 
         // A long offline/sleep gap AFTER exhaustion never causes a 4th
         // attempt or a duplicate exhausted-state transition.
         f.clock.advance(86_400);
         f.service.renewal_tick().await;
-        assert_eq!(refresh_calls(&f).len(), 3, "no duplicate attempts after a long offline/sleep gap");
-        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+        assert_eq!(
+            refresh_calls(&f).len(),
+            3,
+            "no duplicate attempts after a long offline/sleep gap"
+        );
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::RenewalFailed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -2994,23 +3908,40 @@ mod tests {
         f.service.renewal_tick().await;
         f.clock.advance(30);
         f.service.renewal_tick().await;
-        assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::RenewalFailed { .. }
+        ));
         assert!(f.service.inner.lock().unwrap().renewal_failure_logged);
 
         let calls_before = refresh_calls(&f).len();
         for _ in 0..5 {
-            assert!(matches!(f.service.status(), AccountStatus::RenewalFailed { .. }));
+            assert!(matches!(
+                f.service.status(),
+                AccountStatus::RenewalFailed { .. }
+            ));
         }
-        assert_eq!(refresh_calls(&f).len(), calls_before, "polling status() must never trigger new network activity");
-        assert!(f.service.inner.lock().unwrap().renewal_failure_logged, "still exactly one logged transition");
+        assert_eq!(
+            refresh_calls(&f).len(),
+            calls_before,
+            "polling status() must never trigger new network activity"
+        );
+        assert!(
+            f.service.inner.lock().unwrap().renewal_failure_logged,
+            "still exactly one logged transition"
+        );
     }
 
     #[tokio::test]
-    async fn web_lease_expires_at_is_captured_on_scheduled_refresh_and_only_a_success_advances_it() {
+    async fn web_lease_expires_at_is_captured_on_scheduled_refresh_and_only_a_success_advances_it()
+    {
         let f = connected_fixture().await;
         // Captured on the initial exchange already ("2030-01-01T12:15:00Z" -> 1_893_500_100).
         match f.service.status() {
-            AccountStatus::Connected { web_lease_expires_at, .. } => {
+            AccountStatus::Connected {
+                web_lease_expires_at,
+                ..
+            } => {
                 assert_eq!(web_lease_expires_at, Some(1_893_500_100))
             }
             other => panic!("expected Connected, got {other:?}"),
@@ -3020,8 +3951,15 @@ mod tests {
         // A transient failure must not move it at all.
         f.service.renewal_tick().await; // network error
         match f.service.status() {
-            AccountStatus::Connected { web_lease_expires_at, .. } => {
-                assert_eq!(web_lease_expires_at, Some(1_893_500_100), "a failed attempt must never advance the lease")
+            AccountStatus::Connected {
+                web_lease_expires_at,
+                ..
+            } => {
+                assert_eq!(
+                    web_lease_expires_at,
+                    Some(1_893_500_100),
+                    "a failed attempt must never advance the lease"
+                )
             }
             other => panic!("expected Connected, got {other:?}"),
         }
@@ -3034,7 +3972,10 @@ mod tests {
         f.transport.push_ok(200, body);
         f.service.renewal_tick().await;
         match f.service.status() {
-            AccountStatus::Connected { web_lease_expires_at, .. } => {
+            AccountStatus::Connected {
+                web_lease_expires_at,
+                ..
+            } => {
                 assert_eq!(web_lease_expires_at, Some(1_906_502_400))
             }
             other => panic!("expected Connected, got {other:?}"),
@@ -3046,10 +3987,19 @@ mod tests {
         for reason in ["account_changed", "device_revoked"] {
             let f = connected_fixture().await;
             f.clock.advance(450);
-            f.transport.push_ok(400, json!({"error": "invalid_grant", "reason": reason}));
+            f.transport
+                .push_ok(400, json!({"error": "invalid_grant", "reason": reason}));
             f.service.renewal_tick().await;
-            assert_eq!(refresh_calls(&f).len(), 1, "{reason}: a mid-session scheduled renewal must not retry");
-            assert_eq!(f.service.status(), AccountStatus::SignedOut, "{reason}: must require sign-in again");
+            assert_eq!(
+                refresh_calls(&f).len(),
+                1,
+                "{reason}: a mid-session scheduled renewal must not retry"
+            );
+            assert_eq!(
+                f.service.status(),
+                AccountStatus::SignedOut,
+                "{reason}: must require sign-in again"
+            );
         }
     }
 
@@ -3087,10 +4037,14 @@ mod tests {
     async fn the_renewal_loop_performs_a_due_renewal_and_stops_promptly_when_cancelled() {
         let f = connected_fixture().await;
         f.clock.advance(450);
-        f.transport.push_ok(200, token_response("refresh-from-loop"));
+        f.transport
+            .push_ok(200, token_response("refresh-from-loop"));
 
         let (stop, rx) = tokio::sync::watch::channel(false);
-        let task = tokio::spawn(crate::account::renewal::run_renewal_loop(f.service.clone(), rx));
+        let task = tokio::spawn(crate::account::renewal::run_renewal_loop(
+            f.service.clone(),
+            rx,
+        ));
 
         // Bounded wait on the loop's own first tick — no real backoff sleep
         // is involved, the scripted transport answers immediately.
@@ -3111,8 +4065,14 @@ mod tests {
             }
         })
         .await;
-        assert!(renewed.is_ok(), "the loop must run the due renewal on its first tick");
-        assert!(matches!(f.service.status(), AccountStatus::Connected { .. }));
+        assert!(
+            renewed.is_ok(),
+            "the loop must run the due renewal on its first tick"
+        );
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::Connected { .. }
+        ));
 
         // The loop is now parked in its (capped) sleep; cancelling must end
         // it without waiting that sleep out.
@@ -3120,18 +4080,441 @@ mod tests {
         let joined = tokio::time::timeout(Duration::from_secs(5), task).await;
         assert!(joined.is_ok(), "cancellation must end the loop promptly");
         joined.unwrap().unwrap();
-        assert_eq!(refresh_calls(&f).len(), 1, "a cancelled loop performs no further attempts");
+        assert_eq!(
+            refresh_calls(&f).len(),
+            1,
+            "a cancelled loop performs no further attempts"
+        );
     }
 
     #[tokio::test]
     async fn dropping_the_scheduler_handle_ends_the_renewal_loop() {
         let f = connected_fixture().await; // nothing due yet: the first tick is a no-op
         let (stop, rx) = tokio::sync::watch::channel(false);
-        let task = tokio::spawn(crate::account::renewal::run_renewal_loop(f.service.clone(), rx));
+        let task = tokio::spawn(crate::account::renewal::run_renewal_loop(
+            f.service.clone(),
+            rx,
+        ));
         drop(stop); // what `RenewalScheduler::drop` amounts to for the loop
         let joined = tokio::time::timeout(Duration::from_secs(5), task).await;
-        assert!(joined.is_ok(), "a dropped scheduler must not leave the loop running");
+        assert!(
+            joined.is_ok(),
+            "a dropped scheduler must not leave the loop running"
+        );
         joined.unwrap().unwrap();
-        assert!(refresh_calls(&f).is_empty(), "no renewal was due, so no attempt may happen");
+        assert!(
+            refresh_calls(&f).is_empty(),
+            "no renewal was due, so no attempt may happen"
+        );
+    }
+
+    // ── Native lifecycle snapshot / subscription / signing seam (td-811657) ─
+
+    #[tokio::test]
+    async fn a_subscriber_attaching_after_construction_immediately_observes_the_current_snapshot() {
+        let f = make_fixture(true);
+        // Attaches before any mutation at all.
+        let rx = f.service.subscribe();
+        let initial = rx.borrow().clone();
+        assert_eq!(initial.status, AccountStatus::SignedOut);
+        assert!(!initial.can_use_account);
+        assert_eq!(initial.lifecycle_epoch, 0);
+        drop(rx);
+
+        let state = begin_and_get_state(&f).await;
+        f.transport
+            .push_ok(200, token_response("refresh-late-subscriber"));
+        consume_and_exchange(&f, state, "auth-code").await;
+
+        // A NEW subscriber attaching mid-flight (after the mutation already
+        // happened) must observe the LATEST state, not the initial one, and
+        // without any poll loop.
+        let rx2 = f.service.subscribe();
+        assert!(
+            rx2.borrow().can_use_account,
+            "a mid-flight subscriber sees the latest snapshot"
+        );
+        assert_eq!(rx2.borrow().lifecycle_epoch, 1);
+    }
+
+    #[tokio::test]
+    async fn access_expiry_while_a_renewal_retry_is_pending_makes_the_snapshot_unusable_and_reaches_a_subscriber()
+     {
+        let f = connected_fixture().await;
+        let mut rx = f.service.subscribe();
+        assert!(rx.borrow_and_update().can_use_account);
+
+        // Past both `renew_at` (450s) and the 900s access lifetime: a single
+        // tick performs one (failing) retry attempt and lands in
+        // `Renewal::Waiting`, never `Failed` — the session is still
+        // "retrying", not yet exhausted.
+        f.clock.advance(1000);
+        f.service.renewal_tick().await;
+
+        assert!(
+            matches!(f.service.status(), AccountStatus::Connected { .. }),
+            "status() must still look Connected-shaped while a retry is pending"
+        );
+        let snap = f.service.snapshot();
+        assert!(
+            !snap.can_use_account,
+            "the access token itself is long expired"
+        );
+
+        rx.changed().await.unwrap();
+        assert!(
+            !rx.borrow_and_update().can_use_account,
+            "a subscriber must observe the unusable transition without polling status()"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_slow_receiver_is_coalesced_to_only_the_latest_snapshot() {
+        let f = connected_fixture().await;
+        let mut rx = f.service.subscribe();
+        rx.borrow_and_update();
+        let initial_epoch = f.service.snapshot().lifecycle_epoch;
+
+        // Two separate ordinary-renewal commits happen without the receiver
+        // ever being read in between ("a slow receiver").
+        f.clock.advance(450);
+        f.transport
+            .push_ok(200, token_response("refresh-coalesce-1"));
+        f.service.renewal_tick().await;
+        f.clock.advance(450);
+        f.transport
+            .push_ok(200, token_response("refresh-coalesce-2"));
+        f.service.renewal_tick().await;
+
+        rx.changed().await.unwrap();
+        let latest = rx.borrow_and_update().clone();
+        assert_eq!(
+            latest.lifecycle_epoch, initial_epoch,
+            "ordinary renewals never advance the epoch"
+        );
+        assert!(
+            !rx.has_changed().unwrap(),
+            "watch must coalesce to the single latest value, not queue the two intermediate sends"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_scheduled_refresh_commit_advances_expiry_but_leaves_lifecycle_epoch_unchanged()
+     {
+        let f = connected_fixture().await;
+        let before = f.service.snapshot();
+
+        f.clock.advance(450);
+        f.transport.push_ok(200, token_response("refresh-rotated"));
+        f.service.renewal_tick().await;
+
+        let after = f.service.snapshot();
+        assert_eq!(
+            after.lifecycle_epoch, before.lifecycle_epoch,
+            "an ordinary renewal must not advance the epoch"
+        );
+        assert!(after.can_use_account);
+        assert_ne!(
+            after.access_expires_at_unix, before.access_expires_at_unix,
+            "the access expiry itself DOES advance on a successful renewal"
+        );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_refresh_leaves_lifecycle_epoch_unchanged() {
+        let f = make_fixture(true);
+        f.store.profiles.lock().unwrap().insert(
+            "release",
+            StoredProfileData {
+                schema_version: STORED_PROFILE_SCHEMA_VERSION,
+                device_key_scalar_b64: URL_SAFE_NO_PAD.encode([9u8; 32]),
+                device_id: Some("dev_restart".into()),
+                refresh_current: Some(StoredRefresh {
+                    refresh_token: "refresh-current".into(),
+                    refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
+                    refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
+                    account: StoredAccount {
+                        nickname: "Old".into(),
+                        clan_tag: None,
+                        realm: None,
+                    },
+                }),
+                refresh_pending: None,
+            },
+        );
+        f.transport.push_ok(200, token_response("refresh-rotated"));
+
+        f.service.bootstrap().await;
+
+        let snap = f.service.snapshot();
+        assert!(matches!(snap.status, AccountStatus::Connected { .. }));
+        assert!(snap.can_use_account);
+        assert_eq!(
+            snap.lifecycle_epoch, 0,
+            "bootstrap's one-shot refresh must never advance the lifecycle epoch"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_exchange_commit_increments_lifecycle_epoch_and_clears_any_prior_end_reason() {
+        let f = make_fixture(true);
+        assert_eq!(f.service.snapshot().lifecycle_epoch, 0);
+
+        let state = begin_and_get_state(&f).await;
+        f.transport
+            .push_ok(200, token_response("refresh-first-login"));
+        consume_and_exchange(&f, state, "auth-code-1").await;
+        let snap1 = f.service.snapshot();
+        assert_eq!(
+            snap1.lifecycle_epoch, 1,
+            "the first login-exchange commit must advance the epoch"
+        );
+        assert_eq!(snap1.end_reason, None);
+
+        // A second full login while already connected (an account switch)
+        // reuses the already-registered device (no second `/device` call).
+        f.transport.push_ok(200, authorize_response());
+        f.service.begin_login().await.unwrap();
+        let state2 = f.transport.calls().last().unwrap().body["state"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        f.transport.push_ok(200, token_response("refresh-switched"));
+        consume_and_exchange(&f, state2, "auth-code-2").await;
+        let snap2 = f.service.snapshot();
+        assert_eq!(
+            snap2.lifecycle_epoch, 2,
+            "a fresh login-exchange commit (switch) also advances the epoch"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_local_increments_lifecycle_epoch_and_reports_signed_out() {
+        let f = connected_fixture().await;
+        let before = f.service.snapshot();
+        assert_eq!(before.lifecycle_epoch, 1);
+
+        f.service.invalidate_local().await;
+
+        let after = f.service.snapshot();
+        assert_eq!(
+            after.lifecycle_epoch, 2,
+            "logout/reset must advance the epoch"
+        );
+        assert!(!after.can_use_account);
+        assert_eq!(after.end_reason, Some(AccountEndReason::SignedOut));
+    }
+
+    #[tokio::test]
+    async fn each_definitive_invalid_grant_reason_increments_lifecycle_epoch_and_reports_the_correct_end_reason()
+     {
+        let cases: [(&str, AccountEndReason); 6] = [
+            ("refresh_expired", AccountEndReason::SignedOut),
+            ("refresh_absolute_expired", AccountEndReason::SignedOut),
+            ("refresh_reuse_detected", AccountEndReason::SignedOut),
+            ("refresh_orphaned", AccountEndReason::SignedOut),
+            ("device_revoked", AccountEndReason::Revoked),
+            ("account_changed", AccountEndReason::AccountChanged),
+        ];
+        for (reason, expected) in cases {
+            let f = connected_fixture().await;
+            let before = f.service.snapshot();
+            assert_eq!(
+                before.lifecycle_epoch, 1,
+                "{reason}: baseline after one login-exchange commit"
+            );
+
+            f.clock.advance(450);
+            f.transport
+                .push_ok(400, json!({"error": "invalid_grant", "reason": reason}));
+            f.service.renewal_tick().await;
+
+            let after = f.service.snapshot();
+            assert_eq!(
+                after.lifecycle_epoch, 2,
+                "{reason}: a definitive outcome must advance the epoch exactly once"
+            );
+            assert!(!after.can_use_account, "{reason}: must be unusable");
+            assert_eq!(
+                after.end_reason,
+                Some(expected),
+                "{reason}: must report the correct safe end reason"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn renewal_exhaustion_does_not_change_lifecycle_epoch_but_reports_unusable_and_renewal_exhausted()
+     {
+        let f = connected_fixture().await;
+        let before_epoch = f.service.snapshot().lifecycle_epoch;
+
+        f.clock.advance(450);
+        f.service.renewal_tick().await; // attempt 1 (network error)
+        f.clock.advance(5);
+        f.service.renewal_tick().await; // attempt 2 (network error)
+        f.clock.advance(30);
+        f.service.renewal_tick().await; // attempt 3 (network error) -> exhausted
+
+        assert!(matches!(
+            f.service.status(),
+            AccountStatus::RenewalFailed { .. }
+        ));
+        let snap = f.service.snapshot();
+        assert_eq!(
+            snap.lifecycle_epoch, before_epoch,
+            "exhaustion must not change the identity epoch"
+        );
+        assert!(!snap.can_use_account);
+        assert_eq!(snap.end_reason, Some(AccountEndReason::RenewalExhausted));
+    }
+
+    #[tokio::test]
+    async fn sign_request_requires_a_currently_usable_account() {
+        let f = make_fixture(true);
+        assert!(matches!(
+            f.service.sign_request(SignedEndpoint::Handoff).await,
+            Err(AccountError::NotReady)
+        ));
+
+        let f2 = connected_fixture().await;
+        f2.service.invalidate_local().await;
+        assert!(matches!(
+            f2.service.sign_request(SignedEndpoint::Handoff).await,
+            Err(AccountError::NotReady)
+        ));
+    }
+
+    #[tokio::test]
+    async fn sign_request_targets_the_exact_allowlisted_method_and_url_with_a_correct_dpop_and_ath()
+    {
+        let f = connected_fixture().await;
+        let material = f
+            .service
+            .sign_request(SignedEndpoint::Handoff)
+            .await
+            .unwrap();
+
+        let dpop = material
+            .headers
+            .iter()
+            .find(|(k, _)| k == "DPoP")
+            .unwrap()
+            .1
+            .clone();
+        let authorization = material
+            .headers
+            .iter()
+            .find(|(k, _)| k == "Authorization")
+            .unwrap()
+            .1
+            .clone();
+        assert!(authorization.starts_with("DPoP "));
+        let access_token = authorization.trim_start_matches("DPoP ").to_string();
+        assert_eq!(access_token, "eyTestAccessToken");
+
+        let payload_b64 = dpop.split('.').nth(1).unwrap();
+        let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(payload_b64).unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(value["htm"], "POST");
+        assert_eq!(
+            value["htu"],
+            "https://engine.tfd.rocks/api/v1/bridge/auth/handoff"
+        );
+        assert_eq!(
+            value["ath"].as_str().unwrap(),
+            bridge_core::dpop::ath_claim(&access_token),
+            "the `ath` claim must hash the exact access token this material's Authorization header carries"
+        );
+        assert_eq!(
+            material.lifecycle_epoch,
+            f.service.snapshot().lifecycle_epoch
+        );
+    }
+
+    #[tokio::test]
+    async fn signed_request_material_epoch_is_stale_after_a_subsequent_invalidate_local() {
+        let f = connected_fixture().await;
+        let material = f
+            .service
+            .sign_request(SignedEndpoint::Handoff)
+            .await
+            .unwrap();
+        let captured_epoch = material.lifecycle_epoch;
+
+        f.service.invalidate_local().await;
+        // Recovering usability with a fresh login must also move the epoch
+        // past the captured one.
+        f.transport.push_ok(200, authorize_response());
+        f.service.begin_login().await.unwrap();
+        let state = f.transport.calls().last().unwrap().body["state"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        f.transport
+            .push_ok(200, token_response("refresh-after-invalidate"));
+        consume_and_exchange(&f, state, "auth-code-after-invalidate").await;
+
+        let fresh = f.service.snapshot();
+        assert_ne!(
+            fresh.lifecycle_epoch, captured_epoch,
+            "a consumer re-checking lifecycle_epoch immediately before applying a response must detect staleness"
+        );
+    }
+
+    // td-811657: compile-time — the raw access token lives in this type's
+    // `Authorization` header, so it must never be `Debug`/`Serialize`.
+    static_assertions::assert_not_impl_any!(SignedRequestMaterial: std::fmt::Debug, serde::Serialize);
+
+    #[tokio::test]
+    async fn account_snapshot_never_leaks_a_secret_via_debug_or_serialize() {
+        let f = make_fixture(true);
+        let state = begin_and_get_state(&f).await;
+        f.transport
+            .push_ok(200, token_response("super-secret-refresh-canary-2"));
+        consume_and_exchange(&f, state, "auth-code-canary-2").await;
+
+        let snap = f.service.snapshot();
+        let debugged = format!("{snap:?}");
+        let serialized = serde_json::to_string(&snap).unwrap();
+        for canary in [
+            "super-secret-refresh-canary-2",
+            "auth-code-canary-2",
+            "eyTestAccessToken",
+        ] {
+            assert!(!debugged.contains(canary));
+            assert!(!serialized.contains(canary));
+        }
+    }
+
+    #[tokio::test]
+    async fn subscribing_snapshotting_and_signing_do_not_spawn_a_second_background_scheduler() {
+        let f = connected_fixture().await;
+        let count_before = Arc::strong_count(&f.service);
+
+        let _rx1 = f.service.subscribe();
+        let _rx2 = f.service.subscribe();
+        let _snap = f.service.snapshot();
+        let _material = f
+            .service
+            .sign_request(SignedEndpoint::Handoff)
+            .await
+            .unwrap();
+        assert_eq!(
+            Arc::strong_count(&f.service),
+            count_before,
+            "subscribe/snapshot/sign_request must never spawn a task holding its own Arc clone"
+        );
+
+        // The ONLY account-related background task remains the existing
+        // renewal scheduler (td-cab09a): starting it is the only thing that
+        // may add exactly one more live clone of the service.
+        let scheduler = crate::account::RenewalScheduler::start(f.service.clone());
+        assert_eq!(
+            Arc::strong_count(&f.service),
+            count_before + 1,
+            "exactly one background task holds a clone while the scheduler runs"
+        );
+        drop(scheduler);
     }
 }

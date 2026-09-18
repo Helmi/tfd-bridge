@@ -61,6 +61,10 @@ keyring = { version = "=3.6.3", features = ["windows-native"] }
 tiny_http = "0.12"
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
 tempfile = "3"
+# td-811657: compile-time assertion that `SignedRequestMaterial` (which
+# carries the raw access token in its `Authorization` header) has no
+# `Debug`/`Serialize` impl to accidentally leak it through.
+static_assertions = "1"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.1"

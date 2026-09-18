@@ -11,7 +11,13 @@ mod renewal;
 mod service;
 
 pub use renewal::RenewalScheduler;
-pub use service::{AccountCallbackSink, AccountService, AccountStatus};
+// Native-only seam for the account lifecycle consumers in td-980190 and
+// td-9994bd. The current crate has not wired those consumers yet.
+#[allow(unused_imports)]
+pub use service::{
+    AccountCallbackSink, AccountEndReason, AccountService, AccountSnapshot, AccountStatus,
+    SignedEndpoint, SignedRequestMaterial,
+};
 // `AccountError` and `SecureRandom` are public API surface for later tasks
 // (td-96a620's reset UI, td-cab09a's renewal scheduler / test doubles) that
 // this crate does not yet name directly.

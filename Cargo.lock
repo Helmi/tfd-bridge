@@ -5879,6 +5879,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "static_assertions",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
