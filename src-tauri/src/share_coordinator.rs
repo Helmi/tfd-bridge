@@ -9,7 +9,7 @@ use bridge_core::{
     share_service::{ReplayResolver, ShareClaim, ShareService},
 };
 use rand::RngCore;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -34,6 +34,33 @@ impl AccountSnapshots for crate::account::AccountService {
 type Clock = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 type VideoClientFactory = Arc<dyn Fn() -> Result<VideoShareClient, ()> + Send + Sync>;
 
+trait AuthorizationOpener: Send + Sync {
+    fn open_authorization(&self, url: &str) -> bool;
+}
+
+#[cfg(not(test))]
+struct TauriAuthorizationOpener {
+    app: tauri::AppHandle,
+}
+
+#[cfg(not(test))]
+impl AuthorizationOpener for TauriAuthorizationOpener {
+    fn open_authorization(&self, url: &str) -> bool {
+        use tauri_plugin_opener::OpenerExt;
+        self.app.opener().open_url(url, None::<&str>).is_ok()
+    }
+}
+
+#[cfg(test)]
+struct UnavailableAuthorizationOpener;
+
+#[cfg(test)]
+impl AuthorizationOpener for UnavailableAuthorizationOpener {
+    fn open_authorization(&self, _url: &str) -> bool {
+        false
+    }
+}
+
 struct ActiveJob {
     jobs: Arc<Mutex<RenderJobs>>,
     job_id: String,
@@ -51,7 +78,7 @@ struct PreflightBinding {
     used: bool,
 }
 pub struct Coordinator {
-    app: Option<tauri::AppHandle>,
+    authorization_opener: Arc<dyn AuthorizationOpener>,
     dispatch: RenderDispatcher,
     account: Arc<dyn AccountSnapshots>,
     clock: Clock,
@@ -81,8 +108,15 @@ impl Coordinator {
         account: Arc<crate::account::AccountService>,
     ) -> Self {
         let snapshots = AccountSnapshots::subscribe(account.as_ref());
+        #[cfg(not(test))]
+        let authorization_opener = Arc::new(TauriAuthorizationOpener { app });
+        #[cfg(test)]
+        let authorization_opener: Arc<dyn AuthorizationOpener> = {
+            let _ = app;
+            Arc::new(UnavailableAuthorizationOpener)
+        };
         Self::with_dependencies(
-            Some(app),
+            authorization_opener,
             dispatch,
             account,
             snapshots,
@@ -92,7 +126,7 @@ impl Coordinator {
     }
 
     fn with_dependencies(
-        app: Option<tauri::AppHandle>,
+        authorization_opener: Arc<dyn AuthorizationOpener>,
         dispatch: RenderDispatcher,
         account: Arc<dyn AccountSnapshots>,
         mut snapshots: tokio::sync::watch::Receiver<crate::account::AccountSnapshot>,
@@ -110,7 +144,7 @@ impl Coordinator {
             }
         });
         Self {
-            app,
+            authorization_opener,
             dispatch,
             account,
             clock,
@@ -134,10 +168,7 @@ impl Coordinator {
 }
 impl ShareService for Coordinator {
     fn open_authorization(&self, url: &str) -> bool {
-        use tauri_plugin_opener::OpenerExt;
-        self.app
-            .as_ref()
-            .is_some_and(|app| app.opener().open_url(url, None::<&str>).is_ok())
+        self.authorization_opener.open_authorization(url)
     }
     fn status(&self, id: &str) -> Option<Value> {
         self.entries.lock().unwrap().get(id).cloned()
@@ -400,20 +431,57 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct FakeAuthorizationOpener {
+        opened_urls: Mutex<Vec<String>>,
+    }
+
+    impl AuthorizationOpener for FakeAuthorizationOpener {
+        fn open_authorization(&self, url: &str) -> bool {
+            self.opened_urls.lock().unwrap().push(url.into());
+            true
+        }
+    }
+
     fn dispatcher() -> RenderDispatcher {
         Arc::new(|_, _, _| Ok(()))
     }
 
-    fn coordinator(account: Arc<FakeAccount>, now: Arc<Mutex<SystemTime>>) -> Coordinator {
+    fn coordinator_with_opener(
+        account: Arc<FakeAccount>,
+        now: Arc<Mutex<SystemTime>>,
+        authorization_opener: Arc<dyn AuthorizationOpener>,
+    ) -> Coordinator {
         let watch = account.subscribe();
         Coordinator::with_dependencies(
-            None,
+            authorization_opener,
             dispatcher(),
             account,
             watch,
             Arc::new(move || *now.lock().unwrap()),
             Arc::new(|| Err(())),
         )
+    }
+
+    fn coordinator(account: Arc<FakeAccount>, now: Arc<Mutex<SystemTime>>) -> Coordinator {
+        coordinator_with_opener(account, now, Arc::new(FakeAuthorizationOpener::default()))
+    }
+
+    #[test]
+    fn authorization_opener_is_injected_without_tauri_dependencies() {
+        let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+        let opener = Arc::new(FakeAuthorizationOpener::default());
+        let coordinator = coordinator_with_opener(
+            account,
+            Arc::new(Mutex::new(SystemTime::now())),
+            opener.clone(),
+        );
+
+        assert!(coordinator.open_authorization("https://engine.tfd.rocks/authorize"));
+        assert_eq!(
+            *opener.opened_urls.lock().unwrap(),
+            ["https://engine.tfd.rocks/authorize"]
+        );
     }
 
     fn evidence(path: &std::path::Path, account_id: u64) -> ReplayEvidence {
