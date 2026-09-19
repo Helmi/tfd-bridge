@@ -5,7 +5,7 @@ mod embedded_session;
 pub mod engine;
 pub mod link_target;
 mod render_worker;
-mod share_coordinator;
+pub(crate) mod share_coordinator;
 pub mod uploader;
 pub mod video_share;
 pub mod video_upload;
@@ -390,15 +390,23 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
 fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
     let resource_dir = app.path().resource_dir().ok()?;
     let player_dist = resource_dir.join("player");
+    if !player_dist.exists() {
+        return None;
+    }
     let dispatch = render_worker::dispatcher(app.clone());
-    player_dist.exists().then_some(PlayerConfig {
+    let coordinator = share_coordinator::Coordinator::new(
+        app.clone(),
+        dispatch.clone(),
+        (*app.state::<Arc<account::AccountService>>()).clone(),
+    );
+    // The bridge's PlayerConfig owns the service. This managed handle is only
+    // for native account lifecycle invalidation; it never creates a second one.
+    app.state::<share_coordinator::ShareLifecycle>()
+        .attach(coordinator.clone());
+    Some(PlayerConfig {
         player_dist,
-        render_dispatcher: Some(dispatch.clone()),
-        share_service: Some(std::sync::Arc::new(share_coordinator::Coordinator::new(
-            app.clone(),
-            dispatch,
-            (*app.state::<Arc<account::AccountService>>()).clone(),
-        ))),
+        render_dispatcher: Some(dispatch),
+        share_service: Some(coordinator),
     })
 }
 
@@ -472,6 +480,10 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             // staged both the exporter sidecar and the player dist (see
             // `resolve_player_config`). `None` on a default build — the
             // player routes then quietly 404.
+            // Drop the managed reference before replacing the PlayerConfig.
+            // resolve_player_config attaches a new coordinator only when the
+            // player overlay is present; a failed replacement detaches below.
+            app.state::<share_coordinator::ShareLifecycle>().detach();
             let player_cfg = resolve_player_config(app);
             match active
                 .bridge
@@ -493,6 +505,7 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
                 }
                 Err(e) => {
                     log::error!("Failed to attach replays path to the bridge: {e}");
+                    app.state::<share_coordinator::ShareLifecycle>().detach();
                     donation_uploader.cancel();
                 }
             }
@@ -1632,6 +1645,10 @@ pub fn run() {
                 account::ClientProfile::current(),
             ));
             app.manage(account_service.clone());
+            // No player attachment exists yet, so this is deliberately an
+            // unattached lifecycle handle until resolve_player_config installs
+            // the live coordinator.
+            app.manage(share_coordinator::ShareLifecycle::default());
             let backend = Arc::new(webview_backend::TauriWebviewBackend::new(
                 app.handle().clone(),
             ));

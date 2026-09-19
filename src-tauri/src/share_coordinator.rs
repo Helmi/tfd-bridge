@@ -103,6 +103,18 @@ struct PreflightBinding {
     expires_at: SystemTime,
     used: bool,
 }
+
+/// Safe, native-only result of invalidating a share generation. A cancellation
+/// request for a rendering job is asynchronous: `jobs_cancelling` means its
+/// worker still owns the renderer and must later call `RenderJobs::stopped`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AccountLifecycleAcknowledgement {
+    pub preflights_invalidated: usize,
+    pub jobs_cancelled: usize,
+    pub jobs_cancelling: usize,
+    pub jobs_already_terminal_or_uncancellable: usize,
+}
+
 pub struct Coordinator {
     authorization_opener: Arc<dyn AuthorizationOpener>,
     dispatch: RenderDispatcher,
@@ -115,18 +127,47 @@ pub struct Coordinator {
     preflights: Arc<Mutex<HashMap<String, PreflightBinding>>>,
     active_jobs: Arc<Mutex<HashMap<String, ActiveJob>>>,
 }
-fn cancel_invalid_jobs(
-    snapshot: &crate::account::AccountSnapshot,
-    active_jobs: &Arc<Mutex<HashMap<String, ActiveJob>>>,
-) {
-    for job in active_jobs.lock().unwrap().values() {
-        if !snapshot.can_use_account
-            || snapshot.account_id != Some(job.account_id)
-            || snapshot.lifecycle_epoch != job.lifecycle_epoch
-        {
-            let _ = job.jobs.lock().unwrap().cancel(&job.job_id);
-        }
+
+/// Managed state used only by native account lifecycle code. The registry never
+/// creates a coordinator: player attachment remains its owner. Before the
+/// player attaches, after it detaches, and between replacements it acknowledges
+/// zero work. Attaching a replacement drops this registry's old strong handle.
+#[derive(Default)]
+pub(crate) struct ShareLifecycle {
+    coordinator: Mutex<Option<Arc<Coordinator>>>,
+}
+
+impl ShareLifecycle {
+    pub(crate) fn attach(&self, coordinator: Arc<Coordinator>) {
+        *self.coordinator.lock().unwrap() = Some(coordinator);
     }
+
+    pub(crate) fn detach(&self) {
+        self.coordinator.lock().unwrap().take();
+    }
+
+    // The debug-reset command calls this after it advances the account epoch.
+    // It intentionally has no current command caller until that reset lands.
+    #[allow(dead_code)]
+    pub(crate) fn invalidate_for_account(
+        &self,
+        snapshot: &crate::account::AccountSnapshot,
+    ) -> AccountLifecycleAcknowledgement {
+        let coordinator = self.coordinator.lock().unwrap().clone();
+        coordinator
+            .map(|coordinator| coordinator.invalidate_for_account(snapshot))
+            .unwrap_or_default()
+    }
+}
+
+fn invalid_for_snapshot(
+    snapshot: &crate::account::AccountSnapshot,
+    account_id: u64,
+    lifecycle_epoch: u64,
+) -> bool {
+    !snapshot.can_use_account
+        || snapshot.account_id != Some(account_id)
+        || snapshot.lifecycle_epoch != lifecycle_epoch
 }
 
 impl Coordinator {
@@ -134,7 +175,7 @@ impl Coordinator {
         app: tauri::AppHandle,
         dispatch: RenderDispatcher,
         account: Arc<crate::account::AccountService>,
-    ) -> Self {
+    ) -> Arc<Self> {
         let snapshots = AccountSnapshots::subscribe(account.as_ref());
         #[cfg(not(test))]
         let authorization_opener = Arc::new(TauriAuthorizationOpener { app });
@@ -165,23 +206,13 @@ impl Coordinator {
         authorization_opener: Arc<dyn AuthorizationOpener>,
         dispatch: RenderDispatcher,
         account: Arc<dyn AccountSnapshots>,
-        mut snapshots: tokio::sync::watch::Receiver<crate::account::AccountSnapshot>,
+        snapshots: tokio::sync::watch::Receiver<crate::account::AccountSnapshot>,
         clock: Clock,
         video_client: VideoClientFactory,
         replay_evidence: ReplayEvidenceReader,
         sleep: Sleeper,
-    ) -> Self {
-        let active_jobs: Arc<Mutex<HashMap<String, ActiveJob>>> = Default::default();
-        let watched = active_jobs.clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                cancel_invalid_jobs(&snapshots.borrow_and_update(), &watched);
-                if snapshots.changed().await.is_err() {
-                    break;
-                }
-            }
-        });
-        Self {
+    ) -> Arc<Self> {
+        let coordinator = Arc::new(Self {
             authorization_opener,
             dispatch,
             account,
@@ -191,19 +222,103 @@ impl Coordinator {
             sleep,
             entries: Default::default(),
             preflights: Default::default(),
-            active_jobs,
+            active_jobs: Default::default(),
+        });
+        coordinator.spawn_account_watch(snapshots);
+        coordinator
+    }
+
+    fn spawn_account_watch(
+        self: &Arc<Self>,
+        mut snapshots: tokio::sync::watch::Receiver<crate::account::AccountSnapshot>,
+    ) {
+        let coordinator = Arc::downgrade(self);
+        tauri::async_runtime::spawn(async move {
+            loop {
+                let snapshot = snapshots.borrow_and_update().clone();
+                let Some(coordinator) = coordinator.upgrade() else {
+                    break;
+                };
+                coordinator.invalidate_for_account(&snapshot);
+                if snapshots.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Revoke work bound to any account generation other than `snapshot`.
+    ///
+    /// Locks are deliberately never nested: take stale job references under
+    /// `active_jobs`, release it, then request cancellation under each
+    /// `RenderJobs` lock, and finally update public status. No lock spans an
+    /// await, and `Cancelling` means worker shutdown is still in progress.
+    pub(crate) fn invalidate_for_account(
+        &self,
+        snapshot: &crate::account::AccountSnapshot,
+    ) -> AccountLifecycleAcknowledgement {
+        let mut acknowledgement = AccountLifecycleAcknowledgement::default();
+        {
+            let mut preflights = self.preflights.lock().unwrap();
+            let before = preflights.len();
+            preflights.retain(|_, binding| {
+                !invalid_for_snapshot(snapshot, binding.account_id, binding.lifecycle_epoch)
+            });
+            acknowledgement.preflights_invalidated = before - preflights.len();
         }
+
+        let affected_jobs = {
+            let mut active_jobs = self.active_jobs.lock().unwrap();
+            let affected = active_jobs
+                .iter()
+                .filter(|(_, job)| {
+                    invalid_for_snapshot(snapshot, job.account_id, job.lifecycle_epoch)
+                })
+                .map(|(share_id, job)| (share_id.clone(), job.jobs.clone(), job.job_id.clone()))
+                .collect::<Vec<_>>();
+            active_jobs.retain(|_, job| {
+                !invalid_for_snapshot(snapshot, job.account_id, job.lifecycle_epoch)
+            });
+            affected
+        };
+
+        for (_, jobs, job_id) in &affected_jobs {
+            let mut jobs = jobs.lock().unwrap();
+            match jobs.status(job_id).map(|status| status.state) {
+                Ok(RenderState::Queued) if jobs.cancel(job_id).is_ok() => {
+                    acknowledgement.jobs_cancelled += 1;
+                }
+                Ok(RenderState::Rendering) if jobs.cancel(job_id).is_ok() => {
+                    acknowledgement.jobs_cancelling += 1;
+                }
+                _ => acknowledgement.jobs_already_terminal_or_uncancellable += 1,
+            }
+        }
+
+        if !affected_jobs.is_empty() {
+            let mut entries = self.entries.lock().unwrap();
+            for (share_id, _, _) in affected_jobs {
+                if let Some(entry) = entries.get_mut(&share_id).and_then(Value::as_object_mut) {
+                    entry.insert("state".into(), Value::String("failed".into()));
+                    entry.insert(
+                        "error".into(),
+                        Value::String("account_lifecycle_changed".into()),
+                    );
+                    entry.remove("message_url");
+                }
+            }
+        }
+        acknowledgement
     }
 
     #[cfg(test)]
-    fn reconcile_account(&self) {
-        cancel_invalid_jobs(&self.account.snapshot(), &self.active_jobs);
+    fn reconcile_account(&self) -> AccountLifecycleAcknowledgement {
+        self.invalidate_for_account(&self.account.snapshot())
     }
+
     fn valid_account(&self, account_id: u64, epoch: u64) -> bool {
         let current = self.account.snapshot();
-        current.can_use_account
-            && current.account_id == Some(account_id)
-            && current.lifecycle_epoch == epoch
+        !invalid_for_snapshot(&current, account_id, epoch)
     }
 }
 impl ShareService for Coordinator {
@@ -360,11 +475,20 @@ impl ShareService for Coordinator {
             let expected_arena = binding.4;
 
             let update = |state: &str, extra: Value| {
+                let mut values = entries.lock().unwrap();
+                // Lifecycle invalidation wins over a stale completion that was
+                // already between its account check and this status write.
+                if values
+                    .get(&task_id)
+                    .is_some_and(|value| value["error"] == "account_lifecycle_changed")
+                {
+                    return;
+                }
                 let mut value = json!({"id":task_id,"share_id":claim.share_id,"state":state});
                 if let (Some(dest), Some(src)) = (value.as_object_mut(), extra.as_object()) {
                     dest.extend(src.clone());
                 }
-                entries.lock().unwrap().insert(task_id.clone(), value);
+                values.insert(task_id.clone(), value);
             };
             let result:Result<(),String>=async {
                 let client=(video_client)().map_err(|_|"engine_unavailable")?;
@@ -601,7 +725,7 @@ mod tests {
         account: Arc<FakeAccount>,
         now: Arc<Mutex<SystemTime>>,
         authorization_opener: Arc<dyn AuthorizationOpener>,
-    ) -> Coordinator {
+    ) -> Arc<Coordinator> {
         let watch = account.subscribe();
         Coordinator::with_dependencies(
             authorization_opener,
@@ -615,7 +739,7 @@ mod tests {
         )
     }
 
-    fn coordinator(account: Arc<FakeAccount>, now: Arc<Mutex<SystemTime>>) -> Coordinator {
+    fn coordinator(account: Arc<FakeAccount>, now: Arc<Mutex<SystemTime>>) -> Arc<Coordinator> {
         coordinator_with_opener(account, now, Arc::new(FakeAuthorizationOpener::default()))
     }
 
@@ -625,7 +749,7 @@ mod tests {
         transport: Arc<dyn VideoShareTransport>,
         dispatch: RenderDispatcher,
         replay_evidence: ReplayEvidenceReader,
-    ) -> Coordinator {
+    ) -> Arc<Coordinator> {
         let watch = account.subscribe();
         Coordinator::with_dependencies(
             Arc::new(FakeAuthorizationOpener::default()),
@@ -925,6 +1049,245 @@ mod tests {
             RenderState::Cancelled
         );
     }
+    #[test]
+    fn account_lifecycle_invalidation_revokes_bindings_cancels_jobs_and_marks_status() {
+        let replay = tempfile::NamedTempFile::new().unwrap();
+        let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+        let coordinator = coordinator(account, Arc::new(Mutex::new(SystemTime::now())));
+        for arena in ["9007199254740993", "9007199254740994"] {
+            coordinator
+                .preflight(
+                    "battle.wowsreplay".into(),
+                    arena.into(),
+                    evidence(replay.path(), 42),
+                )
+                .unwrap();
+        }
+
+        let queued = Arc::new(Mutex::new(RenderJobs::default()));
+        let queued_lease = match queued.lock().unwrap().start(render_request()).unwrap() {
+            StartRender::New { worker, .. } => worker,
+            StartRender::Existing(_) => unreachable!(),
+        };
+        let rendering = Arc::new(Mutex::new(RenderJobs::default()));
+        let rendering_lease = match rendering.lock().unwrap().start(render_request()).unwrap() {
+            StartRender::New { worker, .. } => worker,
+            StartRender::Existing(_) => unreachable!(),
+        };
+        rendering.lock().unwrap().claim(&rendering_lease).unwrap();
+        let cancelling = Arc::new(Mutex::new(RenderJobs::default()));
+        let cancelling_lease = match cancelling.lock().unwrap().start(render_request()).unwrap() {
+            StartRender::New { worker, .. } => worker,
+            StartRender::Existing(_) => unreachable!(),
+        };
+        cancelling.lock().unwrap().claim(&cancelling_lease).unwrap();
+        cancelling
+            .lock()
+            .unwrap()
+            .cancel(&cancelling_lease.job_id)
+            .unwrap();
+        let terminal = Arc::new(Mutex::new(RenderJobs::default()));
+        let terminal_lease = match terminal.lock().unwrap().start(render_request()).unwrap() {
+            StartRender::New { worker, .. } => worker,
+            StartRender::Existing(_) => unreachable!(),
+        };
+        terminal
+            .lock()
+            .unwrap()
+            .fail(&terminal_lease, "worker_failed")
+            .unwrap();
+
+        for (share_id, jobs, job_id) in [
+            ("queued", queued.clone(), queued_lease.job_id.clone()),
+            (
+                "rendering",
+                rendering.clone(),
+                rendering_lease.job_id.clone(),
+            ),
+            (
+                "cancelling",
+                cancelling.clone(),
+                cancelling_lease.job_id.clone(),
+            ),
+            ("terminal", terminal.clone(), terminal_lease.job_id.clone()),
+        ] {
+            coordinator.active_jobs.lock().unwrap().insert(
+                share_id.into(),
+                ActiveJob {
+                    jobs,
+                    job_id,
+                    account_id: 42,
+                    lifecycle_epoch: 3,
+                },
+            );
+            coordinator.entries.lock().unwrap().insert(
+                share_id.into(),
+                json!({"id":share_id,"share_id":share_id,"state":"rendering"}),
+            );
+        }
+
+        let acknowledgement = coordinator.invalidate_for_account(&snapshot(None, 4, false));
+        assert_eq!(
+            acknowledgement,
+            AccountLifecycleAcknowledgement {
+                preflights_invalidated: 2,
+                jobs_cancelled: 1,
+                jobs_cancelling: 1,
+                jobs_already_terminal_or_uncancellable: 2,
+            }
+        );
+        assert_eq!(
+            queued
+                .lock()
+                .unwrap()
+                .status(&queued_lease.job_id)
+                .unwrap()
+                .state,
+            RenderState::Cancelled
+        );
+        assert_eq!(
+            rendering
+                .lock()
+                .unwrap()
+                .status(&rendering_lease.job_id)
+                .unwrap()
+                .state,
+            RenderState::Cancelling
+        );
+        for share_id in ["queued", "rendering", "cancelling", "terminal"] {
+            let status = coordinator.status(share_id).unwrap();
+            assert_eq!(status["state"], "failed");
+            assert_eq!(status["error"], "account_lifecycle_changed");
+        }
+        assert!(coordinator.preflights.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn same_account_generation_is_a_noop_but_switching_account_or_epoch_is_not() {
+        let replay = tempfile::NamedTempFile::new().unwrap();
+        let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+        let coordinator = coordinator(account, Arc::new(Mutex::new(SystemTime::now())));
+        coordinator
+            .preflight(
+                "battle.wowsreplay".into(),
+                "9007199254740993".into(),
+                evidence(replay.path(), 42),
+            )
+            .unwrap();
+        assert_eq!(
+            coordinator.invalidate_for_account(&snapshot(Some(42), 3, true)),
+            AccountLifecycleAcknowledgement::default()
+        );
+        assert_eq!(coordinator.preflights.lock().unwrap().len(), 1);
+        assert_eq!(
+            coordinator
+                .invalidate_for_account(&snapshot(Some(99), 3, true))
+                .preflights_invalidated,
+            1,
+            "an account switch invalidates even if the epoch was not advanced"
+        );
+        coordinator
+            .preflight(
+                "battle.wowsreplay".into(),
+                "9007199254740994".into(),
+                evidence(replay.path(), 42),
+            )
+            .unwrap();
+        assert_eq!(
+            coordinator
+                .invalidate_for_account(&snapshot(Some(42), 4, true))
+                .preflights_invalidated,
+            1,
+            "an epoch change invalidates even when the account ID is unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn account_watch_delegates_to_the_lifecycle_invalidator() {
+        let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+        let coordinator = coordinator(account.clone(), Arc::new(Mutex::new(SystemTime::now())));
+        let jobs = Arc::new(Mutex::new(RenderJobs::default()));
+        let lease = match jobs.lock().unwrap().start(render_request()).unwrap() {
+            StartRender::New { worker, .. } => worker,
+            StartRender::Existing(_) => unreachable!(),
+        };
+        coordinator.active_jobs.lock().unwrap().insert(
+            "watcher".into(),
+            ActiveJob {
+                jobs: jobs.clone(),
+                job_id: lease.job_id.clone(),
+                account_id: 42,
+                lifecycle_epoch: 3,
+            },
+        );
+        coordinator.entries.lock().unwrap().insert(
+            "watcher".into(),
+            json!({"id":"watcher","share_id":"watcher","state":"rendering"}),
+        );
+        account.set(snapshot(Some(99), 4, true));
+        for _ in 0..1000 {
+            if jobs.lock().unwrap().status(&lease.job_id).unwrap().state == RenderState::Cancelled {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            jobs.lock().unwrap().status(&lease.job_id).unwrap().state,
+            RenderState::Cancelled
+        );
+        assert_eq!(
+            coordinator.status("watcher").unwrap()["error"],
+            "account_lifecycle_changed"
+        );
+        assert_eq!(
+            coordinator.reconcile_account(),
+            AccountLifecycleAcknowledgement::default()
+        );
+    }
+
+    #[test]
+    fn managed_lifecycle_is_unattached_until_player_attachment_and_detaches_cleanly() {
+        let lifecycle = ShareLifecycle::default();
+        assert_eq!(
+            lifecycle.invalidate_for_account(&snapshot(None, 1, false)),
+            AccountLifecycleAcknowledgement::default()
+        );
+        let replay = tempfile::NamedTempFile::new().unwrap();
+        let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+        let first = coordinator(account.clone(), Arc::new(Mutex::new(SystemTime::now())));
+        first
+            .preflight(
+                "battle.wowsreplay".into(),
+                "9007199254740993".into(),
+                evidence(replay.path(), 42),
+            )
+            .unwrap();
+        lifecycle.attach(first.clone());
+
+        let second = coordinator(account, Arc::new(Mutex::new(SystemTime::now())));
+        second
+            .preflight(
+                "battle.wowsreplay".into(),
+                "9007199254740994".into(),
+                evidence(replay.path(), 42),
+            )
+            .unwrap();
+        lifecycle.attach(second.clone());
+        assert_eq!(
+            lifecycle
+                .invalidate_for_account(&snapshot(None, 4, false))
+                .preflights_invalidated,
+            1,
+            "replacement targets only the newly attached coordinator"
+        );
+        assert_eq!(first.preflights.lock().unwrap().len(), 1);
+        lifecycle.detach();
+        assert_eq!(
+            lifecycle.invalidate_for_account(&snapshot(None, 5, false)),
+            AccountLifecycleAcknowledgement::default()
+        );
+    }
+
     #[test]
     fn delivery_errors_are_strictly_whitelisted() {
         for code in [
