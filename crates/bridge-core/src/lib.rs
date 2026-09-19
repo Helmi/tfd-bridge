@@ -7,6 +7,7 @@ pub mod config;
 pub mod detection;
 pub mod finalize;
 pub mod render_jobs;
+pub mod replay_identity;
 pub mod server;
 pub mod share_auth;
 pub mod share_service;

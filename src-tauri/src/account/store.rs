@@ -182,6 +182,7 @@ mod tests {
                 refresh_expires_at_unix: 1,
                 refresh_absolute_expires_at_unix: 2,
                 account: StoredAccount {
+                    account_id: None,
                     nickname: "Tester".into(),
                     clan_tag: Some("TFX".into()),
                     realm: Some("eu".into()),

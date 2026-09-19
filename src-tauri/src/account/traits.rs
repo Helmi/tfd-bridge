@@ -155,6 +155,10 @@ pub struct StoredRefresh {
 /// status" before any network round trip.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StoredAccount {
+    /// WG account ID. Older credential records predate this field and load as
+    /// `None`; a successful v5 token response upgrades them in place.
+    #[serde(default)]
+    pub account_id: Option<u64>,
     pub nickname: String,
     pub clan_tag: Option<String>,
     pub realm: Option<String>,

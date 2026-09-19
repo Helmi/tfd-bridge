@@ -117,6 +117,10 @@ pub struct AccountSnapshot {
     /// a fresh login-exchange commit, `invalidate_local`, or a definitive
     /// revoke/`invalid_grant` outcome. See `Inner::lifecycle_epoch`.
     pub lifecycle_epoch: u64,
+    /// The exact WG account ID from the v5 token account object. `None` only
+    /// for signed-out state or a credential record written before this field
+    /// existed; share authorization is intentionally not implemented here.
+    pub account_id: Option<u64>,
     pub nickname: Option<String>,
     pub clan_tag: Option<String>,
     pub realm: Option<String>,
@@ -343,6 +347,30 @@ impl Default for Inner {
     }
 }
 
+/// A refresh response can rotate credentials, but can never silently replace
+/// the linked WG identity. Older durable records have `None` here and are
+/// upgraded by their first successful v5 refresh; only two known, unequal IDs
+/// are contradictory.
+fn account_id_changed(current: Option<u64>, incoming: u64) -> bool {
+    matches!(current, Some(current) if current != incoming)
+}
+
+/// Shared local half of the existing `account_changed` reauthentication
+/// boundary. Callers must have already established that their response is
+/// current under `commit_lock`; the durable profile is cleared immediately
+/// after releasing `inner`.
+fn clear_for_account_change(inner: &mut Inner) {
+    inner.account_display = None;
+    inner.access_token = None;
+    inner.web_lease_expires_at = None;
+    inner.phase = Phase::Idle;
+    inner.renewal_proof = None;
+    inner.renewal_failure_logged = false;
+    inner.credential_generation = inner.credential_generation.wrapping_add(1);
+    inner.lifecycle_epoch = inner.lifecycle_epoch.wrapping_add(1);
+    inner.last_end_reason = Some(AccountEndReason::AccountChanged);
+}
+
 /// One reusable/re-mintable DPoP proof for the renewal scheduler's own
 /// transport-retry chain (contract v5 section 5.5) — deliberately separate
 /// from `build_headers`'s always-fresh minting, and from `call`'s own
@@ -470,6 +498,7 @@ struct TokenResponse {
 
 #[derive(serde::Deserialize, Clone)]
 struct AccountObject {
+    account_id: u64,
     nickname: String,
     #[serde(default)]
     clan_tag: Option<String>,
@@ -511,6 +540,12 @@ struct ParsedRefresh {
 /// guessed duration — never a partial commit.
 fn parse_token_response(body: &serde_json::Value) -> Option<ParsedRefresh> {
     let parsed: TokenResponse = serde_json::from_value(body.clone()).ok()?;
+    // `u64` deserialization preserves the JSON integer exactly; do not route
+    // this WG identity through a floating-point representation. Zero is not
+    // a usable WG account ID and makes the entire token response invalid.
+    if parsed.account.account_id == 0 {
+        return None;
+    }
     let refresh_expires_at_unix = parse_rfc3339_unix(&parsed.refresh_expires_at).ok()?;
     let refresh_absolute_expires_at_unix =
         parse_rfc3339_unix(&parsed.refresh_absolute_expires_at).ok()?;
@@ -523,6 +558,7 @@ fn parse_token_response(body: &serde_json::Value) -> Option<ParsedRefresh> {
             refresh_expires_at_unix,
             refresh_absolute_expires_at_unix,
             account: StoredAccount {
+                account_id: Some(parsed.account.account_id),
                 nickname: parsed.account.nickname,
                 clan_tag: parsed.account.clan_tag,
                 realm: parsed.account.realm,
@@ -590,6 +626,7 @@ impl AccountService {
             status: AccountStatus::SignedOut,
             can_use_account: false,
             lifecycle_epoch: 0,
+            account_id: None,
             nickname: None,
             clan_tag: None,
             realm: None,
@@ -642,6 +679,7 @@ impl AccountService {
                 // being retried never surfaces differently from a plain
                 // connected account.
                 let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    account_id: None,
                     nickname: String::new(),
                     clan_tag: None,
                     realm: None,
@@ -664,6 +702,7 @@ impl AccountService {
                     );
                 }
                 let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    account_id: None,
                     nickname: String::new(),
                     clan_tag: None,
                     realm: None,
@@ -704,6 +743,7 @@ impl AccountService {
             bridge_core::account::AccountStatus::Connected
             | bridge_core::account::AccountStatus::Renewing => {
                 let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    account_id: None,
                     nickname: String::new(),
                     clan_tag: None,
                     realm: None,
@@ -717,6 +757,7 @@ impl AccountService {
             }
             bridge_core::account::AccountStatus::RenewalFailed => {
                 let account = inner.account_display.clone().unwrap_or(StoredAccount {
+                    account_id: None,
                     nickname: String::new(),
                     clan_tag: None,
                     realm: None,
@@ -775,6 +816,7 @@ impl AccountService {
             status,
             can_use_account,
             lifecycle_epoch: inner.lifecycle_epoch,
+            account_id: account.as_ref().and_then(|a| a.account_id),
             nickname: account.as_ref().map(|a| a.nickname.clone()),
             clan_tag: account.as_ref().and_then(|a| a.clan_tag.clone()),
             realm: account.as_ref().and_then(|a| a.realm.clone()),
@@ -1481,6 +1523,16 @@ impl AccountService {
         let Some(device_key) = inner.device_key.clone() else {
             return false;
         };
+        if account_id_changed(refresh.account.account_id, parsed.refresh.account.account_id.expect("parsed token account IDs are always present")) {
+            // A refresh is never an account-switch mechanism. Treat a
+            // contradictory Engine identity exactly like its
+            // `invalid_grant: account_changed` reauthentication boundary.
+            inner.session.disconnect();
+            clear_for_account_change(&mut inner);
+            drop(inner);
+            let _ = self.store.clear_profile(self.profile);
+            return false;
+        }
         let scalar_b64 = URL_SAFE_NO_PAD.encode(device_key.to_scalar_bytes());
         if self
             .persist_new_refresh(parsed.refresh.clone(), &device_id, &scalar_b64)
@@ -1771,8 +1823,25 @@ impl AccountService {
     async fn commit_renewal_success(&self, ticket: RenewalTicket, parsed: ParsedRefresh) {
         let _commit = self.commit_lock.lock().await;
         let (device_id, device_key) = {
-            let inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
             if !inner.session.is_current(ticket) {
+                return;
+            }
+            if account_id_changed(
+                inner.account_display.as_ref().and_then(|account| account.account_id),
+                parsed.refresh.account.account_id.expect("parsed token account IDs are always present"),
+            ) {
+                // Do not write the successor slot before rejecting it: a
+                // differing account on a refresh must wipe the family rather
+                // than rotate credentials into a new identity.
+                inner.session.renewal_failed(
+                    ticket,
+                    self.clock.now_instant(),
+                    RenewalFailure::ReauthenticationRequired,
+                );
+                clear_for_account_change(&mut inner);
+                drop(inner);
+                let _ = self.store.clear_profile(self.profile);
                 return;
             }
             let Some(device_id) = inner.device_id.clone() else {
@@ -2331,6 +2400,41 @@ mod tests {
         })
     }
 
+    #[test]
+    fn token_account_id_is_an_exact_positive_u64() {
+        let mut exact = token_response("refresh-exact-account");
+        exact["account"]["account_id"] = json!(9_007_199_254_740_993u64);
+        let parsed = parse_token_response(&exact).expect("exact u64 account ID");
+        assert_eq!(parsed.refresh.account.account_id, Some(9_007_199_254_740_993));
+
+        for invalid in [json!(0), json!(-1), json!(9_007_199_254_740_993.0)] {
+            let mut body = token_response("refresh-invalid-account");
+            body["account"]["account_id"] = invalid;
+            assert!(parse_token_response(&body).is_none());
+        }
+        let mut missing = token_response("refresh-missing-account");
+        missing["account"].as_object_mut().unwrap().remove("account_id");
+        assert!(parse_token_response(&missing).is_none());
+    }
+
+    #[test]
+    fn old_stored_account_deserializes_without_an_account_id() {
+        let old = json!({
+            "schema_version": STORED_PROFILE_SCHEMA_VERSION,
+            "device_key_scalar_b64": "key",
+            "device_id": "device",
+            "refresh_current": {
+                "refresh_token": "refresh",
+                "refresh_expires_at_unix": 1,
+                "refresh_absolute_expires_at_unix": 2,
+                "account": {"nickname": "Old", "clan_tag": null, "realm": "eu"}
+            },
+            "refresh_pending": null
+        });
+        let stored: StoredProfileData = serde_json::from_value(old).unwrap();
+        assert_eq!(stored.refresh_current.unwrap().account.account_id, None);
+    }
+
     // ── begin_login / open-failure / reopen ─────────────────────────────────
 
     #[tokio::test]
@@ -2803,6 +2907,7 @@ mod tests {
                     // server value asserted below.
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
                     account: StoredAccount {
+                        account_id: None,
                         nickname: "Old".into(),
                         clan_tag: None,
                         realm: None,
@@ -2979,6 +3084,7 @@ mod tests {
                     refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
                     account: StoredAccount {
+                        account_id: None,
                         nickname: "Old".into(),
                         clan_tag: None,
                         realm: None,
@@ -3013,6 +3119,7 @@ mod tests {
                     refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
                     account: StoredAccount {
+                        account_id: None,
                         nickname: "Old".into(),
                         clan_tag: None,
                         realm: None,
@@ -3023,6 +3130,7 @@ mod tests {
                     refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
                     account: StoredAccount {
+                        account_id: None,
                         nickname: "Old".into(),
                         clan_tag: None,
                         realm: None,
@@ -3056,6 +3164,7 @@ mod tests {
                     refresh_expires_at_unix: 1,
                     refresh_absolute_expires_at_unix: 1,
                     account: StoredAccount {
+                        account_id: None,
                         nickname: "Old".into(),
                         clan_tag: None,
                         realm: None,
@@ -3192,6 +3301,7 @@ mod tests {
                 refresh_expires_at_unix: now_unix + 1_000,
                 refresh_absolute_expires_at_unix: now_unix + 100_000,
                 account: StoredAccount {
+                    account_id: None,
                     nickname: "OldAccount".into(),
                     clan_tag: None,
                     realm: None,
@@ -4331,6 +4441,7 @@ mod tests {
             "an ordinary renewal must not advance the epoch"
         );
         assert!(after.can_use_account);
+        assert_eq!(after.account_id, before.account_id, "an ordinary renewal keeps its account identity");
         assert_ne!(
             after.access_expires_at_unix, before.access_expires_at_unix,
             "the access expiry itself DOES advance on a successful renewal"
@@ -4351,6 +4462,7 @@ mod tests {
                     refresh_expires_at_unix: f.clock.now_unix().as_secs() + 1000,
                     refresh_absolute_expires_at_unix: f.clock.now_unix().as_secs() + 100_000,
                     account: StoredAccount {
+                        account_id: None,
                         nickname: "Old".into(),
                         clan_tag: None,
                         realm: None,
@@ -4660,4 +4772,68 @@ mod tests {
         );
         drop(scheduler);
     }
+
+    #[tokio::test]
+    async fn snapshot_exposes_the_exact_login_account_id() {
+        let f = connected_fixture().await;
+        let snapshot = f.service.snapshot();
+        assert_eq!(snapshot.account_id, Some(591_735_977));
+        assert_eq!(snapshot.lifecycle_epoch, 1);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_migrates_an_old_account_record_to_the_token_account_id() {
+        let f = make_fixture(true);
+        f.store.profiles.lock().unwrap().insert(
+            "release",
+            stored_old_account("dev_restart", "refresh-current", f.clock.now_unix().as_secs()),
+        );
+        f.transport.push_ok(200, token_response("refresh-migrated"));
+        f.service.bootstrap().await;
+
+        assert_eq!(f.service.snapshot().account_id, Some(591_735_977));
+        let stored = f.store.profiles.lock().unwrap().get("release").cloned().unwrap();
+        assert_eq!(stored.refresh_current.unwrap().account.account_id, Some(591_735_977));
+        assert_eq!(f.service.snapshot().lifecycle_epoch, 0, "migration is an ordinary bootstrap refresh");
+    }
+
+    #[tokio::test]
+    async fn bootstrap_refresh_with_a_different_account_id_wipes_the_family() {
+        let f = make_fixture(true);
+        let mut stored = stored_old_account("dev_restart", "refresh-current", f.clock.now_unix().as_secs());
+        stored.refresh_current.as_mut().unwrap().account.account_id = Some(101);
+        f.store.profiles.lock().unwrap().insert("release", stored);
+        let mut response = token_response("refresh-wrong-account");
+        response["account"]["account_id"] = json!(202);
+        f.transport.push_ok(200, response);
+
+        f.service.bootstrap().await;
+
+        assert_eq!(f.service.status(), AccountStatus::SignedOut);
+        assert!(f.store.profiles.lock().unwrap().get("release").is_none());
+        let snapshot = f.service.snapshot();
+        assert_eq!(snapshot.account_id, None);
+        assert_eq!(snapshot.end_reason, Some(AccountEndReason::AccountChanged));
+        assert_eq!(snapshot.lifecycle_epoch, 1);
+    }
+
+    #[tokio::test]
+    async fn scheduled_refresh_with_a_different_account_id_fails_closed_as_account_changed() {
+        let f = connected_fixture().await;
+        let before = f.service.snapshot();
+        f.clock.advance(450);
+        let mut response = token_response("refresh-wrong-account");
+        response["account"]["account_id"] = json!(9_007_199_254_740_993u64);
+        f.transport.push_ok(200, response);
+
+        f.service.renewal_tick().await;
+
+        assert_eq!(f.service.status(), AccountStatus::SignedOut);
+        assert!(f.store.profiles.lock().unwrap().get("release").is_none());
+        let after = f.service.snapshot();
+        assert_eq!(after.account_id, None);
+        assert_eq!(after.end_reason, Some(AccountEndReason::AccountChanged));
+        assert_eq!(after.lifecycle_epoch, before.lifecycle_epoch + 1);
+    }
+
 }
