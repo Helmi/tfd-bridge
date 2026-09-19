@@ -1634,12 +1634,18 @@ pub fn run() {
             let backend = Arc::new(webview_backend::TauriWebviewBackend::new(
                 app.handle().clone(),
             ));
+            // Seed the coordinator synchronously. Later opens must match this
+            // account snapshot exactly; the async watch is only allowed to
+            // advance it through apply_account().
+            let account_snapshot = account_service.snapshot();
             let embedded = Arc::new(embedded_session::EmbeddedSession::new(
                 Arc::new(embedded_session::AccountHandoffClient(
                     account_service.clone(),
                 )),
                 backend.clone(),
                 Arc::new(embedded_session::SystemClock),
+                account_snapshot.can_use_account,
+                account_snapshot.lifecycle_epoch,
             ));
             backend.bind(&embedded);
             app.manage(EmbeddedSessionState(embedded.clone()));

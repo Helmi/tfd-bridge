@@ -7,6 +7,50 @@ use async_trait::async_trait;
 use std::sync::{Arc, Mutex, Weak};
 use tauri::Manager;
 
+/// Validates the frozen v5 native-only consume URL before it reaches a
+/// webview. The ticket stays opaque; only its unambiguous one-segment shape is
+/// accepted. Parsing alone is insufficient because it normalizes dot segments.
+fn validate_handoff_url(opaque_url: &str) -> Result<tauri::Url, SessionError> {
+    let url = tauri::Url::parse(opaque_url).map_err(|_| SessionError::Refused)?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("engine.tfd.rocks")
+        || !matches!(url.port(), None | Some(443))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(SessionError::Refused);
+    }
+
+    let raw_path = opaque_url
+        .strip_prefix("https://engine.tfd.rocks")
+        .and_then(|tail| tail.strip_prefix(":443").or(Some(tail)))
+        .ok_or(SessionError::Refused)?;
+    let ticket = raw_path
+        .strip_prefix("/api/auth/bridge-handoff/")
+        .ok_or(SessionError::Refused)?;
+    if ticket.is_empty()
+        || !ticket
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'/' && byte != b'%')
+    {
+        return Err(SessionError::Refused);
+    }
+
+    let segments = url
+        .path_segments()
+        .ok_or(SessionError::Refused)?
+        .collect::<Vec<_>>();
+    if segments.len() != 4
+        || segments[..3] != ["api", "auth", "bridge-handoff"]
+        || segments[3] != ticket
+    {
+        return Err(SessionError::Refused);
+    }
+    Ok(url)
+}
+
 pub struct TauriWebviewBackend {
     app: tauri::AppHandle,
     coordinator: Mutex<Option<Weak<EmbeddedSession>>>,
@@ -40,14 +84,7 @@ impl WebviewBackend for TauriWebviewBackend {
         incarnation: u64,
         epoch: u64,
     ) -> Result<(), SessionError> {
-        let url = tauri::Url::parse(opaque_url).map_err(|_| SessionError::Refused)?;
-        // The server owns the opaque URL but it must still be HTTPS Engine.
-        if url.scheme() != "https"
-            || url.host_str() != Some("engine.tfd.rocks")
-            || !matches!(url.port(), None | Some(443))
-        {
-            return Err(SessionError::Refused);
-        }
+        let url = validate_handoff_url(opaque_url)?;
         let window = self.window(view)?;
         let cleanup_window = window.clone();
         let listener = install_handoff_listener(&window, opaque_url)?;
@@ -251,4 +288,34 @@ async fn clear_profile_browsing_data(window: tauri::WebviewWindow) -> Result<(),
 #[cfg(not(windows))]
 async fn clear_profile_browsing_data(_window: tauri::WebviewWindow) -> Result<(), SessionError> {
     Err(SessionError::Unreachable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_handoff_url;
+
+    #[test]
+    fn production_handoff_url_requires_the_exact_v5_consume_route() {
+        assert!(validate_handoff_url(
+            "https://engine.tfd.rocks:443/api/auth/bridge-handoff/opaque-ticket_123"
+        )
+        .is_ok());
+        for invalid in [
+            "https://engine.tfd.rocks/monitor",
+            "https://engine.tfd.rocks/api/auth/bridge-handoff/",
+            "https://engine.tfd.rocks/api/auth/bridge-handoff/ticket/extra",
+            "https://engine.tfd.rocks/api/auth/bridge-handoff/./ticket",
+            "https://engine.tfd.rocks/api/auth/bridge-handoff/ticket?next=/monitor",
+            "https://engine.tfd.rocks/api/auth/bridge-handoff/ticket#fragment",
+            "https://engine.tfd.rocks:444/api/auth/bridge-handoff/ticket",
+            "https://user@engine.tfd.rocks/api/auth/bridge-handoff/ticket",
+            "https://engine.tfd.rocks/api/auth/bridge-handoff/%2Fticket",
+            "https://engine.tfd.rocks/api/auth/bridge-handoff/%2e%2e/ticket",
+        ] {
+            assert!(
+                validate_handoff_url(invalid).is_err(),
+                "accepted invalid handoff URL"
+            );
+        }
+    }
 }
