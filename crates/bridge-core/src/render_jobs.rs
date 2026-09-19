@@ -514,6 +514,58 @@ mod tests {
         }
     }
     #[test]
+    fn shared_render_requires_complete_opaque_preflight_evidence() {
+        let mut invalid = Vec::new();
+        let mut missing_preflight = request();
+        missing_preflight.preflight_id = None;
+        invalid.push(missing_preflight);
+        let mut empty_preflight = request();
+        empty_preflight.preflight_id = Some("".into());
+        invalid.push(empty_preflight);
+        let mut unsafe_preflight = request();
+        unsafe_preflight.preflight_id = Some("contains/slash".into());
+        invalid.push(unsafe_preflight);
+        let mut missing_hash = request();
+        missing_hash.source_sha256 = None;
+        invalid.push(missing_hash);
+        let mut short_hash = request();
+        short_hash.source_sha256 = Some("a".repeat(63));
+        invalid.push(short_hash);
+        let mut non_hex_hash = request();
+        non_hex_hash.source_sha256 = Some("z".repeat(64));
+        invalid.push(non_hex_hash);
+        for request in invalid {
+            assert!(
+                matches!(
+                    RenderJobs::default().start(request),
+                    Err(JobError::InvalidRequest)
+                ),
+                "a shared render must carry a valid preflight id and source hash"
+            );
+        }
+
+        for (preflight_id, source_sha256) in [
+            (Some("preflight_123".into()), None),
+            (None, Some("a".repeat(64))),
+            (Some("preflight_123".into()), Some("a".repeat(64))),
+        ] {
+            let mut local = local_request(video_options());
+            local.preflight_id = preflight_id;
+            local.source_sha256 = source_sha256;
+            assert!(
+                matches!(
+                    RenderJobs::default().start(local),
+                    Err(JobError::InvalidRequest)
+                ),
+                "local renders cannot smuggle share-only evidence"
+            );
+        }
+
+        let mut jobs = RenderJobs::default();
+        assert!(matches!(jobs.start(request()), Ok(StartRender::New { .. })));
+    }
+
+    #[test]
     fn shared_identity_deduplicates_and_only_one_worker_claims() {
         let mut jobs = RenderJobs::default();
         let lease = start(&mut jobs);

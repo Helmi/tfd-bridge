@@ -268,3 +268,109 @@ pub(super) fn post(
         _ => error("not_found", 404),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        render_jobs::{RenderRequest, StartRender},
+        server::{PlayerConfig, PlayerState, RenderDispatcher},
+    };
+    use std::sync::Arc;
+
+    fn replay_bytes(account_id: i64, marker: &str) -> Vec<u8> {
+        let metadata = serde_json::json!({
+            "gameMode": 1, "clientVersionFromExe": "0,15,7,0",
+            "mapDisplayName": marker, "mapId": 1, "clientVersionFromXml": "0,15,7,0",
+            "duration": 1, "name": marker, "scenario": "test", "playerID": account_id,
+            "vehicles": [], "playersPerTeam": 1, "dateTime": "2026-01-01T00:00:00",
+            "mapName": "test", "playerName": "test", "scenarioConfigId": 1,
+            "teamsCount": 2, "playerVehicle": "test"
+        });
+        let metadata = serde_json::to_vec(&metadata).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&(metadata.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&metadata);
+        bytes
+    }
+
+    #[test]
+    fn worker_claim_refuses_a_replay_replaced_after_preflight() {
+        let dir = tempfile::tempdir().unwrap();
+        let replay = dir.path().join("battle.wowsreplay");
+        std::fs::write(&replay, replay_bytes(42, "before-preflight")).unwrap();
+        let expected = crate::replay_identity::read_replay_evidence(&replay)
+            .unwrap()
+            .artifact
+            .source_sha256_hex();
+        let dispatcher: RenderDispatcher = Arc::new(|_, _, _| Ok(()));
+        let player = Arc::new(PlayerState::new(PlayerConfig {
+            player_dist: dir.path().into(),
+            render_dispatcher: Some(dispatcher),
+            share_service: None,
+        }));
+        let lease = match player
+            .jobs
+            .lock()
+            .unwrap()
+            .start(RenderRequest {
+                replay_name: "battle.wowsreplay".into(),
+                share_id: Some("share-1".into()),
+                arena_unique_id: Some("9007199254740993".into()),
+                max_bytes: Some(1024),
+                preflight_id: Some("opaque-preflight".into()),
+                source_sha256: Some(expected),
+                video_options: None,
+            })
+            .unwrap()
+        {
+            StartRender::New { worker, .. } => worker,
+            StartRender::Existing(_) => panic!("expected fresh render"),
+        };
+
+        // This is a different valid replay, so only the source rehash can reject it.
+        std::fs::write(&replay, replay_bytes(42, "after-preflight")).unwrap();
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+        let root = dir.path().to_path_buf();
+        let worker_player = player.clone();
+        let route = format!("/v1/render/jobs/{}/claim", lease.job_id);
+        let worker_route = route.clone();
+        let worker = std::thread::spawn(move || {
+            let mut request = server.recv().unwrap();
+            let response = post(
+                &mut request,
+                &root,
+                Some(&worker_player),
+                port,
+                &worker_route,
+            );
+            request.respond(response).unwrap();
+        });
+        let response = ureq::post(&format!("{base}{route}"))
+            .set("Origin", &base)
+            .set("X-TFD-Render-Worker", &lease.token)
+            .call();
+        let Err(ureq::Error::Status(409, response)) = response else {
+            panic!("replaced replay must refuse the worker claim")
+        };
+        let body: serde_json::Value =
+            serde_json::from_str(&response.into_string().unwrap()).unwrap();
+        assert_eq!(body["error"], "replay_replaced");
+        assert_eq!(
+            player
+                .jobs
+                .lock()
+                .unwrap()
+                .status(&lease.job_id)
+                .unwrap()
+                .state,
+            RenderState::Failed,
+            "a rejected worker must never retain a claimable job"
+        );
+        worker.join().unwrap();
+    }
+}

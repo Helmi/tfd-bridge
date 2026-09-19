@@ -247,6 +247,8 @@ struct PlayerState {
     /// keyed by `FileKey`, used to enrich the player's replay picker. Populated
     /// lazily from the plaintext replay header — no game files, no packet decode.
     meta_cache: Mutex<std::collections::HashMap<FileKey, scene_export::ReplayMeta>>,
+    #[cfg(test)]
+    evidence_reader: Option<Arc<dyn Fn(&Path) -> Result<crate::replay_identity::ReplayEvidence, crate::replay_identity::ReplayIdentityError> + Send + Sync>>,
 }
 
 impl PlayerState {
@@ -258,7 +260,17 @@ impl PlayerState {
             cache: Mutex::new(SceneCache::new(16)),
             decode_lock: Mutex::new(()),
             meta_cache: Mutex::new(std::collections::HashMap::new()),
+            #[cfg(test)]
+            evidence_reader: None,
         }
+    }
+
+    fn replay_evidence(&self, replay: &Path) -> Result<crate::replay_identity::ReplayEvidence, crate::replay_identity::ReplayIdentityError> {
+        #[cfg(test)]
+        if let Some(reader) = &self.evidence_reader {
+            return reader(replay);
+        }
+        crate::replay_identity::read_replay_evidence(replay)
     }
 
     /// Best-effort lightweight metadata for one replay by list `name`, cached by
