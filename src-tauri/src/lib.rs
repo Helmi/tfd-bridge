@@ -2,6 +2,7 @@ mod account;
 mod commands;
 pub mod donation;
 pub mod engine;
+mod embedded_session;
 pub mod link_target;
 pub mod uploader;
 pub mod video_upload;

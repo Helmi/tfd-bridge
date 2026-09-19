@@ -201,6 +201,53 @@ pub enum AccountError {
     OpenFailed,
 }
 
+
+/// The only destinations accepted by the native handoff endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffTarget {
+    Dashboard,
+    Monitor,
+    Web,
+}
+
+impl HandoffTarget {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Dashboard => "dashboard",
+            Self::Monitor => "monitor",
+            Self::Web => "web",
+        }
+    }
+}
+
+/// A short-lived, single-use Engine handoff issued for native navigation.
+///
+/// This intentionally cannot be formatted or serialized: its URL contains
+/// an opaque ticket and must only cross the native webview boundary.
+pub struct HandoffIssued {
+    pub(crate) handoff_url: String,
+    pub(crate) web_lease_expires_at: u64,
+    pub(crate) lifecycle_epoch: u64,
+}
+
+/// Safe classification for a failed handoff request. It deliberately drops
+/// Engine error bodies, which are not a logging or UI surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffError {
+    NotReady,
+    Unreachable,
+    InvalidResponse,
+    InvalidReturnPath,
+    Rejected { status: u16 },
+}
+
+#[derive(serde::Deserialize)]
+struct HandoffResponse {
+    handoff_url: String,
+    expires_in: u64,
+    web_lease_expires_at: String,
+}
+
 impl From<TransportError> for AccountError {
     fn from(e: TransportError) -> Self {
         Self::Transport(e)
@@ -803,6 +850,67 @@ impl AccountService {
             self.build_headers(&device_key, endpoint.htm(), &htu, Some(&access_token), None);
         Ok(SignedRequestMaterial {
             headers,
+            lifecycle_epoch,
+        })
+    }
+
+    /// POSTs one exact v5 `/handoff` request using the account service's
+    /// existing DPoP/nonce-retry transport boundary. The opaque result stays
+    /// native-only and is valid only for the captured lifecycle epoch.
+    pub async fn post_handoff(
+        &self,
+        target: HandoffTarget,
+        return_path: &str,
+    ) -> Result<HandoffIssued, HandoffError> {
+        if !is_allowed_return_path(return_path) {
+            return Err(HandoffError::InvalidReturnPath);
+        }
+        let (device_id, access_token, lifecycle_epoch) = {
+            let inner = self.inner.lock().unwrap();
+            let Some(device_id) = inner.device_id.clone() else {
+                return Err(HandoffError::NotReady);
+            };
+            let Some((access_token, _)) = inner.access_token.clone() else {
+                return Err(HandoffError::NotReady);
+            };
+            (device_id, access_token, inner.lifecycle_epoch)
+        };
+        let response = self
+            .call(
+                "POST",
+                "/handoff",
+                json!({"device_id": device_id, "target": target.as_str(), "return_path": return_path}),
+                Some(&access_token),
+            )
+            .await
+            .map_err(|error| match error {
+                AccountError::NotReady => HandoffError::NotReady,
+                AccountError::Transport(_) => HandoffError::Unreachable,
+                AccountError::Http { status: 400, error } if error == "invalid_return_path" => HandoffError::InvalidReturnPath,
+                AccountError::Http { status, .. } => HandoffError::Rejected { status },
+                _ => HandoffError::InvalidResponse,
+            })?;
+        if response.status != 200 {
+            let error = response
+                .body
+                .get("error")
+                .and_then(|value| value.as_str());
+            return Err(if response.status == 400 && error == Some("invalid_return_path") {
+                HandoffError::InvalidReturnPath
+            } else {
+                HandoffError::Rejected { status: response.status }
+            });
+        }
+        let parsed: HandoffResponse = serde_json::from_value(response.body)
+            .map_err(|_| HandoffError::InvalidResponse)?;
+        if parsed.expires_in != 60 || parsed.handoff_url.is_empty() {
+            return Err(HandoffError::InvalidResponse);
+        }
+        let web_lease_expires_at = parse_rfc3339_unix(&parsed.web_lease_expires_at)
+            .map_err(|_| HandoffError::InvalidResponse)?;
+        Ok(HandoffIssued {
+            handoff_url: parsed.handoff_url,
+            web_lease_expires_at,
             lifecycle_epoch,
         })
     }
@@ -1913,6 +2021,15 @@ impl AccountService {
         }
         headers
     }
+}
+
+fn is_allowed_return_path(path: &str) -> bool {
+    path.starts_with("/next/")
+        || path.starts_with("/dashboard")
+        || path.starts_with("/monitor")
+        || path.starts_with("/battles")
+        || path.starts_with("/profile")
+        || path.starts_with("/settings")
 }
 
 fn error_from_body(response: HttpResponse) -> AccountError {
@@ -4460,6 +4577,32 @@ mod tests {
             fresh.lifecycle_epoch, captured_epoch,
             "a consumer re-checking lifecycle_epoch immediately before applying a response must detect staleness"
         );
+    }
+
+    #[tokio::test]
+    async fn post_handoff_uses_the_existing_signed_call_and_validates_the_v5_response() {
+        let f = connected_fixture().await;
+        f.transport.push_ok(200, json!({
+            "handoff_url": "https://engine.tfd.rocks/api/v1/bridge/auth/handoff/opaque-ticket",
+            "expires_in": 60,
+            "web_lease_expires_at": "2030-01-01T12:15:00Z"
+        }));
+        let issued = f.service.post_handoff(HandoffTarget::Dashboard, "/next/dashboard").await.unwrap();
+        assert_eq!(issued.lifecycle_epoch, f.service.snapshot().lifecycle_epoch);
+        assert_eq!(issued.web_lease_expires_at, 1_893_500_100);
+        let call = f.transport.calls().last().unwrap().clone();
+        assert_eq!(call.path, "/handoff");
+        assert_eq!(call.body["device_id"], "dev_test_001");
+        assert_eq!(call.body["target"], "dashboard");
+        assert_eq!(call.body["return_path"], "/next/dashboard");
+        assert!(call.headers.iter().any(|(name, value)| name == "Authorization" && value.starts_with("DPoP ")));
+    }
+
+    #[tokio::test]
+    async fn post_handoff_refuses_a_disallowed_return_path_without_transport() {
+        let f = connected_fixture().await;
+        assert!(matches!(f.service.post_handoff(HandoffTarget::Web, "/not-allowed").await, Err(HandoffError::InvalidReturnPath)));
+        assert!(f.transport.calls().iter().all(|call| call.path != "/handoff"));
     }
 
     // td-811657: compile-time — the raw access token lives in this type's

@@ -16,7 +16,7 @@ pub use renewal::RenewalScheduler;
 #[allow(unused_imports)]
 pub use service::{
     AccountCallbackSink, AccountEndReason, AccountService, AccountSnapshot, AccountStatus,
-    SignedEndpoint, SignedRequestMaterial,
+    HandoffError, HandoffIssued, HandoffTarget, SignedEndpoint, SignedRequestMaterial,
 };
 // `AccountError` and `SecureRandom` are public API surface for later tasks
 // (td-96a620's reset UI, td-cab09a's renewal scheduler / test doubles) that
