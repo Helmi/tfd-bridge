@@ -32,13 +32,14 @@ export async function runRenderWorker(jobId: string, token: string): Promise<voi
   let progress = Promise.resolve();
   try {
     root.textContent = 'Preparing replay video…';
-    const request = await post('claim') as {replay_name:string;arena_unique_id?:string;max_bytes?:number;
+    const request = await post('claim') as {replay_name:string;arena_unique_id?:string;max_bytes?:number;source_sha256?:string;
       video_options?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling'> | null};
     const sceneUrl = `/v1/replays/${encodeURIComponent(request.replay_name)}/scene`;
     const response = await fetch(sceneUrl, {signal:controller.signal});
     if (!response.ok) throw new Error('Replay unavailable');
     const scene = loadReplayScene(await response.json(), {baseUrl:new URL(sceneUrl,location.href).href});
     if (request.arena_unique_id && scene.replay.arenaUniqueId !== request.arena_unique_id) throw new Error('Battle identity mismatch');
+    if (request.source_sha256 && scene.replay.sourceSha256 !== request.source_sha256) throw new Error('Replay artifact changed');
     const video = await renderSceneToMp4(scene, {...request.video_options,maxBytes:request.max_bytes ?? undefined,signal:controller.signal,
       onProgress: value => {
         root.textContent = `Rendering replay video: ${Math.round(value.frame/value.total*100)}%`;

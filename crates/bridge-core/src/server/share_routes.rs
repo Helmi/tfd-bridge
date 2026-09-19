@@ -15,6 +15,18 @@ mod tests {
             assert!(url.starts_with("https://engine.tfd.rocks/share/video/authorize?state="));
             true
         }
+        fn preflight(
+            &self,
+            _replay_name: String,
+            _arena_unique_id: String,
+            evidence: crate::replay_identity::ReplayEvidence,
+        ) -> Result<crate::share_service::SharePreflight, String> {
+            Ok(crate::share_service::SharePreflight {
+                preflight_id: "preflight-test".into(),
+                recorder_account_id: evidence.recorder.account_id.to_string(),
+                recorder_realm: None,
+            })
+        }
         fn start(
             &self,
             claim: ShareClaim,
@@ -66,7 +78,7 @@ mod tests {
             preflight.header("Access-Control-Allow-Origin"),
             Some("https://engine.tfd.rocks")
         );
-        let body = r#"{"share_id":"share-123","capability":"test-capability","arena_unique_id":"9007199254740993","max_bytes":19922944}"#;
+        let body = r#"{"share_id":"share-123","capability":"test-capability","arena_unique_id":"9007199254740993","max_bytes":19922944,"preflight_id":"preflight-test"}"#;
         for origin in ["https://evil.test", base.as_str()] {
             assert!(matches!(
                 ureq::post(&format!("{base}/v1/share/claim"))
@@ -101,7 +113,14 @@ mod tests {
     fn replayer_authorization_claim_consumes_matching_state_once() {
         let dir = tempfile::tempdir().unwrap();
         let replay = dir.path().join("test.wowsreplay");
-        std::fs::write(&replay, b"fixture").unwrap();
+        let metadata = serde_json::json!({"gameMode":1,"clientVersionFromExe":"0,15,7,0","mapDisplayName":"Test","mapId":1,"clientVersionFromXml":"0,15,7,0","duration":1,"name":"test","scenario":"test","playerID":42,"vehicles":[],"playersPerTeam":1,"dateTime":"2026-01-01T00:00:00","mapName":"test","playerName":"test","scenarioConfigId":1,"teamsCount":2,"playerVehicle":"test"});
+        let meta = serde_json::to_vec(&metadata).unwrap();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&(meta.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&meta);
+        std::fs::write(&replay, bytes).unwrap();
         let player = Arc::new(PlayerState::new(PlayerConfig {
             player_dist: dir.path().into(),
             render_dispatcher: None,
@@ -128,9 +147,8 @@ mod tests {
             .send_string(
                 r#"{"replay_name":"test.wowsreplay","arena_unique_id":"9007199254740993"}"#,
             )
-            .unwrap()
-            .into_string()
             .unwrap();
+        let start = start.into_string().unwrap();
         let start: serde_json::Value = serde_json::from_str(&start).unwrap();
         assert_eq!(start["opened"], true);
         let reopen = serde_json::json!({"state":start["state"]}).to_string();
@@ -249,6 +267,48 @@ pub(super) fn post(
             .open_authorization(&url);
         return json(200, serde_json::json!({"opened":opened}));
     }
+    if path == "/v1/share/preflight" {
+        #[derive(serde::Deserialize)]
+        struct Input {
+            replay_name: String,
+            arena_unique_id: String,
+        }
+        let Ok(input) = serde_json::from_slice::<Input>(&bytes) else {
+            return error(400, "invalid_request");
+        };
+        let Ok(replay) = resolve_safe_path(dir, &input.replay_name)
+            .and_then(|p| p.canonicalize().map_err(|_| "invalid_replay".to_string()))
+        else {
+            return error(400, "invalid_replay");
+        };
+        let evidence = match crate::replay_identity::read_replay_evidence(&replay) {
+            Ok(value) => value,
+            Err(crate::replay_identity::ReplayIdentityError::Missing) => {
+                return error(409, "recorder_identity_missing")
+            }
+            Err(crate::replay_identity::ReplayIdentityError::Ambiguous) => {
+                return error(409, "recorder_identity_ambiguous")
+            }
+            Err(_) => return error(409, "replay_unavailable"),
+        };
+        let Ok(body) = scene_cached(&replay, dir, player) else {
+            return error(409, "replay_unavailable");
+        };
+        let Ok(scene) = serde_json::from_str::<serde_json::Value>(&body) else {
+            return error(409, "replay_unavailable");
+        };
+        if scene["replay"]["arenaUniqueId"].as_str() != Some(&input.arena_unique_id) {
+            return error(409, "battle_mismatch");
+        }
+        return match player.config.share_service.as_ref().unwrap().preflight(
+            input.replay_name,
+            input.arena_unique_id,
+            evidence,
+        ) {
+            Ok(value) => json(200, serde_json::to_value(value).unwrap()),
+            Err(code) => error(409, &code),
+        };
+    }
     if path == "/v1/share/authorize" {
         #[derive(serde::Deserialize)]
         struct Input {
@@ -258,9 +318,30 @@ pub(super) fn post(
         let Ok(input) = serde_json::from_slice::<Input>(&bytes) else {
             return error(400, "invalid_request");
         };
-        // Bind to the selected on-disk scene; don't trust a supplied battle ID.
-        let Ok(replay) = resolve_safe_path(dir, &input.replay_name) else {
+        // Establish recorder evidence from this exact canonical artifact before
+        // decoding a scene. Names, selected entities and result blobs are never used.
+        let Ok(replay) = resolve_safe_path(dir, &input.replay_name)
+            .and_then(|p| p.canonicalize().map_err(|_| "invalid_replay".to_string()))
+        else {
             return error(400, "invalid_replay");
+        };
+        let evidence = match crate::replay_identity::read_replay_evidence(&replay) {
+            Ok(value) => value,
+            Err(crate::replay_identity::ReplayIdentityError::Missing) => {
+                return error(409, "recorder_identity_missing")
+            }
+            Err(crate::replay_identity::ReplayIdentityError::Ambiguous) => {
+                return error(409, "recorder_identity_ambiguous")
+            }
+            Err(_) => return error(409, "replay_unavailable"),
+        };
+        let preflight = match player.config.share_service.as_ref().unwrap().preflight(
+            input.replay_name.clone(),
+            input.arena_unique_id.clone(),
+            evidence,
+        ) {
+            Ok(value) => value,
+            Err(code) => return error(409, &code),
         };
         let Ok(body) = scene_cached(&replay, dir, player) else {
             return error(409, "replay_unavailable");
@@ -275,6 +356,7 @@ pub(super) fn post(
             input.replay_name,
             input.arena_unique_id,
             port,
+            preflight.preflight_id.clone(),
         ) {
             Ok(start) => {
                 let opened = player
@@ -285,7 +367,7 @@ pub(super) fn post(
                     .open_authorization(&start.url);
                 json(
                     200,
-                    serde_json::json!({"authorization_url":start.url,"state":start.state,"opened":opened}),
+                    serde_json::json!({"authorization_url":start.url,"state":start.state,"opened":opened,"preflight":preflight}),
                 )
             }
             Err(_) => error(400, "invalid_request"),
@@ -307,15 +389,20 @@ pub(super) fn post(
         let Some(state) = claim.state.as_deref() else {
             return error(400, "missing_state");
         };
-        claim.replay_name = match player
+        let bound = match player
             .share_auth
             .lock()
             .unwrap()
             .claim(state, &claim.arena_unique_id)
         {
-            Ok(name) => Some(name),
+            Ok(value) => value,
             Err(_) => return error(403, "invalid_state"),
         };
+        claim.replay_name = Some(bound.replay_name);
+        claim.preflight_id = Some(bound.preflight_id);
+    }
+    if claim.preflight_id.as_ref().is_none_or(|id| id.is_empty()) {
+        return error(400, "missing_preflight");
     }
     let requested = claim.replay_name.clone();
     let arena = claim.arena_unique_id.clone();
@@ -323,17 +410,10 @@ pub(super) fn post(
     let owner = player.clone();
     // Resolve off the HTTP thread. The worker checks the decoded arena again.
     let resolve = Box::new(move || {
-        let names = if let Some(name) = requested {
-            vec![name]
-        } else {
-            let mut entries = list_replays(&dir).map_err(|_| "replay_unavailable".to_string())?;
-            entries.sort_by_key(|e| std::cmp::Reverse(e.modified_ms));
-            entries
-                .into_iter()
-                .filter(|e| e.name.ends_with(".wowsreplay"))
-                .map(|e| e.name)
-                .collect()
-        };
+        let names = requested.into_iter().collect::<Vec<_>>();
+        if names.len() != 1 {
+            return Err("replay_not_bound".into());
+        }
         for name in names {
             let Ok(path) = resolve_safe_path(&dir, &name) else {
                 continue;

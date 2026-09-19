@@ -9,6 +9,12 @@ pub struct PendingShare {
     replay_name: String,
     arena_unique_id: String,
     expires_at: Instant,
+    preflight_id: String,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct ClaimedShare {
+    pub replay_name: String,
+    pub preflight_id: String,
 }
 
 /// Only one interactive authorization per local app. Starting again replaces
@@ -55,12 +61,14 @@ impl ShareAuthorization {
         replay_name: String,
         arena_unique_id: String,
         port: u16,
+        preflight_id: String,
     ) -> Result<AuthorizationStart, AuthorizationError> {
         if replay_name.is_empty()
             || arena_unique_id.is_empty()
             || arena_unique_id.len() > 20
             || !arena_unique_id.bytes().all(|b| b.is_ascii_digit())
             || port == 0
+            || preflight_id.is_empty()
         {
             return Err(AuthorizationError::InvalidRequest);
         }
@@ -76,6 +84,7 @@ impl ShareAuthorization {
             replay_name,
             arena_unique_id,
             expires_at: Instant::now() + TTL,
+            preflight_id,
         });
         Ok(AuthorizationStart { state, url })
     }
@@ -86,7 +95,7 @@ impl ShareAuthorization {
         &mut self,
         state: &str,
         arena_unique_id: &str,
-    ) -> Result<String, AuthorizationError> {
+    ) -> Result<ClaimedShare, AuthorizationError> {
         let pending = self
             .pending
             .as_ref()
@@ -101,7 +110,11 @@ impl ShareAuthorization {
         if pending.arena_unique_id != arena_unique_id {
             return Err(AuthorizationError::WrongBattle);
         }
-        Ok(self.pending.take().unwrap().replay_name)
+        let pending = self.pending.take().unwrap();
+        Ok(ClaimedShare {
+            replay_name: pending.replay_name,
+            preflight_id: pending.preflight_id,
+        })
     }
 
     pub fn cancel(&mut self) {
@@ -116,7 +129,12 @@ mod tests {
     fn browser_retry_is_bound_to_live_authorization() {
         let mut auth = ShareAuthorization::default();
         let start = auth
-            .begin("test.wowsreplay".into(), "123".into(), 43210)
+            .begin(
+                "test.wowsreplay".into(),
+                "123".into(),
+                43210,
+                "preflight".into(),
+            )
             .unwrap();
         assert_eq!(
             auth.authorization_url(&start.state, 43210).unwrap(),
@@ -132,7 +150,12 @@ mod tests {
             Err(AuthorizationError::UnknownState)
         );
         let start = auth
-            .begin("test.wowsreplay".into(), "123".into(), 43210)
+            .begin(
+                "test.wowsreplay".into(),
+                "123".into(),
+                43210,
+                "preflight".into(),
+            )
             .unwrap();
         auth.pending.as_mut().unwrap().expires_at = Instant::now();
         assert_eq!(
@@ -145,7 +168,12 @@ mod tests {
     fn state_is_single_use_and_bound_to_local_battle() {
         let mut auth = ShareAuthorization::default();
         let start = auth
-            .begin("local.wowsreplay".into(), "3240335569959155".into(), 43210)
+            .begin(
+                "local.wowsreplay".into(),
+                "3240335569959155".into(),
+                43210,
+                "preflight".into(),
+            )
             .unwrap();
         assert_eq!(start.state.len(), 64);
         assert!(!start.url.contains("capability"));
@@ -158,7 +186,9 @@ mod tests {
             Err(AuthorizationError::WrongBattle)
         );
         assert_eq!(
-            auth.claim(&start.state, "3240335569959155").unwrap(),
+            auth.claim(&start.state, "3240335569959155")
+                .unwrap()
+                .replay_name,
             "local.wowsreplay"
         );
         assert_eq!(
@@ -169,8 +199,12 @@ mod tests {
     #[test]
     fn replacement_expiry_and_cancel_invalidate_old_callbacks() {
         let mut auth = ShareAuthorization::default();
-        let old = auth.begin("a".into(), "1".into(), 43210).unwrap();
-        let new = auth.begin("b".into(), "2".into(), 43210).unwrap();
+        let old = auth
+            .begin("a".into(), "1".into(), 43210, "preflight".into())
+            .unwrap();
+        let new = auth
+            .begin("b".into(), "2".into(), 43210, "preflight".into())
+            .unwrap();
         assert_eq!(
             auth.claim(&old.state, "1"),
             Err(AuthorizationError::UnknownState)
@@ -180,7 +214,9 @@ mod tests {
             auth.claim(&new.state, "2"),
             Err(AuthorizationError::Expired)
         );
-        let new = auth.begin("c".into(), "3".into(), 43210).unwrap();
+        let new = auth
+            .begin("c".into(), "3".into(), 43210, "preflight".into())
+            .unwrap();
         auth.cancel();
         assert_eq!(
             auth.claim(&new.state, "3"),

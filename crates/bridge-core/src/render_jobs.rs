@@ -12,6 +12,10 @@ pub struct RenderRequest {
     pub share_id: Option<String>,
     pub arena_unique_id: Option<String>,
     pub max_bytes: Option<u64>,
+    /// Opaque one-use local authorization binding for a shared render.
+    pub preflight_id: Option<String>,
+    /// SHA-256 of the exact replay artifact selected at preflight.
+    pub source_sha256: Option<String>,
     /// Local-save preferences. Discord shares use Engine's upload budget.
     #[serde(default)]
     pub video_options: Option<VideoOptions>,
@@ -60,7 +64,11 @@ pub struct RenderStatus {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct VideoInfo { pub duration_s: f64, pub width: u32, pub height: u32 }
+pub struct VideoInfo {
+    pub duration_s: f64,
+    pub width: u32,
+    pub height: u32,
+}
 
 /// Worker-only capability. Do not serialize it into public status responses.
 #[derive(Clone)]
@@ -117,6 +125,17 @@ impl RenderJobs {
             || request
                 .max_bytes
                 .is_some_and(|cap| cap == 0 || cap > 512 * 1024 * 1024)
+            || (request.share_id.is_some()
+                && (!request
+                    .preflight_id
+                    .as_ref()
+                    .is_some_and(|v| valid_opaque(v))
+                    || !request
+                        .source_sha256
+                        .as_ref()
+                        .is_some_and(|v| valid_sha256(v))))
+            || (request.share_id.is_none()
+                && (request.preflight_id.is_some() || request.source_sha256.is_some()))
             || request
                 .video_options
                 .as_ref()
@@ -183,10 +202,19 @@ impl RenderJobs {
     }
 
     pub fn video_info(&mut self, lease: &WorkerLease, info: VideoInfo) -> Result<(), JobError> {
-        if !info.duration_s.is_finite() || info.duration_s <= 0.0 || info.width == 0 || info.height == 0 { return Err(JobError::InvalidRequest); }
-        let job=self.worker(lease)?;
-        if job.status.state != RenderState::Rendering {return Err(JobError::InvalidTransition)}
-        job.status.video=Some(info); Ok(())
+        if !info.duration_s.is_finite()
+            || info.duration_s <= 0.0
+            || info.width == 0
+            || info.height == 0
+        {
+            return Err(JobError::InvalidRequest);
+        }
+        let job = self.worker(lease)?;
+        if job.status.state != RenderState::Rendering {
+            return Err(JobError::InvalidTransition);
+        }
+        job.status.video = Some(info);
+        Ok(())
     }
 
     fn worker(&mut self, lease: &WorkerLease) -> Result<&mut Job, JobError> {
@@ -327,6 +355,16 @@ impl RenderJobs {
     }
 }
 
+fn valid_opaque(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
 fn valid_arena(id: &str) -> bool {
     !id.is_empty()
         && id.bytes().all(|b| b.is_ascii_digit())
@@ -344,18 +382,28 @@ mod tests {
             share_id: Some("share-1".into()),
             arena_unique_id: Some("9007199254740993".into()),
             max_bytes: Some(1024),
+            preflight_id: Some("preflight-1".into()),
+            source_sha256: Some("a".repeat(64)),
             video_options: None,
         }
     }
     fn local_request(options: VideoOptions) -> RenderRequest {
         RenderRequest {
             share_id: None,
+            preflight_id: None,
+            source_sha256: None,
             video_options: Some(options),
             ..request()
         }
     }
     fn video_options() -> VideoOptions {
-        VideoOptions { map_supersampling: false, resolution: "1080".into(), fps: 30, bitrate: 4_000_000, speed: 10 }
+        VideoOptions {
+            map_supersampling: false,
+            resolution: "1080".into(),
+            fps: 30,
+            bitrate: 4_000_000,
+            speed: 10,
+        }
     }
 
     #[test]
@@ -365,25 +413,61 @@ mod tests {
                 for speed in [5, 10, 20] {
                     for bitrate in [1_000_000, 4_000_000, 12_000_000] {
                         let mut jobs = RenderJobs::default();
-                        let expected = local_request(VideoOptions { map_supersampling: false, resolution: resolution.into(), fps, bitrate, speed });
-                        let StartRender::New { worker, .. } = jobs.start(expected.clone()).unwrap() else { panic!("expected new job") };
+                        let expected = local_request(VideoOptions {
+                            map_supersampling: false,
+                            resolution: resolution.into(),
+                            fps,
+                            bitrate,
+                            speed,
+                        });
+                        let StartRender::New { worker, .. } = jobs.start(expected.clone()).unwrap()
+                        else {
+                            panic!("expected new job")
+                        };
                         assert_eq!(jobs.claim(&worker).unwrap(), expected);
                     }
                 }
             }
         }
         let invalid = [
-            VideoOptions { resolution: "2160".into(), ..video_options() },
-            VideoOptions { fps: 0, ..video_options() },
-            VideoOptions { fps: 25, ..video_options() },
-            VideoOptions { fps: 61, ..video_options() },
-            VideoOptions { bitrate: 999_999, ..video_options() },
-            VideoOptions { bitrate: 12_000_001, ..video_options() },
-            VideoOptions { speed: 0, ..video_options() },
-            VideoOptions { speed: 15, ..video_options() },
+            VideoOptions {
+                resolution: "2160".into(),
+                ..video_options()
+            },
+            VideoOptions {
+                fps: 0,
+                ..video_options()
+            },
+            VideoOptions {
+                fps: 25,
+                ..video_options()
+            },
+            VideoOptions {
+                fps: 61,
+                ..video_options()
+            },
+            VideoOptions {
+                bitrate: 999_999,
+                ..video_options()
+            },
+            VideoOptions {
+                bitrate: 12_000_001,
+                ..video_options()
+            },
+            VideoOptions {
+                speed: 0,
+                ..video_options()
+            },
+            VideoOptions {
+                speed: 15,
+                ..video_options()
+            },
         ];
         for options in invalid {
-            assert!(matches!(RenderJobs::default().start(local_request(options)), Err(JobError::InvalidRequest)));
+            assert!(matches!(
+                RenderJobs::default().start(local_request(options)),
+                Err(JobError::InvalidRequest)
+            ));
         }
     }
 
@@ -391,22 +475,31 @@ mod tests {
     fn local_preferences_cannot_override_share_policy_or_attach_to_other_settings() {
         let mut shared = request();
         shared.video_options = Some(video_options());
-        assert!(matches!(RenderJobs::default().start(shared), Err(JobError::InvalidRequest)));
+        assert!(matches!(
+            RenderJobs::default().start(shared),
+            Err(JobError::InvalidRequest)
+        ));
 
         let mut jobs = RenderJobs::default();
         let local = local_request(video_options());
         jobs.start(local.clone()).unwrap();
         assert!(matches!(jobs.start(local), Ok(StartRender::Existing(_))));
-        let changed = local_request(VideoOptions { fps: 60, ..video_options() });
+        let changed = local_request(VideoOptions {
+            fps: 60,
+            ..video_options()
+        });
         assert!(matches!(jobs.start(changed), Err(JobError::Busy)));
     }
 
     #[test]
     fn old_render_requests_keep_default_video_settings() {
-        let request: RenderRequest = serde_json::from_value(serde_json::json!({"replay_name": "battle.wowsreplay"})).unwrap();
+        let request: RenderRequest =
+            serde_json::from_value(serde_json::json!({"replay_name": "battle.wowsreplay"}))
+                .unwrap();
         assert!(request.video_options.is_none());
         assert!(RenderJobs::default().start(request).is_ok());
-        let mut value = serde_json::json!({"resolution":"1080","fps":30,"bitrate":4_000_000,"speed":10});
+        let mut value =
+            serde_json::json!({"resolution":"1080","fps":30,"bitrate":4_000_000,"speed":10});
         let old: VideoOptions = serde_json::from_value(value.clone()).unwrap();
         assert!(!old.map_supersampling);
         value["mapSupersampling"] = true.into();

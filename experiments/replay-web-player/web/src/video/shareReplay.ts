@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 
 type ShareStatus = {state:string;frame?:number;total?:number;attempt?:number;job_id?:string;error?:string;message_url?:string};
 const storageKey='tfd-active-video-share';
+const safeStartError=(status:number)=>({
+  400:'This replay cannot be shared.',
+  409:'This replay cannot be shared. Check that it is complete and belongs to the connected player.',
+  403:'Sharing is no longer authorized. Start again.',
+}[status] ?? 'Could not start sharing.');
+
 export function useReplayShare() {
   const [id,setId]=useState<string|null>(()=>sessionStorage.getItem(storageKey));
   const [status,setStatus]=useState<ShareStatus|null>(null);
@@ -43,7 +49,7 @@ export function useReplayShare() {
     setStarting(true);setStatus(null);setAuthorizationUrl(undefined);setBrowserError(undefined);
     try{
       const response=await fetch('/v1/share/authorize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({replay_name:replayName,arena_unique_id:arena})});
-      if(!response.ok)throw new Error(`Could not start sharing (${response.status}).`);
+      if(!response.ok)throw new Error(safeStartError(response.status));
       const result=await response.json() as {state:string;authorization_url:string;opened:boolean};
       const url=new URL(result.authorization_url);
       if(url.origin!=='https://engine.tfd.rocks'||url.pathname!=='/share/video/authorize')throw new Error('Invalid authorization address.');
@@ -69,9 +75,16 @@ export function useReplayShare() {
     }catch(error){setBrowserError(error instanceof Error?error.message:'Could not open your default browser.');}
     finally{setOpening(false);}
   };
+  const safeFailure= status?.error==='recorder_account_mismatch' ? 'This replay was recorded by another player.'
+    :status?.error==='recorder_realm_mismatch' ? 'Engine could not confirm this replay for the connected account.'
+    :status?.error==='not_battle_owner' ? 'Engine could not confirm ownership for this battle.'
+    :status?.error==='account_lifecycle_changed' ? 'Your connected account changed. Start sharing again.'
+    :status?.error==='preflight_expired' || status?.error==='preflight_invalid' ? 'Sharing authorization expired. Start again.'
+    :status?.error==='replay_replaced' ? 'The replay changed before rendering. Start again.'
+    :'Please try again.';
   const label=status?.state==='rendering'?`Rendering video… ${Math.round((status.frame??0)/Math.max(1,status.total??1)*100)}%`
     :status?.state==='awaiting_authorization'?'Confirm sharing in Engine.'
-    :status?.state==='failed'?`Sharing failed: ${status.error??'Please try again.'}`
+    :status?.state==='failed'?`Sharing failed: ${safeFailure}`
     :status?.state==='posted'?'Video posted to Discord.'
     :status?.state==='queued'?'Video uploaded; waiting for Discord delivery.'
     :status?({authorizing:'Checking authorization…',resolving:'Finding the local replay…',uploading:'Uploading video…',posting:'Posting to Discord…',expired:'Sharing authorization expired.'}[status.state]??status.state):undefined;

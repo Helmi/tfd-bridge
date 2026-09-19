@@ -397,6 +397,7 @@ fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
         share_service: Some(std::sync::Arc::new(share_coordinator::Coordinator::new(
             app.clone(),
             dispatch,
+            (*app.state::<Arc<account::AccountService>>()).clone(),
         ))),
     })
 }

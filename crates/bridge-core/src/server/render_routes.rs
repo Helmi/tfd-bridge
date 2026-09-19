@@ -155,15 +155,35 @@ pub(super) fn post(
     };
     match action {
         "metadata" => {
-            let info=match read_json(request) {Ok(v)=>v,Err(r)=>return r};
-            match state.jobs.lock().unwrap().video_info(&lease,info) {
-                Ok(())=>reply(200,serde_json::json!({"ok":true})),Err(e)=>job_error(e)
+            let info = match read_json(request) {
+                Ok(v) => v,
+                Err(r) => return r,
+            };
+            match state.jobs.lock().unwrap().video_info(&lease, info) {
+                Ok(()) => reply(200, serde_json::json!({"ok":true})),
+                Err(e) => job_error(e),
             }
-        },
-        "claim" => match state.jobs.lock().unwrap().claim(&lease) {
-            Ok(v) => reply(200, serde_json::to_value(v).unwrap()),
-            Err(e) => job_error(e),
-        },
+        }
+        "claim" => {
+            // A shared worker may only see the exact artifact that preflight hashed.
+            if let Some(expected) = input.source_sha256.as_deref() {
+                let replay = match resolve_safe_path(replays_dir, &input.replay_name) {
+                    Ok(value) => value,
+                    Err(_) => return error("replay_unavailable", 409),
+                };
+                match crate::replay_identity::read_replay_evidence(&replay) {
+                    Ok(evidence) if evidence.artifact.source_sha256_hex() == expected => {}
+                    _ => {
+                        let _ = state.jobs.lock().unwrap().fail(&lease, "replay_replaced");
+                        return error("replay_replaced", 409);
+                    }
+                }
+            }
+            match state.jobs.lock().unwrap().claim(&lease) {
+                Ok(v) => reply(200, serde_json::to_value(v).unwrap()),
+                Err(e) => job_error(e),
+            }
+        }
         "progress" => {
             #[derive(serde::Deserialize)]
             struct Progress {

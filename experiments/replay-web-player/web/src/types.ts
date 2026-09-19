@@ -217,6 +217,7 @@ export interface ReplayScene {
   replay: {
     id: string;
     arenaUniqueId?: string;
+    sourceSha256?: string;
     title: string;
     gameVersion: string;
     /** Short "major.minor" client version, e.g. "15.5". */

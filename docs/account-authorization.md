@@ -250,6 +250,22 @@ A Bridge renewal failure and recovery drill, secure-store write failure drill
 and all live Engine rounds are downstream validation for td-27bcc9/td-cab09a and
 the end-to-end task td-853c9b, against a deployed Engine that passes td-66b585.
 
+
+### Bridge local replay preflight (client-only)
+
+`POST /v1/share/preflight` is available only to `https://engine.tfd.rocks`.
+It accepts an explicit `{ "replay_name", "arena_unique_id" }` and returns
+`{ "preflight_id", "recorder_account_id", "recorder_realm"? }`. The account ID
+is always a decimal string. `preflight_id` is opaque, short-lived and single-use.
+It binds the canonical replay path, source SHA-256, arena and account lifecycle
+locally. It is not a server ownership assertion; Engine must still enforce v5 §9.1.
+
+**External blocker:** the Bridge must not substitute a local owner decision or call an
+Engine owner-row endpoint. Sharing remains blocked for live use until Engine deploys
+`POST /api/discord/share/video` with the v5 `recorder_account_id` / optional
+`recorder_realm` checks and its server-derived `is_battle_owner` row gate (Engine
+`td-66b585` deployment proof).
+
 ## Engine implementation status and compatibility gate
 
 Engine epic **td-8274fe** (created only after agreement). Child tasks:
