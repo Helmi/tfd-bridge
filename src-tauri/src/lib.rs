@@ -1,14 +1,15 @@
 mod account;
 mod commands;
 pub mod donation;
-pub mod engine;
 mod embedded_session;
+pub mod engine;
 pub mod link_target;
-pub mod uploader;
-pub mod video_upload;
-pub mod video_share;
-mod share_coordinator;
 mod render_worker;
+mod share_coordinator;
+pub mod uploader;
+pub mod video_share;
+pub mod video_upload;
+mod webview_backend;
 
 use bridge_core::battle_result::{DecodeConfig, Tables};
 use bridge_core::detection::derive_game_dir;
@@ -174,6 +175,49 @@ struct Quitting(AtomicBool);
 /// The main window's initial (local dashboard) URL, captured at setup so the
 /// embedded monitor's "← Dashboard" sentinel can navigate back to it.
 struct DashboardUrl(Mutex<Option<tauri::Url>>);
+
+/// The single native coordinator shared by every embedded Engine webview.
+struct EmbeddedSessionState(Arc<embedded_session::EmbeddedSession>);
+
+fn is_engine_url(url: &tauri::Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("engine.tfd.rocks")
+        && matches!(url.port(), None | Some(443))
+}
+
+fn engine_return_path(url: &tauri::Url) -> Option<String> {
+    if !is_engine_url(url) {
+        return None;
+    }
+    let mut path = url.path().to_string();
+    if let Some(query) = url.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    embedded_session::allowed_return_path(&path).then_some(path)
+}
+
+fn open_embedded_view(
+    app: &AppHandle,
+    label: &str,
+    target: embedded_session::Target,
+    return_path: &str,
+) {
+    let coordinator = app.state::<EmbeddedSessionState>().0.clone();
+    let snapshot = app.state::<Arc<account::AccountService>>().snapshot();
+    let label = label.to_owned();
+    let return_path = return_path.to_owned();
+    tauri::async_runtime::spawn(async move {
+        if coordinator
+            .open(label, target, return_path, snapshot.lifecycle_epoch)
+            .await
+            .is_err()
+        {
+            // Handoff URLs and account request material are deliberately opaque.
+            log::warn!("embedded Engine navigation was refused or unavailable");
+        }
+    });
+}
 
 // ── Store constants ─────────────────────────────────────────────────────────
 
@@ -346,8 +390,15 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
 fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
     let resource_dir = app.path().resource_dir().ok()?;
     let player_dist = resource_dir.join("player");
-    let dispatch=render_worker::dispatcher(app.clone());
-    player_dist.exists().then_some(PlayerConfig { player_dist, render_dispatcher: Some(dispatch.clone()), share_service: Some(std::sync::Arc::new(share_coordinator::Coordinator::new(app.clone(),dispatch))) })
+    let dispatch = render_worker::dispatcher(app.clone());
+    player_dist.exists().then_some(PlayerConfig {
+        player_dist,
+        render_dispatcher: Some(dispatch.clone()),
+        share_service: Some(std::sync::Arc::new(share_coordinator::Coordinator::new(
+            app.clone(),
+            dispatch,
+        ))),
+    })
 }
 
 // ── Bridge management ────────────────────────────────────────────────────────
@@ -421,9 +472,15 @@ pub(crate) fn apply_replays_path(app: &tauri::AppHandle, path: PathBuf) {
             // `resolve_player_config`). `None` on a default build — the
             // player routes then quietly 404.
             let player_cfg = resolve_player_config(app);
-            match active.bridge.attach_replays(path.clone(), Some(finalize), decode_ctx, player_cfg) {
+            match active
+                .bridge
+                .attach_replays(path.clone(), Some(finalize), decode_ctx, player_cfg)
+            {
                 Ok(()) => {
-                    log::info!("Replays folder attached — bridge serving on port {}", active.bridge.port());
+                    log::info!(
+                        "Replays folder attached — bridge serving on port {}",
+                        active.bridge.port()
+                    );
                     active.path = Some(path);
                     // Startup catch-up + backfill resume: scan for donate-able
                     // replays (30-day window, not in the ledger). Donation is
@@ -539,7 +596,9 @@ fn save_last_view(app: &tauri::AppHandle, view: &str) {
 /// seam): a plain key getter instead of a live store, so a migration test can
 /// exercise the exact parsing this function's only caller uses against a
 /// synthetic fixture instead of a manual field lookup.
-pub(crate) fn read_last_view_from(get: impl Fn(&str) -> Option<serde_json::Value>) -> Option<String> {
+pub(crate) fn read_last_view_from(
+    get: impl Fn(&str) -> Option<serde_json::Value>,
+) -> Option<String> {
     get(KEY_LAST_VIEW).and_then(|v| v.as_str().map(|s| s.to_owned()))
 }
 
@@ -580,7 +639,6 @@ pub(crate) fn set_launch_on_login_internal(app: &tauri::AppHandle, enabled: bool
 
 // ── Battle Monitor (embedded in the main window) ───────────────────────────────
 
-const MONITOR_URL: &str = "https://engine.tfd.rocks/monitor";
 /// Same-origin sentinel paths the injected JS navigates to. The `monitor-embed`
 /// plugin's `on_navigation` hook intercepts and cancels them BEFORE the request
 /// goes out, then performs the real action (open browser / go to dashboard).
@@ -854,22 +912,24 @@ pub(crate) fn navigate_engine(app: &AppHandle, path: &str) {
         return;
     };
     if let Ok(current) = win.url() {
-        if current.host_str() != Some("engine.tfd.rocks") {
-            log::info!("navigate_engine: captured dashboard URL {current}");
+        if !is_engine_url(&current) {
             *app.state::<DashboardUrl>().0.lock().unwrap() = Some(current);
         }
     }
-    let target = format!("https://engine.tfd.rocks{path}");
-    match target.parse::<tauri::Url>() {
-        Ok(url) if url.host_str() == Some("engine.tfd.rocks") => {
-            if let Err(e) = win.navigate(url) {
-                log::error!("navigate_engine: navigate to {path} failed: {e}");
-            } else {
-                save_last_view(app, if path == "/monitor" { "monitor" } else { "dashboard" });
-            }
+    let (target, return_path, last_view) = match path {
+        "/" => (
+            embedded_session::Target::Dashboard,
+            "/next/dashboard",
+            "dashboard",
+        ),
+        "/monitor" => (embedded_session::Target::Monitor, "/monitor", "monitor"),
+        _ => {
+            log::warn!("navigate_engine: refusing unsupported Engine route");
+            return;
         }
-        _ => log::error!("navigate_engine: refusing bad/non-engine path {path:?}"),
-    }
+    };
+    open_embedded_view(app, "main", target, return_path);
+    save_last_view(app, last_view);
     let _ = win.unminimize();
     let _ = win.show();
     let _ = win.set_focus();
@@ -925,14 +985,7 @@ fn maybe_restore_saved_monitor_view(
             return;
         }
     }
-    match MONITOR_URL.parse::<tauri::Url>() {
-        Ok(url) => {
-            if let Err(e) = win.navigate(url) {
-                log::error!("startup view restore: navigate to monitor failed: {e}");
-            }
-        }
-        Err(e) => log::error!("startup view restore: bad monitor URL: {e}"),
-    }
+    navigate_engine(app, "/monitor");
 }
 
 /// Interactive-safe fallback for a native gate point whose window may
@@ -992,13 +1045,10 @@ fn dispatch_external(app: &AppHandle, raw: &str) {
         return;
     };
     if !matches!(parsed.scheme(), "http" | "https") {
-        log::warn!(
-            "dispatch_external: non-http(s) scheme '{}', ignoring",
-            parsed.scheme()
-        );
+        log::warn!("dispatch_external: non-http(s) scheme, ignoring");
         return;
     }
-    if parsed.host_str() != Some("engine.tfd.rocks") {
+    if !is_engine_url(&parsed) {
         // Foreign host: ALWAYS the system browser, setting or not.
         let _ = app.opener().open_url(parsed.as_str(), None::<&str>);
         return;
@@ -1012,7 +1062,7 @@ fn dispatch_external(app: &AppHandle, raw: &str) {
             let _ = app.opener().open_url(parsed.as_str(), None::<&str>);
         },
         || open_profile_window(app, parsed.as_str()),
-        || navigate_main_in_place(app, parsed.as_str()),
+        || open_engine_web_in_place(app, &parsed),
     );
 }
 
@@ -1062,19 +1112,12 @@ fn dispatch_external_link_target(
 /// like a browser. The live monitor is replaced by the profile and reloads when
 /// the user navigates back: the accepted trade for staying in one window without
 /// the (Windows/WebView2-unstable) multi-webview path.
-fn navigate_main_in_place(app: &AppHandle, url: &str) {
-    let Some(win) = app.get_webview_window("main") else {
-        log::error!("same-window navigate: main window missing");
+fn open_engine_web_in_place(app: &AppHandle, url: &tauri::Url) {
+    let Some(return_path) = engine_return_path(url) else {
+        log::warn!("same-window navigation refused by local return-path guard");
         return;
     };
-    // JSON-encode the URL so it is a safe JS string literal inside location.assign().
-    let script = format!(
-        "location.assign({});",
-        serde_json::to_string(url).unwrap_or_else(|_| "'/monitor'".to_string())
-    );
-    if let Err(e) = win.eval(&script) {
-        log::error!("same-window navigate failed: {e}");
-    }
+    open_embedded_view(app, "main", embedded_session::Target::Web, &return_path);
 }
 
 /// Open an `engine.tfd.rocks` profile link in a NEW frameless top-level in-app
@@ -1097,34 +1140,33 @@ fn navigate_main_in_place(app: &AppHandle, url: &str) {
 /// navigation (link click / `location` set / redirect) cannot load a foreign
 /// origin in this window.
 pub(crate) fn open_profile_window(app: &AppHandle, url: &str) {
+    let Ok(parsed) = tauri::Url::parse(url) else {
+        return;
+    };
+    let Some(return_path) = engine_return_path(&parsed) else {
+        log::warn!("profile window navigation refused by local origin guard");
+        return;
+    };
     let app = app.clone();
-    let url = url.to_string();
     tauri::async_runtime::spawn(async move {
-        let Ok(parsed) = tauri::Url::parse(&url) else {
-            log::error!("open_profile_window: target URL no longer parses: {url}");
-            return;
-        };
         let n = PROFILE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let label = format!("{PROFILE_LABEL_PREFIX}{n}");
-        match tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
-            .title("TFD Bridge — Profile")
-            .inner_size(900.0, 720.0)
-            .min_inner_size(480.0, 400.0)
-            .decorations(false)
-            .focused(true)
-            // SECURITY — origin pin. The
-            // INITIAL load is already engine-only (dispatch_external host-gates
-            // before reaching here), but without this hook a SUBSEQUENT
-            // same-window navigation — a plain `<a>` click, a JS `location`
-            // assignment, or a server redirect — could load a foreign origin
-            // in-app. Returning `false` cancels any navigation off
-            // engine.tfd.rocks, so it is IMPOSSIBLE for a non-engine origin to
-            // load in this window. (`target=_blank` links still route through
-            // MONITOR_EMBED_JS → SENTINEL_EXTERNAL → system browser.)
-            .on_navigation(|u| u.host_str() == Some("engine.tfd.rocks"))
-            .build()
+        // Start local. The only remote navigation is the coordinator's opaque
+        // handoff URL, registered after the window exists and before it loads.
+        match tauri::WebviewWindowBuilder::new(
+            &app,
+            &label,
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("TFD Bridge — Profile")
+        .inner_size(900.0, 720.0)
+        .min_inner_size(480.0, 400.0)
+        .decorations(false)
+        .focused(true)
+        .on_navigation(|u| is_engine_url(u) || u.scheme() == "tauri")
+        .build()
         {
-            Ok(_win) => log::info!("Opened profile window {label}"),
+            Ok(_) => open_embedded_view(&app, &label, embedded_session::Target::Web, &return_path),
             Err(e) => log::error!("open_profile_window failed: {e}"),
         }
     });
@@ -1233,7 +1275,7 @@ pub fn run() {
                     MONITOR_EMBED_JS.replace("__APP_VERSION__", env!("CARGO_PKG_VERSION")),
                 )
                 .on_navigation(|webview, url| {
-                    log::info!("on_navigation: {url}");
+                    log::info!("webview navigation observed");
                     // Remember the local app page as the "Settings" return-target
                     // whenever the webview actually lands on it. This is the
                     // reliable capture point: the setup-time seed can run before the
@@ -1248,8 +1290,12 @@ pub fn run() {
                         && url.host_str() != Some("engine.tfd.rocks")
                         && url.host_str() != Some("127.0.0.1")
                     {
-                        *webview.app_handle().state::<DashboardUrl>().0.lock().unwrap() =
-                            Some(url.clone());
+                        *webview
+                            .app_handle()
+                            .state::<DashboardUrl>()
+                            .0
+                            .lock()
+                            .unwrap() = Some(url.clone());
                     }
                     // Sentinel paths are intercepted on the engine origin AND on
                     // the bridge loopback: RePlayer now lives in the main window,
@@ -1353,6 +1399,13 @@ pub fn run() {
                 }
                 api.prevent_close();
                 let _ = window.hide();
+            }
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let label = window.label().to_owned();
+                let coordinator = window.state::<EmbeddedSessionState>().0.clone();
+                tauri::async_runtime::spawn(async move {
+                    coordinator.close(&label).await;
+                });
             }
         })
         .setup(|app| {
@@ -1578,6 +1631,33 @@ pub fn run() {
                 account::ClientProfile::current(),
             ));
             app.manage(account_service.clone());
+            let backend = Arc::new(webview_backend::TauriWebviewBackend::new(
+                app.handle().clone(),
+            ));
+            let embedded = Arc::new(embedded_session::EmbeddedSession::new(
+                Arc::new(embedded_session::AccountHandoffClient(
+                    account_service.clone(),
+                )),
+                backend.clone(),
+                Arc::new(embedded_session::SystemClock),
+            ));
+            backend.bind(&embedded);
+            app.manage(EmbeddedSessionState(embedded.clone()));
+            // One native lifecycle watch drives all active Engine views. It is
+            // not a UI poll and uses the account service's existing snapshot
+            // stream, including renewal/revocation generation changes.
+            let mut account_watch = account_service.subscribe();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let snapshot = account_watch.borrow_and_update().clone();
+                    embedded
+                        .apply_account(snapshot.can_use_account, snapshot.lifecycle_epoch)
+                        .await;
+                    if account_watch.changed().await.is_err() {
+                        break;
+                    }
+                }
+            });
             let auth_sink: Arc<dyn bridge_core::server::AuthCallbackSink> =
                 Arc::new(account::AccountCallbackSink(account_service.clone()));
             // Same dev-CORS-origin rule as the replays attachment below.
@@ -1589,8 +1669,12 @@ pub fn run() {
             match server::start_with_auth_sink(bridge_dev_origin, auth_sink) {
                 Ok(bridge) => {
                     account_service.set_port(bridge.port());
-                    log::info!("Bridge listener started on port {} (no replays folder attached yet)", bridge.port());
-                    *app.state::<BridgeState>().0.lock().unwrap() = Some(ActiveBridge { path: None, bridge });
+                    log::info!(
+                        "Bridge listener started on port {} (no replays folder attached yet)",
+                        bridge.port()
+                    );
+                    *app.state::<BridgeState>().0.lock().unwrap() =
+                        Some(ActiveBridge { path: None, bridge });
                 }
                 Err(e) => {
                     log::error!("Failed to start the bridge listener: {e}");
@@ -1746,6 +1830,28 @@ mod tests {
         assert_eq!(result.as_deref(), Some("dashboard"));
     }
 
+    #[test]
+    fn embedded_engine_paths_require_exact_https_origin_and_allowlisted_relative_path() {
+        let profile =
+            tauri::Url::parse("https://engine.tfd.rocks/profile/helmi?tab=stats").unwrap();
+        assert_eq!(
+            engine_return_path(&profile).as_deref(),
+            Some("/profile/helmi?tab=stats")
+        );
+        for raw in [
+            "http://engine.tfd.rocks/profile/helmi",
+            "https://engine.tfd.rocks:444/profile/helmi",
+            "https://example.test/profile/helmi",
+            "https://engine.tfd.rocks/admin",
+        ] {
+            assert_eq!(
+                engine_return_path(&tauri::Url::parse(raw).unwrap()),
+                None,
+                "{raw}"
+            );
+        }
+    }
+
     // ── tray version label ────────────────────────────────────────────────────
 
     #[test]
@@ -1890,7 +1996,11 @@ mod tests {
 
     #[test]
     fn restores_monitor_only_when_onboarding_complete_view_saved_and_account_usable() {
-        assert!(should_restore_monitor_view(true, Some("monitor"), &native_connected_snapshot()));
+        assert!(should_restore_monitor_view(
+            true,
+            Some("monitor"),
+            &native_connected_snapshot()
+        ));
     }
 
     #[test]
@@ -1899,18 +2009,34 @@ mod tests {
         // any other disconnected snapshot) must never let the startup
         // restore through, even when onboarding is complete and the saved
         // view is "monitor".
-        assert!(!should_restore_monitor_view(true, Some("monitor"), &native_signed_out_snapshot()));
+        assert!(!should_restore_monitor_view(
+            true,
+            Some("monitor"),
+            &native_signed_out_snapshot()
+        ));
     }
 
     #[test]
     fn does_not_restore_monitor_when_onboarding_incomplete() {
-        assert!(!should_restore_monitor_view(false, Some("monitor"), &native_connected_snapshot()));
+        assert!(!should_restore_monitor_view(
+            false,
+            Some("monitor"),
+            &native_connected_snapshot()
+        ));
     }
 
     #[test]
     fn does_not_restore_monitor_when_saved_view_is_not_monitor() {
-        assert!(!should_restore_monitor_view(true, Some("dashboard"), &native_connected_snapshot()));
-        assert!(!should_restore_monitor_view(true, None, &native_connected_snapshot()));
+        assert!(!should_restore_monitor_view(
+            true,
+            Some("dashboard"),
+            &native_connected_snapshot()
+        ));
+        assert!(!should_restore_monitor_view(
+            true,
+            None,
+            &native_connected_snapshot()
+        ));
     }
 
     // ── Account gate: SENTINEL_EXTERNAL / dispatch_external (td-980190,
@@ -1988,7 +2114,10 @@ mod tests {
     }
 
     fn assert_window_and_same_window_refuse(snapshot: &account::AccountSnapshot) {
-        for target in [link_target::LinkTarget::Window, link_target::LinkTarget::SameWindow] {
+        for target in [
+            link_target::LinkTarget::Window,
+            link_target::LinkTarget::SameWindow,
+        ] {
             let mut browser_called = false;
             let mut window_called = false;
             let mut same_window_called = false;
@@ -1999,9 +2128,18 @@ mod tests {
                 || window_called = true,
                 || same_window_called = true,
             );
-            assert!(!browser_called, "{target:?}: must not fall back to the browser");
-            assert!(!window_called, "{target:?}: must refuse to open a profile window");
-            assert!(!same_window_called, "{target:?}: must refuse to navigate in place");
+            assert!(
+                !browser_called,
+                "{target:?}: must not fall back to the browser"
+            );
+            assert!(
+                !window_called,
+                "{target:?}: must refuse to open a profile window"
+            );
+            assert!(
+                !same_window_called,
+                "{target:?}: must refuse to navigate in place"
+            );
         }
     }
 
@@ -2071,7 +2209,10 @@ mod tests {
                 || panic!("Browser target must never open a profile window"),
                 || panic!("Browser target must never navigate in place"),
             );
-            assert!(browser_called, "Browser target must always run regardless of account state");
+            assert!(
+                browser_called,
+                "Browser target must always run regardless of account state"
+            );
         }
     }
 
@@ -2087,9 +2228,13 @@ mod tests {
         let mut rest = INDEX_HTML;
         while let Some(tag_start) = rest.find("<button") {
             rest = &rest[tag_start..];
-            let Some(open_end) = rest.find('>') else { break };
+            let Some(open_end) = rest.find('>') else {
+                break;
+            };
             let after_open = &rest[open_end + 1..];
-            let Some(close) = after_open.find("</button>") else { break };
+            let Some(close) = after_open.find("</button>") else {
+                break;
+            };
             let inner = after_open[..close].trim();
             let lower = inner.to_ascii_lowercase();
             assert_ne!(lower, "skip", "found a Skip button: {inner:?}");
@@ -2113,7 +2258,10 @@ mod tests {
             "id=\"account-identity-row\"",
             "id=\"account-identity-label\"",
         ] {
-            assert!(INDEX_HTML.contains(id), "expected ui/index.html to define {id}");
+            assert!(
+                INDEX_HTML.contains(id),
+                "expected ui/index.html to define {id}"
+            );
         }
     }
 

@@ -27,7 +27,7 @@ pub trait HandoffClient: Send + Sync {
 
 #[async_trait]
 pub trait WebviewBackend: Send + Sync {
-    async fn navigate_handoff(&self, view: &str, opaque_url: &str) -> Result<(), SessionError>;
+    async fn navigate_handoff(&self, view: &str, opaque_url: &str, incarnation: u64, epoch: u64) -> Result<(), SessionError>;
     async fn navigate_safe(&self, view: &str);
     /// Completes only after the platform has confirmed browsing-data deletion.
     async fn clear_browsing_data(&self, view: &str) -> Result<(), SessionError>;
@@ -130,6 +130,7 @@ impl EmbeddedSession {
             state.usable = usable;
             state.views.iter_mut().map(|(label, view)| {
                 if !usable || changed_identity { view.gated = true; view.needs_clear |= changed_identity; }
+                if changed_identity { view.epoch = epoch; }
                 (label.clone(), view.incarnation, view.epoch, view.gated)
             }).collect::<Vec<_>>()
         };
@@ -197,7 +198,14 @@ impl EmbeddedSession {
             let Some(view) = state.views.get(label) else { return Ok(()); };
             if !state.usable || state.epoch != epoch || view.incarnation != incarnation || ticket.lifecycle_epoch != epoch { return Ok(()); }
         }
-        self.backend.navigate_handoff(label, &ticket.url).await
+        match self.backend.navigate_handoff(label, &ticket.url, incarnation, epoch).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.backend.navigate_safe(label).await;
+                self.backend.recovery_required(label).await;
+                Err(error)
+            }
+        }
     }
 }
 
@@ -214,13 +222,16 @@ mod tests {
     struct Client { tickets: StdMutex<Vec<Result<Ticket, SessionError>>>, calls: StdMutex<Vec<(Target,String)>> }
     #[async_trait] impl HandoffClient for Client { async fn mint(&self, target: Target, path: &str) -> Result<Ticket,SessionError> { self.calls.lock().unwrap().push((target,path.into())); self.tickets.lock().unwrap().remove(0) } }
     struct Backend { events: StdMutex<Vec<String>> }
-    #[async_trait] impl WebviewBackend for Backend { async fn navigate_handoff(&self,v:&str,_:&str)->Result<(),SessionError>{self.events.lock().unwrap().push(format!("nav:{v}"));Ok(())} async fn navigate_safe(&self,v:&str){self.events.lock().unwrap().push(format!("safe:{v}"))} async fn clear_browsing_data(&self,v:&str)->Result<(),SessionError>{self.events.lock().unwrap().push(format!("clear:{v}"));Ok(())} async fn recovery_required(&self,v:&str){self.events.lock().unwrap().push(format!("recovery:{v}"))} }
+    #[async_trait] impl WebviewBackend for Backend { async fn navigate_handoff(&self,v:&str,_:&str,_:u64,_:u64)->Result<(),SessionError>{self.events.lock().unwrap().push(format!("nav:{v}"));Ok(())} async fn navigate_safe(&self,v:&str){self.events.lock().unwrap().push(format!("safe:{v}"))} async fn clear_browsing_data(&self,v:&str)->Result<(),SessionError>{self.events.lock().unwrap().push(format!("clear:{v}"));Ok(())} async fn recovery_required(&self,v:&str){self.events.lock().unwrap().push(format!("recovery:{v}"))} }
     fn setup() -> (EmbeddedSession, Arc<Client>, Arc<Backend>) { let c=Arc::new(Client{tickets:StdMutex::new(vec![]),calls:StdMutex::new(vec![])});let b=Arc::new(Backend{events:StdMutex::new(vec![])});(EmbeddedSession::new(c.clone(),b.clone(),Arc::new(TestClock)),c,b) }
     fn ticket(epoch:u64)->Result<Ticket,SessionError>{Ok(Ticket{url:"opaque".into(),lease_expires_at:60,lifecycle_epoch:epoch})}
     #[tokio::test] async fn refuses_before_mint(){let(s,c,_)=setup();s.apply_account(true,1).await;assert_eq!(s.open("main",Target::Dashboard,"/no",1).await,Err(SessionError::Refused));assert!(c.calls.lock().unwrap().is_empty())}
     #[tokio::test] async fn mints_before_each_supported_view(){let(s,c,b)=setup();c.tickets.lock().unwrap().extend([ticket(1),ticket(1),ticket(1)]);s.apply_account(true,1).await;s.open("main",Target::Dashboard,"/next/dashboard",1).await.unwrap();s.open("monitor",Target::Monitor,"/monitor",1).await.unwrap();s.open("profile-1",Target::Web,"/profile/a",1).await.unwrap();assert_eq!(c.calls.lock().unwrap().len(),3);assert_eq!(b.events.lock().unwrap().iter().filter(|e|e.starts_with("nav")).count(),3);}
     #[tokio::test] async fn ticket_consumed_retries_once(){let(s,c,b)=setup();c.tickets.lock().unwrap().extend([ticket(1),ticket(1)]);s.apply_account(true,1).await;s.open("main",Target::Monitor,"/monitor",1).await.unwrap();s.response("main",1,1,410).await;s.response("main",1,1,410).await;assert_eq!(c.calls.lock().unwrap().len(),2);assert_eq!(b.events.lock().unwrap().iter().filter(|e|e.starts_with("nav")).count(),2);}
     #[tokio::test] async fn recovery_is_distinct_from_retry(){let(s,c,b)=setup();c.tickets.lock().unwrap().push(ticket(1));s.apply_account(true,1).await;s.open("main",Target::Monitor,"/monitor",1).await.unwrap();s.response("main",1,1,401).await;assert_eq!(*b.events.lock().unwrap(),vec!["nav:main","safe:main","recovery:main"]);assert_eq!(c.calls.lock().unwrap().len(),1);}
-    #[tokio::test] async fn stale_callback_cannot_affect_reused_label(){let(s,c,b)=setup();c.tickets.lock().unwrap().extend([ticket(1),ticket(2)]);s.apply_account(true,1).await;s.open("main",Target::Monitor,"/monitor",1).await.unwrap();s.apply_account(true,2).await;s.response("main",1,1,401).await;assert!(!b.events.lock().unwrap().iter().any(|e|e=="recovery:main"));assert_eq!(c.calls.lock().unwrap().len(),2);}
+    #[tokio::test] async fn stale_callback_cannot_affect_reused_label_and_rearm_mints_once(){let(s,c,b)=setup();c.tickets.lock().unwrap().extend([ticket(1),ticket(2)]);s.apply_account(true,1).await;s.open("main",Target::Monitor,"/monitor",1).await.unwrap();s.apply_account(true,2).await;s.response("main",1,1,401).await;s.response("main",1,2,302).await;assert!(!b.events.lock().unwrap().iter().any(|e|e=="recovery:main"));assert_eq!(c.calls.lock().unwrap().len(),2);assert_eq!(b.events.lock().unwrap().iter().filter(|e|e.starts_with("nav")).count(),2);}
     #[tokio::test] async fn lapse_stops_then_serially_clears_all_views(){let(s,c,b)=setup();c.tickets.lock().unwrap().extend([ticket(1),ticket(1)]);s.apply_account(true,1).await;s.open("main",Target::Dashboard,"/next/dashboard",1).await.unwrap();s.open("profile-1",Target::Web,"/profile/a",1).await.unwrap();s.apply_account(false,2).await;let e=b.events.lock().unwrap().clone();assert!(e.iter().position(|x|x=="safe:main").unwrap()<e.iter().position(|x|x=="clear:main").unwrap());assert!(e.contains(&"clear:profile-1".into()))}
+    struct FailingBackend { events: StdMutex<Vec<String>> }
+    #[async_trait] impl WebviewBackend for FailingBackend { async fn navigate_handoff(&self,_:&str,_:&str,_:u64,_:u64)->Result<(),SessionError>{Err(SessionError::Unreachable)} async fn navigate_safe(&self,v:&str){self.events.lock().unwrap().push(format!("safe:{v}"))} async fn clear_browsing_data(&self,_:&str)->Result<(),SessionError>{Ok(())} async fn recovery_required(&self,v:&str){self.events.lock().unwrap().push(format!("recovery:{v}"))} }
+    #[tokio::test] async fn navigation_failure_uses_the_shared_recovery_route(){let c=Arc::new(Client{tickets:StdMutex::new(vec![ticket(1)]),calls:StdMutex::new(vec![])});let b=Arc::new(FailingBackend{events:StdMutex::new(vec![])});let s=EmbeddedSession::new(c,b.clone(),Arc::new(TestClock));s.apply_account(true,1).await;assert_eq!(s.open("main",Target::Monitor,"/monitor",1).await,Err(SessionError::Unreachable));assert_eq!(*b.events.lock().unwrap(),vec!["safe:main","recovery:main"]);}
 }

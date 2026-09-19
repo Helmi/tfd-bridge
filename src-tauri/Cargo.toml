@@ -66,6 +66,11 @@ tempfile = "3"
 # `Debug`/`Serialize` impl to accidentally leak it through.
 static_assertions = "1"
 
+[target.'cfg(windows)'.dependencies]
+webview2-com = "=0.38.2"
+windows = { version = "=0.61.3", features = ["Win32_System_Com"] }
+windows-core = "=0.61.2"
+
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2.5.1"
 # Single-instance guard: a second launch exits immediately and hands its argv

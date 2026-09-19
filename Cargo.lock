@@ -5893,6 +5893,9 @@ dependencies = [
  "tempfile",
  "tiny_http",
  "tokio",
+ "webview2-com",
+ "windows",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
