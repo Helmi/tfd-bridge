@@ -1,6 +1,9 @@
 //! Owns authorized jobs independently of the Engine tab and Replayer window.
 use crate::{
-    video_share::{AuthorizedShare, DeliveryState, VideoMetadata, VideoShareClient},
+    video_share::{
+        AuthorizedShare, DeliveryState, DeliveryStatus, VideoMetadata, VideoShareClient,
+        VideoShareTransport,
+    },
     video_upload::PreparedVideo,
 };
 use bridge_core::{
@@ -12,6 +15,8 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
+    future::Future,
+    pin::Pin,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
@@ -32,7 +37,28 @@ impl AccountSnapshots for crate::account::AccountService {
 }
 
 type Clock = Arc<dyn Fn() -> SystemTime + Send + Sync>;
-type VideoClientFactory = Arc<dyn Fn() -> Result<VideoShareClient, ()> + Send + Sync>;
+type VideoClientFactory = Arc<dyn Fn() -> Result<Arc<dyn VideoShareTransport>, ()> + Send + Sync>;
+type ReplayEvidenceReader = Arc<
+    dyn Fn(std::path::PathBuf) -> Result<bridge_core::replay_identity::ReplayEvidence, ()>
+        + Send
+        + Sync,
+>;
+type SleepFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+type Sleeper = Arc<dyn Fn(Duration) -> SleepFuture + Send + Sync>;
+
+/// Never relay arbitrary Engine text to the local page or logs. These are the
+/// public contract codes the player can turn into user-facing copy.
+fn delivery_error(status: &DeliveryStatus, fallback: &str) -> String {
+    match status.error.as_deref() {
+        Some(
+            "not_battle_owner"
+            | "recorder_realm_mismatch"
+            | "recorder_account_mismatch"
+            | "capability_revoked",
+        ) => status.error.clone().unwrap(),
+        _ => fallback.into(),
+    }
+}
 
 trait AuthorizationOpener: Send + Sync {
     fn open_authorization(&self, url: &str) -> bool;
@@ -83,6 +109,8 @@ pub struct Coordinator {
     account: Arc<dyn AccountSnapshots>,
     clock: Clock,
     video_client: VideoClientFactory,
+    replay_evidence: ReplayEvidenceReader,
+    sleep: Sleeper,
     entries: Arc<Mutex<HashMap<String, Value>>>,
     preflights: Arc<Mutex<HashMap<String, PreflightBinding>>>,
     active_jobs: Arc<Mutex<HashMap<String, ActiveJob>>>,
@@ -121,7 +149,15 @@ impl Coordinator {
             account,
             snapshots,
             Arc::new(SystemTime::now),
-            Arc::new(|| VideoShareClient::new().map_err(|_| ())),
+            Arc::new(|| {
+                VideoShareClient::new()
+                    .map(|client| Arc::new(client) as Arc<dyn VideoShareTransport>)
+                    .map_err(|_| ())
+            }),
+            Arc::new(|path| {
+                bridge_core::replay_identity::read_replay_evidence(path).map_err(|_| ())
+            }),
+            Arc::new(|duration| Box::pin(tokio::time::sleep(duration))),
         )
     }
 
@@ -132,6 +168,8 @@ impl Coordinator {
         mut snapshots: tokio::sync::watch::Receiver<crate::account::AccountSnapshot>,
         clock: Clock,
         video_client: VideoClientFactory,
+        replay_evidence: ReplayEvidenceReader,
+        sleep: Sleeper,
     ) -> Self {
         let active_jobs: Arc<Mutex<HashMap<String, ActiveJob>>> = Default::default();
         let watched = active_jobs.clone();
@@ -149,6 +187,8 @@ impl Coordinator {
             account,
             clock,
             video_client,
+            replay_evidence,
+            sleep,
             entries: Default::default(),
             preflights: Default::default(),
             active_jobs,
@@ -302,6 +342,8 @@ impl ShareService for Coordinator {
         let active_jobs = self.active_jobs.clone();
         let clock = self.clock.clone();
         let video_client = self.video_client.clone();
+        let replay_evidence = self.replay_evidence.clone();
+        let sleep = self.sleep.clone();
         let task_id = id.clone();
         let task = async move {
             let account_valid = || {
@@ -328,10 +370,20 @@ impl ShareService for Coordinator {
                 let client=(video_client)().map_err(|_|"engine_unavailable")?;
                 let initial=client.status(&auth).await.map_err(|_|"authorization_rejected")?;
                 if !account_valid() { return Err("account_lifecycle_changed".into()); }
-                if !matches!(initial.status,DeliveryState::Authorized|DeliveryState::Uploading) {return Err("share_not_authorized".into())}
+                match initial.status {
+                    DeliveryState::Authorized | DeliveryState::Uploading => {}
+                    DeliveryState::Failed | DeliveryState::Expired => {
+                        return Err(delivery_error(&initial, "authorization_rejected"));
+                    }
+                    _ => return Err("share_not_authorized".into()),
+                }
                 update("resolving",json!({}));
                 let name=tauri::async_runtime::spawn_blocking(resolve).await.map_err(|_|"replay_resolution_failed")??;
-                let evidence=tauri::async_runtime::spawn_blocking({ let path=canonical_path.clone(); move || bridge_core::replay_identity::read_replay_evidence(path) }).await.map_err(|_|"replay_unavailable")?.map_err(|_|"replay_replaced")?;
+                let evidence=tauri::async_runtime::spawn_blocking({
+                    let path=canonical_path.clone();
+                    let replay_evidence=replay_evidence.clone();
+                    move || replay_evidence(path)
+                }).await.map_err(|_|"replay_unavailable")?.map_err(|_|"replay_replaced")?;
                 if evidence.artifact.source_sha256_hex()!=expected_sha || !account_valid() { return Err("account_lifecycle_changed".into()); }
                 if (clock)()>=expiry {return Err("authorization_expired".into())}
                 let start=jobs.lock().unwrap().start(RenderRequest{replay_name:name,share_id:Some(claim.share_id.clone()),arena_unique_id:Some(expected_arena.clone()),max_bytes:Some(claim.max_bytes),preflight_id:Some(preflight_id.clone()),source_sha256:Some(expected_sha.clone()),video_options:None}).map_err(|_|"render_busy")?;
@@ -350,7 +402,7 @@ impl ShareService for Coordinator {
                     if matches!(s.state,RenderState::Failed|RenderState::Cancelled){return Err("render_failed".into())}
                     if (clock)()>=expiry {let _=jobs.lock().unwrap().cancel(&job_id);return Err("authorization_expired".into())}
                     update("rendering",json!({"job_id":job_id,"frame":s.frame,"total":s.total,"attempt":s.attempt}));
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    (sleep)(Duration::from_secs(1)).await;
                 };
                 if !account_valid() { return Err("account_lifecycle_changed".into()); }
                 let info=rendered.video.ok_or("missing_video_metadata")?;
@@ -363,7 +415,9 @@ impl ShareService for Coordinator {
                     // A completion response can be lost after Engine queued it.
                     let remote=client.status(&auth).await.map_err(|_|"upload_failed")?;
                     if !account_valid() { return Err("account_lifecycle_changed".into()); }
-                    if !matches!(remote.status,DeliveryState::Queued|DeliveryState::Posting|DeliveryState::Posted){return Err("upload_failed".into())}
+                    if !matches!(remote.status,DeliveryState::Queued|DeliveryState::Posting|DeliveryState::Posted){
+                        return Err(delivery_error(&remote, "upload_failed"));
+                    }
                 }
                 if !account_valid() { return Err("account_lifecycle_changed".into()); }
                 update("queued",json!({"job_id":job_id}));
@@ -373,10 +427,13 @@ impl ShareService for Coordinator {
                     let remote=client.status(&auth).await.map_err(|_|"status_unavailable")?;
                     if !account_valid() { return Err("account_lifecycle_changed".into()); }
                     let state=serde_json::to_value(&remote.status).unwrap();
+                    let error=if matches!(remote.status, DeliveryState::Failed) {
+                        Some(delivery_error(&remote, "delivery_failed"))
+                    } else { None };
                     let url=remote.message_url.filter(|s|s.starts_with("https://discord.com/channels/"));
-                    update(state.as_str().unwrap(),json!({"job_id":job_id,"message_url":url}));
+                    update(state.as_str().unwrap(),json!({"job_id":job_id,"message_url":url,"error":error}));
                     if matches!(remote.status,DeliveryState::Posted|DeliveryState::Failed|DeliveryState::Expired){return Ok(())}
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    (sleep)(Duration::from_secs(10)).await;
                 }
             }.await;
             active_jobs.lock().unwrap().remove(&task_id);
@@ -393,7 +450,12 @@ impl ShareService for Coordinator {
 mod tests {
     use super::*;
     use crate::account::{AccountSnapshot, AccountStatus};
+    use crate::video_share::ShareFuture;
     use bridge_core::replay_identity::{RecorderIdentity, ReplayArtifact, ReplayEvidence};
+    use std::{
+        collections::VecDeque,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     struct FakeAccount {
         snapshots: tokio::sync::watch::Sender<AccountSnapshot>,
@@ -443,6 +505,94 @@ mod tests {
         }
     }
 
+    enum StatusStep {
+        Reply(DeliveryStatus),
+        Wait {
+            entered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+            reply: DeliveryStatus,
+        },
+    }
+
+    struct UploadStep {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    struct ScriptedVideoClient {
+        statuses: Mutex<VecDeque<StatusStep>>,
+        status_calls: AtomicUsize,
+        upload_calls: AtomicUsize,
+        upload_wait: Mutex<Option<UploadStep>>,
+    }
+
+    impl ScriptedVideoClient {
+        fn new(statuses: Vec<StatusStep>) -> Self {
+            Self {
+                statuses: Mutex::new(statuses.into()),
+                status_calls: AtomicUsize::new(0),
+                upload_calls: AtomicUsize::new(0),
+                upload_wait: Mutex::new(None),
+            }
+        }
+
+        fn wait_during_upload(
+            &self,
+            entered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+        ) {
+            *self.upload_wait.lock().unwrap() = Some(UploadStep { entered, release });
+        }
+    }
+
+    impl VideoShareTransport for ScriptedVideoClient {
+        fn status<'a>(&'a self, _: &'a AuthorizedShare) -> ShareFuture<'a, DeliveryStatus> {
+            self.status_calls.fetch_add(1, Ordering::SeqCst);
+            let step = self.statuses.lock().unwrap().pop_front();
+            Box::pin(async move {
+                match step.expect("unexpected status request") {
+                    StatusStep::Reply(status) => Ok(status),
+                    StatusStep::Wait {
+                        entered,
+                        release,
+                        reply,
+                    } => {
+                        entered.notify_one();
+                        release.notified().await;
+                        Ok(reply)
+                    }
+                }
+            })
+        }
+
+        fn upload<'a>(
+            &'a self,
+            _: &'a AuthorizedShare,
+            _: PreparedVideo,
+            _: VideoMetadata,
+        ) -> ShareFuture<'a, ()> {
+            self.upload_calls.fetch_add(1, Ordering::SeqCst);
+            let wait = self.upload_wait.lock().unwrap().take();
+            Box::pin(async move {
+                if let Some(wait) = wait {
+                    wait.entered.notify_one();
+                    wait.release.notified().await;
+                }
+                Ok(())
+            })
+        }
+    }
+
+    fn delivery(status: DeliveryState, error: Option<&str>) -> DeliveryStatus {
+        DeliveryStatus {
+            status,
+            attempt: 1,
+            message_url: None,
+            error: error.map(str::to_owned),
+            capability_expires_at: None,
+        }
+    }
+
     fn dispatcher() -> RenderDispatcher {
         Arc::new(|_, _, _| Ok(()))
     }
@@ -460,11 +610,45 @@ mod tests {
             watch,
             Arc::new(move || *now.lock().unwrap()),
             Arc::new(|| Err(())),
+            Arc::new(|_| Err(())),
+            Arc::new(|_| Box::pin(async {})),
         )
     }
 
     fn coordinator(account: Arc<FakeAccount>, now: Arc<Mutex<SystemTime>>) -> Coordinator {
         coordinator_with_opener(account, now, Arc::new(FakeAuthorizationOpener::default()))
+    }
+
+    fn coordinator_with_transport(
+        account: Arc<FakeAccount>,
+        now: Arc<Mutex<SystemTime>>,
+        transport: Arc<dyn VideoShareTransport>,
+        dispatch: RenderDispatcher,
+        replay_evidence: ReplayEvidenceReader,
+    ) -> Coordinator {
+        let watch = account.subscribe();
+        Coordinator::with_dependencies(
+            Arc::new(FakeAuthorizationOpener::default()),
+            dispatch,
+            account,
+            watch,
+            Arc::new(move || *now.lock().unwrap()),
+            Arc::new(move || Ok(transport.clone())),
+            replay_evidence,
+            Arc::new(|_| Box::pin(tokio::task::yield_now())),
+        )
+    }
+
+    async fn wait_for_state(coordinator: &Coordinator, id: &str, state: &str) -> Value {
+        for _ in 0..1000 {
+            if let Some(value) = coordinator.status(id) {
+                if value["state"] == state {
+                    return value;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("coordinator did not reach {state}");
     }
 
     #[test]
@@ -740,5 +924,296 @@ mod tests {
                 .state,
             RenderState::Cancelled
         );
+    }
+    #[test]
+    fn delivery_errors_are_strictly_whitelisted() {
+        for code in [
+            "not_battle_owner",
+            "recorder_realm_mismatch",
+            "recorder_account_mismatch",
+            "capability_revoked",
+        ] {
+            assert_eq!(
+                delivery_error(
+                    &delivery(DeliveryState::Failed, Some(code)),
+                    "delivery_failed"
+                ),
+                code
+            );
+        }
+        assert_eq!(
+            delivery_error(
+                &delivery(
+                    DeliveryState::Failed,
+                    Some("Engine said: capability=secret")
+                ),
+                "delivery_failed"
+            ),
+            "delivery_failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn initial_engine_rejection_is_exposed_only_as_a_safe_code() {
+        for (engine_error, expected) in [
+            (Some("not_battle_owner"), "not_battle_owner"),
+            (
+                Some("raw Engine rejection with secret context"),
+                "authorization_rejected",
+            ),
+        ] {
+            let file = tempfile::NamedTempFile::new().unwrap();
+            let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+            let now = Arc::new(Mutex::new(SystemTime::now()));
+            let transport = Arc::new(ScriptedVideoClient::new(vec![StatusStep::Reply(delivery(
+                DeliveryState::Failed,
+                engine_error,
+            ))]));
+            let coordinator = coordinator_with_transport(
+                account,
+                now,
+                transport,
+                dispatcher(),
+                Arc::new(|_| Err(())),
+            );
+            let preflight = coordinator
+                .preflight(
+                    "battle.wowsreplay".into(),
+                    "9007199254740993".into(),
+                    evidence(file.path(), 42),
+                )
+                .unwrap();
+            let id = coordinator
+                .start(
+                    claim(
+                        Some("battle.wowsreplay"),
+                        "9007199254740993",
+                        Some(preflight.preflight_id),
+                    ),
+                    Box::new(|| Ok("battle.wowsreplay".into())),
+                    43210,
+                    Arc::new(Mutex::new(RenderJobs::default())),
+                )
+                .unwrap();
+            assert_eq!(
+                wait_for_state(&coordinator, &id, "failed").await["error"],
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn account_change_while_initial_status_waits_cannot_render_or_upload() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+        let now = Arc::new(Mutex::new(SystemTime::now()));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let transport = Arc::new(ScriptedVideoClient::new(vec![StatusStep::Wait {
+            entered: entered.clone(),
+            release: release.clone(),
+            reply: delivery(DeliveryState::Authorized, None),
+        }]));
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let dispatch_count = dispatches.clone();
+        let dispatch: RenderDispatcher = Arc::new(move |_, _, _| {
+            dispatch_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        let coordinator = coordinator_with_transport(
+            account.clone(),
+            now,
+            transport.clone(),
+            dispatch,
+            Arc::new(|_| Err(())),
+        );
+        let preflight = coordinator
+            .preflight(
+                "battle.wowsreplay".into(),
+                "9007199254740993".into(),
+                evidence(file.path(), 42),
+            )
+            .unwrap();
+        let id = coordinator
+            .start(
+                claim(
+                    Some("battle.wowsreplay"),
+                    "9007199254740993",
+                    Some(preflight.preflight_id),
+                ),
+                Box::new(|| Ok("battle.wowsreplay".into())),
+                43210,
+                Arc::new(Mutex::new(RenderJobs::default())),
+            )
+            .unwrap();
+        entered.notified().await;
+        account.set(snapshot(Some(99), 4, true));
+        release.notify_one();
+        let final_status = wait_for_state(&coordinator, &id, "failed").await;
+        assert_eq!(final_status["error"], "account_lifecycle_changed");
+        assert_eq!(dispatches.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.upload_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn account_change_during_upload_cannot_poll_or_publish_the_old_result() {
+        let replay = tempfile::NamedTempFile::new().unwrap();
+        let video = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(video.path(), b"\0\0\0\x18ftypisom\0\0\0\0isomavc1").unwrap();
+        let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+        let now = Arc::new(Mutex::new(SystemTime::now()));
+        let upload_entered = Arc::new(tokio::sync::Notify::new());
+        let upload_release = Arc::new(tokio::sync::Notify::new());
+        let transport = Arc::new(ScriptedVideoClient::new(vec![StatusStep::Reply(delivery(
+            DeliveryState::Authorized,
+            None,
+        ))]));
+        transport.wait_during_upload(upload_entered.clone(), upload_release.clone());
+        let (workers, mut received_workers) = tokio::sync::mpsc::unbounded_channel();
+        let dispatch: RenderDispatcher = Arc::new(move |_, worker, jobs| {
+            workers.send((worker, jobs)).unwrap();
+            Ok(())
+        });
+        let replay_path = replay.path().to_path_buf();
+        let coordinator = coordinator_with_transport(
+            account.clone(),
+            now,
+            transport.clone(),
+            dispatch,
+            Arc::new(move |_| Ok(evidence(&replay_path, 42))),
+        );
+        let preflight = coordinator
+            .preflight(
+                "battle.wowsreplay".into(),
+                "9007199254740993".into(),
+                evidence(replay.path(), 42),
+            )
+            .unwrap();
+        let expected_hash = hex::encode([7; 32]);
+        let id = coordinator
+            .start(
+                claim(
+                    Some("battle.wowsreplay"),
+                    "9007199254740993",
+                    Some(preflight.preflight_id.clone()),
+                ),
+                Box::new(|| Ok("battle.wowsreplay".into())),
+                43210,
+                Arc::new(Mutex::new(RenderJobs::default())),
+            )
+            .unwrap();
+        let (worker, jobs) = received_workers.recv().await.unwrap();
+        let request = jobs.lock().unwrap().request_for_worker(&worker).unwrap();
+        assert_eq!(
+            request.preflight_id.as_deref(),
+            Some(preflight.preflight_id.as_str())
+        );
+        assert_eq!(
+            request.source_sha256.as_deref(),
+            Some(expected_hash.as_str())
+        );
+        let mut jobs_guard = jobs.lock().unwrap();
+        jobs_guard.claim(&worker).unwrap();
+        jobs_guard
+            .video_info(
+                &worker,
+                bridge_core::render_jobs::VideoInfo {
+                    duration_s: 1.0,
+                    width: 1920,
+                    height: 1080,
+                },
+            )
+            .unwrap();
+        jobs_guard
+            .rendered(&worker, video.path().to_path_buf(), 24)
+            .unwrap();
+        drop(jobs_guard);
+        upload_entered.notified().await;
+        account.set(snapshot(Some(99), 4, true));
+        upload_release.notify_one();
+        let final_status = wait_for_state(&coordinator, &id, "failed").await;
+        assert_eq!(final_status["error"], "account_lifecycle_changed");
+        assert_eq!(transport.status_calls.load(Ordering::SeqCst), 1);
+        assert!(final_status.get("message_url").is_none());
+    }
+
+    #[tokio::test]
+    async fn final_engine_rejection_is_mapped_and_unknown_error_is_redacted() {
+        for (remote_state, engine_error, expected_state, expected_error) in [
+            (
+                DeliveryState::Failed,
+                Some("capability_revoked"),
+                "failed",
+                Some("capability_revoked"),
+            ),
+            (
+                DeliveryState::Failed,
+                Some("internal remote detail"),
+                "failed",
+                Some("delivery_failed"),
+            ),
+            (DeliveryState::Posted, None, "posted", None),
+        ] {
+            let replay = tempfile::NamedTempFile::new().unwrap();
+            let video = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(video.path(), b"\0\0\0\x18ftypisom\0\0\0\0isomavc1").unwrap();
+            let account = Arc::new(FakeAccount::new(snapshot(Some(42), 3, true)));
+            let now = Arc::new(Mutex::new(SystemTime::now()));
+            let transport = Arc::new(ScriptedVideoClient::new(vec![
+                StatusStep::Reply(delivery(DeliveryState::Authorized, None)),
+                StatusStep::Reply(delivery(remote_state, engine_error)),
+            ]));
+            let (workers, mut received_workers) = tokio::sync::mpsc::unbounded_channel();
+            let dispatch: RenderDispatcher = Arc::new(move |_, worker, jobs| {
+                workers.send((worker, jobs)).unwrap();
+                Ok(())
+            });
+            let replay_path = replay.path().to_path_buf();
+            let coordinator = coordinator_with_transport(
+                account,
+                now,
+                transport,
+                dispatch,
+                Arc::new(move |_| Ok(evidence(&replay_path, 42))),
+            );
+            let preflight = coordinator
+                .preflight(
+                    "battle.wowsreplay".into(),
+                    "9007199254740993".into(),
+                    evidence(replay.path(), 42),
+                )
+                .unwrap();
+            let id = coordinator
+                .start(
+                    claim(
+                        Some("battle.wowsreplay"),
+                        "9007199254740993",
+                        Some(preflight.preflight_id),
+                    ),
+                    Box::new(|| Ok("battle.wowsreplay".into())),
+                    43210,
+                    Arc::new(Mutex::new(RenderJobs::default())),
+                )
+                .unwrap();
+            let (worker, jobs) = received_workers.recv().await.unwrap();
+            let mut jobs_guard = jobs.lock().unwrap();
+            jobs_guard.claim(&worker).unwrap();
+            jobs_guard
+                .video_info(
+                    &worker,
+                    bridge_core::render_jobs::VideoInfo {
+                        duration_s: 1.0,
+                        width: 1920,
+                        height: 1080,
+                    },
+                )
+                .unwrap();
+            jobs_guard
+                .rendered(&worker, video.path().to_path_buf(), 24)
+                .unwrap();
+            drop(jobs_guard);
+            let final_status = wait_for_state(&coordinator, &id, expected_state).await;
+            assert_eq!(final_status["error"].as_str(), expected_error);
+        }
     }
 }

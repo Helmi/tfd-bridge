@@ -5,6 +5,8 @@ use reqwest::{Client, Method, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    future::Future,
+    pin::Pin,
     time::{Duration, SystemTime},
 };
 
@@ -141,6 +143,19 @@ pub struct DeliveryStatus {
     pub capability_expires_at: Option<String>,
 }
 
+/// Narrow transport seam for the coordinator. Production keeps all HTTP and
+/// capability handling in `VideoShareClient`; tests supply deterministic calls.
+pub type ShareFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ShareError>> + Send + 'a>>;
+pub trait VideoShareTransport: Send + Sync {
+    fn status<'a>(&'a self, share: &'a AuthorizedShare) -> ShareFuture<'a, DeliveryStatus>;
+    fn upload<'a>(
+        &'a self,
+        share: &'a AuthorizedShare,
+        video: PreparedVideo,
+        metadata: VideoMetadata,
+    ) -> ShareFuture<'a, ()>;
+}
+
 pub struct VideoShareClient {
     client: Client,
     base: Url,
@@ -275,6 +290,21 @@ impl VideoShareClient {
 
     pub async fn status(&self, share: &AuthorizedShare) -> Result<DeliveryStatus, ShareError> {
         Self::json(self.request(share, Method::GET, "", None).await?).await
+    }
+}
+
+impl VideoShareTransport for VideoShareClient {
+    fn status<'a>(&'a self, share: &'a AuthorizedShare) -> ShareFuture<'a, DeliveryStatus> {
+        Box::pin(VideoShareClient::status(self, share))
+    }
+
+    fn upload<'a>(
+        &'a self,
+        share: &'a AuthorizedShare,
+        video: PreparedVideo,
+        metadata: VideoMetadata,
+    ) -> ShareFuture<'a, ()> {
+        Box::pin(VideoShareClient::upload(self, share, video, metadata))
     }
 }
 
