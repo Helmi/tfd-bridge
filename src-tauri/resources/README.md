@@ -35,10 +35,23 @@ no short "index" code like ships have; the `PCH###` prefix alone is
 meaningless without the descriptive suffix). Unknown ids (achievements added in
 a newer patch) fall back to the stringified integer id — nothing is lost.
 
+## bonus_index.json
+
+`economic-bonus id → { index, kind, modifiers, name, rarity }` for the economic
+boosters (`kind: "booster"`, GameParams species `Camoboost`, `PCEA*`) and
+permanent ship/commander bonuses (`kind: "permanent"`, species `Multiboost`,
+`PCEU*`), distilled from the game's `GameParams` via
+`private-sync/notes/xp-analysis/build_bonus_index.py`. Resolves the numeric ids
+in the owner's private `subtotal_economics` chains (`economic_bonuses`,
+`economic_breakdown`). An id missing here still appears in
+`economic_breakdown` as `kind: "unknown"` with its applied factor.
+
 ## Refreshing for a new game patch
 
-Re-copy `constants.json` from the upstream toolkit and regenerate
-`ship_index.json` / `achievement_index.json` from the current game build:
+Re-copy `constants.json` from upstream (per build:
+`https://raw.githubusercontent.com/landaire/wows-replay-data/main/<version>_<build>/constants.json`)
+and regenerate `ship_index.json` / `achievement_index.json` / `bonus_index.json`
+from the current game build:
 
 ```sh
 cp <wows-toolkit>/embedded_resources/constants.json ./constants.json

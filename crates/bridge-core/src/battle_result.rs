@@ -30,7 +30,7 @@ use wowsunpack::rpc::entitydefs::EntitySpec;
 // ── Known-good version set ─────────────────────────────────────────────────────
 
 /// Pairs (major, minor) for which the bundled constants + parser are confirmed good.
-const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 4), (15, 5)];
+const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 4), (15, 5), (15, 6), (15, 7), (15, 8)];
 
 // ── Output structs ─────────────────────────────────────────────────────────────
 
@@ -215,6 +215,16 @@ pub struct BattlePlayer {
     /// `Some([])` on the owner row when none were active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub economic_bonuses: Option<Vec<EconomicBonus>>,
+    /// Schema 1.9: OWNER-ONLY applied bonus breakdown, keyed by currency
+    /// (`credits`, `ship_exp`, `free_exp`, `crew_exp`, … from constants'
+    /// `SUBTOTAL_ECONOMICS`). Each line is one bonus source with the factor the
+    /// game actually applied this battle, read straight from the private
+    /// `subtotal_economics` chains — independent of `bonus_index.json`, so an
+    /// unknown booster still appears (as `kind: "unknown"`) with its real
+    /// factor. Only currencies with at least one line are present. `None` on
+    /// non-owner rows; `Some({})` on the owner row when no bonus applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub economic_breakdown: Option<std::collections::BTreeMap<String, Vec<EconomyLine>>>,
 
     // ── Schema 1.6 addition (full ribbon set) ───────────────────────────────
     /// Every ribbon this player earned this battle, keyed by the game's own
@@ -385,6 +395,31 @@ pub struct EconomicBonus {
     /// Category → multiplier, e.g. `{"expFactor": 2.0}` (+100% ship XP) or
     /// `{"creditsFactor": 1.2, "expFactor": 2.0, ...}` for a multi-bonus.
     pub modifiers: std::collections::BTreeMap<String, f64>,
+}
+
+/// Schema 1.9: one applied bonus line of the owner's economic breakdown (one
+/// entry of a `subtotal_economics` chain). Line order follows the game's
+/// results screen: `mod` entries (boosters / permanent bonuses), then `base`
+/// (daily first win, clan supply, …), then `sse` (mission bonuses).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct EconomyLine {
+    /// `"booster"` / `"permanent"` (a `mod` id resolved via `bonus_index.json`),
+    /// `"unknown"` (a `mod` id not in the bundled index), `"base"` or `"sse"`
+    /// (named sources, e.g. `FIRST_WIN`, `CLAN_SUPPLY_BONUS`, `MGS-…`).
+    pub kind: String,
+    /// GameParams name for resolved ids (e.g. `"PCEA015_CRboost_5"`), the WG
+    /// source name for `base`/`sse`, or the stringified id when unknown.
+    pub source: String,
+    /// GameParams index (`"PCEA015"`) for resolved ids — the engine's icon key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<String>,
+    /// Applied bonus fraction: `4.8` = +480% (a booster's GameParams
+    /// multiplier minus 1).
+    pub factor: f64,
+    /// Raw 4th chain value when non-zero (seen only on `sse` entries, e.g.
+    /// `750000`; likely a per-battle cap — meaning unverified).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
 }
 
 /// Schema 1.7: a player's ship + commander loadout from the battle-start
@@ -726,6 +761,10 @@ pub struct Tables {
     /// COMMON_ECONOMICS_INDICES (name → index) for the owner-only common-economics
     /// array (schema 1.3 expenses + premium multipliers).
     pub common_economics_indices: HashMap<String, usize>,
+    /// SUBTOTAL_ECONOMICS: ordered currency names of the owner's six
+    /// `subtotal_economics` modifier chains (`elite_exp`, `free_exp`,
+    /// `ship_exp`, `credits`, `crew_exp`, `acc_level`) — schema 1.9.
+    pub subtotal_economics: Vec<String>,
     pub ships: HashMap<String, ShipInfo>,
     /// achievement_id (as string) → WG name, from `achievement_index.json`.
     /// Flat map — unlike `ships`, achievements carry no tier/class enrichment.
@@ -853,6 +892,16 @@ impl Tables {
                 }
             }
         }
+
+        // SUBTOTAL_ECONOMICS: ordered currency names of the subtotal_economics
+        // chains (owner-only applied bonus breakdown, schema 1.9).
+        let subtotal_economics: Vec<String> = constants
+            .get("SUBTOTAL_ECONOMICS")
+            .and_then(|v| v.as_array())
+            .unwrap_or(&vec![])
+            .iter()
+            .map(|v| v.as_str().unwrap_or("").to_string())
+            .collect();
 
         // ── ship_index.json ───────────────────────────────────────────────────
         let ship_bytes = fs::read(ship_index_path)
@@ -995,6 +1044,7 @@ impl Tables {
             private_results,
             init_economics_indices,
             common_economics_indices,
+            subtotal_economics,
             ships,
             achievements,
             bonus_index,
@@ -1916,7 +1966,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.8".into(),
+            schema_version: "1.9".into(),
             arena_unique_id,
             map_name,
             game_version,
@@ -2312,6 +2362,74 @@ pub(crate) fn resolve_player(
         None
     };
 
+    // ── Schema 1.9: owner-only applied economic breakdown ───────────────────────
+    // Same chains as above, but every entry is kept with the factor the game
+    // applied, keyed by currency name (SUBTOTAL_ECONOMICS order). Entries are
+    // [source, factor, flag, limit]; `source` is a GameParams id in `mod` and a
+    // WG name string in `base`/`sse`.
+    let economic_breakdown = if is_self {
+        let chains = tables
+            .private_results
+            .iter()
+            .position(|name| name == "subtotal_economics")
+            .and_then(|i| private_for_owner.and_then(|pd| pd.get(i)))
+            .and_then(|v| v.as_array());
+        let mut map = std::collections::BTreeMap::new();
+        for (chain, currency) in chains.into_iter().flatten().zip(&tables.subtotal_economics) {
+            let mut lines = Vec::new();
+            for part in ["mod", "base", "sse"] {
+                let Some(entries) = chain.get(part).and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                for entry in entries {
+                    let Some(e) = entry.as_array() else { continue };
+                    let Some(factor) = e.get(1).and_then(|v| v.as_f64()) else {
+                        continue;
+                    };
+                    let limit = e.get(3).and_then(to_i64_tolerant).filter(|&l| l != 0);
+                    let line = match e.first() {
+                        Some(serde_json::Value::String(name)) => EconomyLine {
+                            kind: part.to_string(),
+                            source: name.clone(),
+                            index: None,
+                            factor,
+                            limit,
+                        },
+                        Some(v) => {
+                            let Some(id) = to_i64_tolerant(v) else {
+                                continue;
+                            };
+                            match tables.bonus_index.get(&id) {
+                                Some(info) => EconomyLine {
+                                    kind: info.kind.clone(),
+                                    source: info.name.clone(),
+                                    index: Some(info.index.clone()),
+                                    factor,
+                                    limit,
+                                },
+                                None => EconomyLine {
+                                    kind: "unknown".into(),
+                                    source: id.to_string(),
+                                    index: None,
+                                    factor,
+                                    limit,
+                                },
+                            }
+                        }
+                        None => continue,
+                    };
+                    lines.push(line);
+                }
+            }
+            if !lines.is_empty() {
+                map.insert(currency.clone(), lines);
+            }
+        }
+        Some(map)
+    } else {
+        None
+    };
+
     // ── Schema 1.6: full ribbon set (all players) ───────────────────────────────
     // Every RIBBON_* field the game records, emitted raw under its WG constant
     // name. Only non-zero counts are included (a missing key means zero). All of
@@ -2385,6 +2503,7 @@ pub(crate) fn resolve_player(
         torpedo_protection_hits,
         ship_efficiency,
         economic_bonuses,
+        economic_breakdown,
         ribbons,
         victory_points,
         // build needs the cross-pass loadout map (keyed by db_id) → attached
@@ -2918,10 +3037,11 @@ mod tests {
         private[subtotal_slot] = serde_json::json!([
             {"sse": [], "base": [], "mod": []},
             {"sse": [], "base": [], "mod": []},
-            {"sse": [], "base": [], "mod": []},
-            {"sse": [], "base": [], "mod": [
+            {"sse": [], "base": [["FIRST_WIN", 0.5, true, 0]], "mod": []},
+            {"sse": [["MGS-6286_q02", 2.0, true, 750000]], "base": [], "mod": [
                 [999003, 0.4, true, 0],
-                [999002, 0.5, true, 0]
+                [999002, 0.5, true, 0],
+                [4279234480_i64, 4.8, true, 0]
             ]}
         ]);
 
@@ -2954,10 +3074,51 @@ mod tests {
             std::collections::BTreeMap::from([("PCEA012", 1.4), ("PCEU010", 1.5)])
         );
 
+        // Schema 1.9: every applied chain entry, keyed by SUBTOTAL_ECONOMICS
+        // currency, unknown ids kept with their real factor; empty chains omitted.
+        let breakdown = owner
+            .economic_breakdown
+            .expect("owner has economic breakdown");
+        let line =
+            |kind: &str, source: &str, index: Option<&str>, factor: f64, limit: Option<i64>| {
+                EconomyLine {
+                    kind: kind.into(),
+                    source: source.into(),
+                    index: index.map(Into::into),
+                    factor,
+                    limit,
+                }
+            };
+        assert_eq!(
+            breakdown,
+            std::collections::BTreeMap::from([
+                (
+                    "ship_exp".to_string(),
+                    vec![line("base", "FIRST_WIN", None, 0.5, None)]
+                ),
+                (
+                    "credits".to_string(),
+                    vec![
+                        line("booster", "PCEA012_CRboost_2", Some("PCEA012"), 0.4, None),
+                        line(
+                            "permanent",
+                            "PCEU010_Multi_std10",
+                            Some("PCEU010"),
+                            0.5,
+                            None
+                        ),
+                        line("unknown", "4279234480", None, 4.8, None),
+                        line("sse", "MGS-6286_q02", None, 2.0, Some(750000)),
+                    ]
+                ),
+            ])
+        );
+
         let other = resolve_player(&arr, 99, &tables, 42, Some(1), Some(private.as_slice()));
         assert_eq!(other.credits, None);
         assert!(other.economics.is_none());
         assert!(other.economic_bonuses.is_none());
+        assert!(other.economic_breakdown.is_none());
     }
 
     /// Schema 1.4: the public `achievements` field ([id, count] pairs) resolves
@@ -3051,6 +3212,7 @@ mod tests {
             // Some(_) so the optional owner-only keys are locked by this guard.
             ship_efficiency: Some("expert".into()),
             economic_bonuses: Some(vec![]),
+            economic_breakdown: Some(std::collections::BTreeMap::new()),
             ribbons: std::collections::BTreeMap::from([("RIBBON_BOMB".into(), 42)]),
             victory_points: std::collections::BTreeMap::from([(
                 "victory_points_kill_battleship".into(),
@@ -3110,6 +3272,7 @@ mod tests {
             "torpedo_protection_hits",
             "ship_efficiency",
             "economic_bonuses",
+            "economic_breakdown",
             "ribbons",
             "victory_points",
             "build",
@@ -3845,7 +4008,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.8");
+        assert_eq!(data.meta.schema_version, "1.9");
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────
@@ -3871,7 +4034,7 @@ mod tests {
         });
         let inner_str = serde_json::to_string(&inner).unwrap();
         // clientVersionFromExe "15,9,0,1" → short "15.9" — a future version NOT in
-        // KNOWN_GOOD → should warn. (15.3/15.4/15.5 are all known-good now.)
+        // KNOWN_GOOD → should warn. (15.3–15.8 are all known-good now.)
         // mapName "spaces/23_Shards" → map_name should be "23_Shards" (strip prefix).
         // matchGroup "ranked" → match_group should be Some("ranked").
         let meta_line = r#"{"matchGroup":"ranked","clientVersionFromExe":"15,9,0,1","mapName":"spaces/23_Shards"}"#;
@@ -4028,6 +4191,76 @@ mod tests {
         assert_eq!(data.meta.decode_status, DecodeStatus::Unreliable);
     }
 
+    // ── 1.9 economic breakdown vs the in-game results screen ──────────────────
+
+    /// Decode the IceBreakerMM Missouri replay (2026-10-04, build 15.8, Legendary
+    /// credit booster + PCEU037 Missouri bonus) and reproduce the in-game
+    /// "Credits and XP" totals from the emitted 1.9 data with the contract
+    /// formula. Expected values are from the player's in-game screenshot.
+    ///
+    /// Run: `TFD_ECON_MISSOURI="T:\wows-replay-archive\15.8\IceBreakerMM\04.10.2026 22_52_50_25b866ad.wowsreplay" cargo test -p bridge-core economic_breakdown_matches_game_screen -- --ignored --nocapture`
+    #[test]
+    #[ignore = "requires the local replay supplied through TFD_ECON_MISSOURI"]
+    fn economic_breakdown_matches_game_screen() {
+        let path = PathBuf::from(std::env::var("TFD_ECON_MISSOURI").expect("TFD_ECON_MISSOURI"));
+        let resources = constants_path().parent().unwrap().to_path_buf();
+        let tables = Tables::load(
+            &constants_path(),
+            &resources.join("ship_index.json"),
+            &resources.join("achievement_index.json"),
+            &bonus_index_path(),
+        )
+        .unwrap();
+        let cfg = DecodeConfig {
+            game_dir: PathBuf::from(r"C:\Games\World_of_Warships"),
+            constants_path: constants_path(),
+            ship_index_path: resources.join("ship_index.json"),
+            achievement_index_path: resources.join("achievement_index.json"),
+            bonus_index_path: bonus_index_path(),
+        };
+        let data = decode_battle_result(&path, &cfg, &tables).expect("decode");
+        assert_eq!(
+            data.meta.decode_status,
+            DecodeStatus::Ok,
+            "{:?}",
+            data.meta.decode_checks
+        );
+        let owner = data.players.iter().find(|p| p.is_self).expect("owner");
+        let econ = owner.economics.as_ref().expect("economics");
+        let breakdown = owner.economic_breakdown.as_ref().expect("breakdown");
+
+        // Contract formula: earned = ceil(base × premium); line = ceil(earned × factor).
+        let total = |base: i64, premium: f64, currency: &str| -> i64 {
+            let earned = (base as f64 * premium - 1e-9).ceil() as i64;
+            let lines: i64 = breakdown[currency]
+                .iter()
+                .map(|l| (earned as f64 * l.factor - 1e-9).ceil() as i64)
+                .sum();
+            earned + lines
+        };
+        let costs = econ.cost_service
+            + econ.cost_ammo
+            + econ.cost_camo
+            + econ.cost_signals
+            + econ.cost_boost;
+        let credits = owner.credits.expect("base credits");
+        // XP base is `exp` (raw_exp × the win multiplier), not `raw_exp`.
+        let exp = owner.exp.expect("exp");
+
+        assert_eq!(econ.premium_type, Some(2));
+        assert!(breakdown["credits"]
+            .iter()
+            .any(|l| l.source == "PCEA015_CRboost_5" && l.kind == "booster" && l.factor == 4.8));
+        assert_eq!(total(credits, 1.0, "credits") - costs, 3_327_941);
+        assert_eq!(
+            total(credits, econ.wows_premium_credits_factor, "credits") - costs,
+            5_060_314
+        );
+        assert_eq!(total(exp, 1.0, "ship_exp"), 8_079);
+        assert_eq!(total(exp, econ.wows_premium_exp_factor, "ship_exp"), 13_332);
+        println!("{}", serde_json::to_string_pretty(breakdown).unwrap());
+    }
+
     // ── 1.8 example-dump generator (for the engine agent) ─────────────────────
 
     /// Generate a real `BattleData` (schema 1.8) JSON dump from a live replay, to
@@ -4091,7 +4324,6 @@ mod tests {
         // or SAP (a battleship/cruiser) AND at least one player with a non-empty
         // achievements[] (so the 1.4 field shows real data, not just `[]`).
         // Fall back to the first usable owner-economics decode otherwise.
-        // 15.6 is not yet in KNOWN_GOOD, so an otherwise valid result is degraded.
         let mut chosen: Option<(PathBuf, BattleData)> = None;
         let mut fallback: Option<(PathBuf, BattleData)> = None;
         for rp in replays.iter().take(80) {
