@@ -25,7 +25,7 @@ fn check(path: &Path) {
     };
     let version = Version::from_client_exe(&replay.meta.clientVersionFromExe);
     let (mut total, mut errs, mut battle_results) = (0u32, 0u32, 0u32);
-    for item in RawPacketIterator::with_version(&replay.packet_data, version) {
+    for item in RawPacketIterator::with_version(replay.packet_data(), version) {
         match item {
             Ok(pkt) => {
                 total += 1;

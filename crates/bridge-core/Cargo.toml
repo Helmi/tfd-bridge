@@ -20,12 +20,11 @@ uuid = { version = "1", features = ["v4"] }
 # In-process WoWS replay parsing. Pinned to Helmi/wows-toolkit (a fork of
 # landaire/wows-toolkit, MIT, under our control). Shares ONE rev with the
 # scene-export decoder (the replay player needs an API only present from
-# 36c4e41). Current rev = f328397 + a cherry-pick of upstream 25d96db6, which
-# adds the FLOAT64 entity-spec type WoWS 15.7 introduced — without it the parser
-# panics on every 15.7 replay. See docs/wows-toolkit-rev.md. Bump both crates
-# together.
-wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e" }
-wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "d1c317e5e10b9e674fb352b159fe81c9cc6e652e", default-features = false, features = ["vfs-mmap"] }
+# 36c4e41). Current rev = landaire main b6a52397 (2026-09-30), mirrored as
+# branch tfd-bridge/upstream-b6a52397 on the fork because upstream force-pushes
+# main. See docs/wows-toolkit-rev.md. Bump both crates together.
+wows_replays = { git = "https://github.com/Helmi/wows-toolkit", rev = "b6a5239735abf755cd2514fdf6365173dc9ce301" }
+wowsunpack = { git = "https://github.com/Helmi/wows-toolkit", rev = "b6a5239735abf755cd2514fdf6365173dc9ce301", default-features = false, features = ["vfs-mmap"] }
 # In-process replay → battle-scene decoder for the hidden replay player. Runs
 # the decode in this process (no bundled sidecar / subprocess).
 scene-export = { path = "../scene-export" }
