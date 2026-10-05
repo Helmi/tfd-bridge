@@ -6664,7 +6664,7 @@ dependencies = [
 
 [[package]]
 name = "tfd-bridge"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "bridge-core",
  "chrono",

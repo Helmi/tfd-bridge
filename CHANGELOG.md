@@ -9,7 +9,7 @@ Versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-Planned for **0.18.0**.
+Planned for **0.19.0**.
 
 ### Added
 - **Observed consumables now appear on the replay map and exported video.** Radar and hydro use configured ranges, faint circles and original game icons; hydro distinguishes ship and torpedo detection. Spotter/fighter activations gain small ship-side icons without invented patrol areas. Aircraft ownership now uses the toolkit ship-owner ID. Effects follow recorded timing and visible living ships.
@@ -22,6 +22,7 @@ Planned for **0.18.0**.
 - **Bundled map artwork.** Bees to Honey, Two Brothers, Ice Islands, and Shards have detailed terrain, softer coast colours, and separate textured water. Original land masks preserve every shoreline; enhancements apply only to matching game assets and work offline in RePlayer and videos.
 
 ### Changed
+- **Replay parser updated to the latest wows-toolkit.** Battle results are unchanged; replay-map shell hits now land on the ship nearest the impact instead of falling back to your own ship.
 - **Balanced replay and video presentation.** A more compact header keeps health readable; the combined feed shows game class icons, ship names and quieter player identities, including chat senders. Sinking uses a red X and “sunk”; wrapped lines scroll smoothly with the whole feed. Living roster player names use the same soft gray.
 - **Actual ship names in the replay picker.** Names resolve from the installed game's language catalog instead of internal replay filenames such as France for République.
 - **Player fits the window.** The replay scales to the available width and height so playback controls remain visible without scrolling. Removed the bottom render-completion summary.
@@ -33,6 +34,8 @@ Planned for **0.18.0**.
 - **Faster video frame capture.** The renderer copies the map canvas directly and reuses unchanged HUD images, avoiding repeated PNG conversions and style calculations.
 
 ### Fixed
+- **Yellow (Legendary) economic boosters are recognised.** WoWS 15.7 added a Legendary booster tier and cut the Epic free-XP booster from +7200% to +4800%. Battle results now carry every applied bonus with the factor the game actually used (schema 1.9 `economic_breakdown`), so the Engine can show the same credits and XP as the in-game results screen. Unknown future boosters are reported instead of dropped.
+- **15.6–15.8 battle results are no longer flagged as outdated.** Game data refreshed to 15.8.
 - Order team icons and rosters by ship class (CV, BB, CA, DD, SS), then descending tier and ship name, retaining positions when ships sink. Mirror the right team's top icon strip so carriers sit at the outer edges.
 - Hide hit subribbons while retaining the main-hit counter and original ribbon graphics.
 - Align the replay toolbar controls and keep render progress outside the toolbar.
