@@ -341,7 +341,7 @@ fn resolve_player_config(app: &tauri::AppHandle) -> Option<PlayerConfig> {
     let resource_dir = app.path().resource_dir().ok()?;
     let player_dist = resource_dir.join("player");
     let dispatch=render_worker::dispatcher(app.clone());
-    player_dist.exists().then_some(PlayerConfig { player_dist, render_dispatcher: Some(dispatch.clone()), share_service: Some(std::sync::Arc::new(share_coordinator::Coordinator::new(app.clone(),dispatch))) })
+    player_dist.exists().then_some(PlayerConfig { player_dist, render_dispatcher: Some(dispatch), share_service: None })
 }
 
 // ── Bridge management ────────────────────────────────────────────────────────

@@ -23,6 +23,8 @@ const PAGE_SIZE = 30;
 // "Render as video" is still a prototype (td-18bfca) — hidden until it ships.
 // Flip to true (with WebCodecs available) to bring the button back.
 const SHOW_RENDER_VIDEO = true;
+// Discord video sharing stays hidden until account authorization ships.
+const SHOW_SHARE_VIDEO = false;
 
 // Set by vite.config.ts only for the `build:bridge` mode: talk to the
 // bridge's /player/api/replays + /v1/replays routes instead of the vite-dev
@@ -303,7 +305,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
             <span>Choose replay</span><small>{replayCount || 'Local'}</small>
           </button>
           <div className="video-actions">
-          {isBridge && localReplayName && scene.replay.arenaUniqueId && <button
+          {SHOW_SHARE_VIDEO && isBridge && localReplayName && scene.replay.arenaUniqueId && <button
             disabled={share.busy || Boolean(renderProgress)}
             onClick={()=>{setPlaying(false);void share.start(localReplayName,scene.replay.arenaUniqueId!);}}
             className="share-video-button"

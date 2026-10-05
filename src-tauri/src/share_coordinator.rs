@@ -15,12 +15,15 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+// Parked: Discord video sharing is not wired in until account authorization ships.
+#[allow(dead_code)]
 pub struct Coordinator {
     app: tauri::AppHandle,
     dispatch: RenderDispatcher,
     entries: Arc<Mutex<HashMap<String, Value>>>,
 }
 impl Coordinator {
+    #[allow(dead_code)]
     pub fn new(app: tauri::AppHandle, dispatch: RenderDispatcher) -> Self {
         Self {
             app,
