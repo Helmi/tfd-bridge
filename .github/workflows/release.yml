@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # wows-toolkit vendors a deep Buck prelude; Cargo's git checkout of it
+      # fails with "path too long" unless git long paths are enabled.
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
