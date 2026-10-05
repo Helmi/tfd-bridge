@@ -9,7 +9,9 @@ Versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-Planned for **0.19.0**.
+---
+
+## [0.19.0] — 2026-10-05
 
 ### Added
 - **Observed consumables now appear on the replay map and exported video.** Radar and hydro use configured ranges, faint circles and original game icons; hydro distinguishes ship and torpedo detection. Spotter/fighter activations gain small ship-side icons without invented patrol areas. Aircraft ownership now uses the toolkit ship-owner ID. Effects follow recorded timing and visible living ships.
@@ -380,7 +382,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/Helmi/tfd-bridge/compare/v0.16.0...v0.19.0
 [0.16.0]: https://github.com/Helmi/tfd-bridge/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/Helmi/tfd-bridge/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/Helmi/tfd-bridge/compare/v0.14.0...v0.15.0
