@@ -1151,7 +1151,7 @@ fn extract_battle_results(
     let specs = load_specs(game_dir, &version)?;
 
     let mut parser = Parser::with_version(specs.as_slice(), version);
-    let mut remaining = replay.packet_data.as_slice();
+    let mut remaining = replay.packet_data();
     let mut br_str: Option<String> = None;
     while !remaining.is_empty() {
         match parser.parse_packet(&mut remaining) {
@@ -1260,7 +1260,7 @@ fn extract_builds(
     let mut seeds: HashMap<i64, ArenaSeed> = HashMap::new();
 
     let mut parser = Parser::with_version(specs.as_slice(), version);
-    let mut remaining = replay.packet_data.as_slice();
+    let mut remaining = replay.packet_data();
     while !remaining.is_empty() {
         let Ok(packet) = parser.parse_packet(&mut remaining) else {
             break; // truncated stream — use what we have

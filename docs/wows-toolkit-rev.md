@@ -18,20 +18,33 @@ transitive deps (`pickled`, `bevy_ecs`, …). They **must** be pinned to the sam
 `wows_replays` in the tree, which then force a single incompatible `pickled`
 version onto one of them and fail to build.
 
-**Current rev: `d1c317e5e10b9e674fb352b159fe81c9cc6e652e`** — branch
-`tfd-bridge/float64-15.7` on `Helmi/wows-toolkit`. This is landaire main
-`f328397` (2026-07-09) plus a single cherry-pick of upstream `25d96db6`
-(FLOAT64 entity-spec support, see below). Earlier revs were served by
-`Helmi/wows-toolkit` by SHA (GitHub fork networks serve upstream commits by
-SHA); this one lives on a real branch in the fork, so it does not depend on
-upstream reachability.
+**Current rev: `b6a5239735abf755cd2514fdf6365173dc9ce301`** — landaire main
+`b6a52397` (2026-09-30), mirrored as branch `tfd-bridge/upstream-b6a52397` on
+`Helmi/wows-toolkit`. Upstream force-pushes `main`, so every pin gets its own
+`tfd-bridge/upstream-<shortsha>` branch in the fork; the fork then serves the
+commit regardless of upstream reachability. (GitHub fork networks also serve
+upstream commits by SHA, which is what Cargo resolves against until the branch
+exists.) Previous rev `d1c317e5` (branch `tfd-bridge/float64-15.7`) was
+landaire `f328397` + the FLOAT64 cherry-pick; `b6a52397` contains that fix.
 
 > **Upstream force-pushed `main`** (observed 2026-08-16:
-> `f3283972...040548ef main -> origin/main (forced update)`). Our old pin
-> `f328397` is no longer an ancestor of upstream `main`. It still resolves by
-> SHA today, but anything pinning a pre-rewrite upstream SHA is on borrowed
-> time — including `experiments/replay-web-player/exporter`, which still pins
-> `landaire/wows-toolkit @ f328397`.
+> `f3283972...040548ef main -> origin/main (forced update)`; by 2026-09-30
+> `b6a52397` shares **no** merge base with `f328397`). Anything pinning a
+> pre-rewrite upstream SHA is on borrowed time — including
+> `experiments/replay-web-player/exporter`, which still pins
+> `landaire/wows-toolkit @ f328397` and is built by `release.yml` as the
+> scene-exporter sidecar.
+
+**Build requirements at this rev:**
+
+- `rustc >= 1.97` (upstream `rust-version`, edition 2024). CI uses
+  `dtolnay/rust-toolchain@stable`, so it follows; local toolchains older than
+  that fail with a plain "requires rustc 1.97" error. `src-tauri`'s own
+  `rust-version = "1.77.2"` is therefore stale metadata.
+- **Windows: `git config --global core.longpaths true`.** Upstream vendors a
+  Buck `prelude/` with paths far beyond `MAX_PATH`; without the setting Cargo's
+  git checkout fails with `path too long: ...prelude/toolchains/android/...`
+  (libgit2 honours `core.longpaths`, no registry change needed).
 
 The fork's own `main` branch is intentionally stale and is **not** used — we pin
 explicit SHAs. "Bumping the fork" means moving these SHAs to a newer upstream
@@ -39,6 +52,26 @@ commit; the fork is not pinned for any special reason and can track upstream.
 
 ## History
 
+- Bumped to `b6a52397` (landaire main, 2026-09-30) on 2026-10-05 — catch-up to
+  upstream after the history rewrite (no common ancestor with `d1c317e5`).
+  `wows_replays` 0.44→0.46, `wowsunpack` 0.43→0.45, `wows-battle-world`
+  0.11→0.13, `wows_minimap_renderer` 0.37→0.39. Code changes were mechanical:
+  `ReplayFile::packet_data` is now a method (bridge-core ×2, scene-export ×4),
+  `Degrees`/`Radians` lost their public `.0` (use `.value()` /
+  `.to_degrees()`), and `visibility_flags()` returns `Option<VisibilityFlags>`
+  instead of a raw `u32` (mapped to `is_some_and(|f| f.raw() != 0)`, same
+  truth table). `Cargo.lock` needed targeted `cargo update -p` of `rustc-hash`,
+  `tokio`, `toml`, `toml_datetime`, `proc-macro-crate`. Validation: workspace
+  compiles with 0 warnings, `cargo test --workspace` 292 passed / 0 failed
+  (4 gated-ignored). **Battle-result JSON is byte-identical** between the old
+  and new build on 38 archived replays (21×15.8 + 3×15.7 decodes, schema 1.8,
+  plus 14 no-BattleResults errors with identical messages). Scene export
+  (`dump_scene`, 15.8 replay) still produces the full scene (24 ships, 857
+  hits, same size); the only difference is `events.hits[].victimId` on 119 of
+  857 hits (+6 derived `impactTargetGuessId`): the old rev could only resolve a
+  victim through a matched salvo and fell back to the **owner's ship** when
+  none matched, the new rev resolves the ship nearest the shell's own impact
+  position — an upstream correctness fix, not a schema change.
 - Bumped to `d1c317e` on 2026-08-16 — **WoWS 15.7 broke replay decoding.** 15.7
   introduced a `FLOAT64` type in the entity-definition specs; `parse_type` in
   `wowsunpack/src/rpc/typedefs.rs` had no branch for it, so every 15.7 replay

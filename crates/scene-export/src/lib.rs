@@ -670,8 +670,8 @@ impl<'a> SceneCollector<'a> {
             // Do not alternate it with Transform3d yaw as packets from those
             // two sources arrive at different times.
             let heading_deg = minimap
-                .map(|m| normalize_degrees(m.heading.0))
-                .or_else(|| world.map(|t| normalize_degrees(t.yaw.0.to_degrees())))
+                .map(|m| normalize_degrees(m.heading.value()))
+                .or_else(|| world.map(|t| normalize_degrees(t.yaw.to_degrees().value())))
                 .unwrap_or(0.0);
 
             let relation_is_enemy = entity.relation == "enemy";
@@ -691,7 +691,7 @@ impl<'a> SceneCollector<'a> {
             let alive =
                 !dead.contains_key(&entity_id) && vehicle.map(|v| v.is_alive()).unwrap_or(true);
             let detected_by_enemy =
-                !relation_is_enemy && vehicle.map(|v| v.visibility_flags() != 0).unwrap_or(false);
+                !relation_is_enemy && vehicle.map(|v| v.visibility_flags().is_some_and(|f| f.raw() != 0)).unwrap_or(false);
             let submerged = vehicle.map(|v| v.is_invisible()).unwrap_or(false);
 
             let course_deg = derive_course(previous, now, point, heading_deg, visible);
@@ -1602,7 +1602,7 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
     // `recording_complete`) so the title and the picker can never disagree. The
     // scan's own `battle_end_ms` is a less reliable proxy (it can miss a decoded
     // `onBattleEnd` even when results were received), so it is not used here.
-    let complete = recording_complete(&replay.packet_data, &replay.meta.clientVersionFromExe);
+    let complete = recording_complete(replay.packet_data(), &replay.meta.clientVersionFromExe);
     let battle_start = collector.battle_start_ms.unwrap_or(0);
     let battle_end = collector.battle_end_ms.unwrap_or(collector.last_clock_ms);
     let duration_ms = (battle_end - battle_start).max(0);
@@ -1779,13 +1779,13 @@ pub fn read_replay_meta(replay_path: &Path) -> Result<ReplayMeta> {
     let mut battle_results = None;
     let mut offset = 0;
     let mut parser = Parser::with_version(&[], version.clone());
-    for packet in RawPacketIterator::with_version(&replay.packet_data, version).map_while(Result::ok) {
+    for packet in RawPacketIterator::with_version(replay.packet_data(), version).map_while(Result::ok) {
         let end = offset + 12 + packet.packet_size as usize;
         if matches!(packet.packet_type, PacketTypeId::BattleResults) {
             complete = true;
             // Give the toolkit the original packet, including its header; only
             // this spec-independent packet needs payload parsing for the picker.
-            let mut bytes = &replay.packet_data[offset..end];
+            let mut bytes = &replay.packet_data()[offset..end];
             if let Ok(parsed) = parser.parse_packet(&mut bytes) {
                 if let PacketType::BattleResults(json) = parsed.payload {
                     if let Ok(value) = serde_json::from_str(json) {
@@ -1987,7 +1987,7 @@ fn replay_division_labels(
         .ships_constants(constants.ships())
         .build();
     let mut parser = Parser::with_version(params.entity_specs(), version);
-    let mut remaining = &replay.packet_data[..];
+    let mut remaining = replay.packet_data();
     while let Ok(packet) = parser.parse_packet(&mut remaining) {
         let decoded = decoder.decode(&packet);
         if let DecodedPacketPayload::OnArenaStateReceived { player_states, .. } = decoded.payload {
