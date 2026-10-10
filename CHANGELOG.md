@@ -11,6 +11,12 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.19.1] — 2026-10-10
+
+### Fixed
+- **RePlayer loads WoWS 15.9 replays again.** 15.9 changed the replay's player data layout, so 15.9 replays showed broken teams and would not play. The replay parser is updated to the latest wows-toolkit, which reads the new layout; older replays are unaffected.
+- **15.9 battle results are fully trusted.** Game data refreshed to 15.9 (new ships such as Cuauhtémoc now show their names, plus new achievements); 15.9 no longer carries the "outdated version" warning.
+
 ## [0.19.0] — 2026-10-05
 
 ### Added
@@ -382,7 +388,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/Helmi/tfd-bridge/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Helmi/tfd-bridge/compare/v0.16.0...v0.19.0
 [0.16.0]: https://github.com/Helmi/tfd-bridge/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/Helmi/tfd-bridge/compare/v0.15.0...v0.15.1
