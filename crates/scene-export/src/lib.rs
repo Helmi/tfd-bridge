@@ -457,7 +457,7 @@ struct SceneCollector<'a> {
     last_buffs: HashMap<String, BuffSample>,
     buff_activation_at: HashMap<String, i64>,
     salvos: Vec<SalvoEvent>,
-    seen_salvos: HashSet<(u32, u32)>,
+    seen_salvos: HashSet<(u32, u32, i64)>,
     torpedoes: Vec<TorpedoTrack>,
     torpedo_indexes: HashMap<(u32, u32), usize>,
     active_torpedoes: HashSet<(u32, u32)>,
@@ -1015,7 +1015,11 @@ impl<'a> SceneCollector<'a> {
 
     fn collect_salvos(&mut self, view: &BattleView<'_>) {
         for active in view.active_shots() {
-            let key = (active.salvo.owner_id.raw(), active.salvo.salvo_id);
+            let (key, salvo_id) = salvo_key(
+                active.salvo.owner_id.raw(),
+                active.salvo.salvo_id,
+                ms(active.fired_at),
+            );
             if !self.seen_salvos.insert(key) {
                 continue;
             }
@@ -1079,7 +1083,7 @@ impl<'a> SceneCollector<'a> {
                     is_secondary_ammo(self.metadata, *ship_id, active.salvo.params_id)
                 });
             self.salvos.push(SalvoEvent {
-                id: format!("{}:{}", key.0, key.1),
+                id: salvo_id,
                 t: ms(active.fired_at),
                 owner_id: active.salvo.owner_id.to_string(),
                 ammo_type,
@@ -2141,6 +2145,40 @@ mod arena_identity_tests {
         for invalid in ["{}", r#"{"arenaUniqueID":0}"#, r#"{"arenaUniqueID":-1}"#, r#"{"arenaUniqueID":1.5}"#] {
             assert_eq!(arena_id_from_results(invalid), None);
         }
+    }
+}
+
+/// Secondary fire arrives with this placeholder salvo id instead of a real one.
+const PLACEHOLDER_SALVO_ID: u32 = u32::MAX;
+
+/// Dedupe key and scene id for a salvo. Real ids keep `<owner>:<salvoId>`;
+/// placeholder-id salvos add the (stable) fired time so each stays distinct.
+fn salvo_key(owner: u32, salvo_id: u32, fired_ms: i64) -> ((u32, u32, i64), String) {
+    if salvo_id == PLACEHOLDER_SALVO_ID {
+        ((owner, salvo_id, fired_ms), format!("{owner}:{salvo_id}:{fired_ms}"))
+    } else {
+        ((owner, salvo_id, 0), format!("{owner}:{salvo_id}"))
+    }
+}
+
+#[cfg(test)]
+mod salvo_key_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn placeholder_salvos_dedupe_by_fired_time_and_real_ids_are_unchanged() {
+        let mut seen = HashSet::new();
+        let a = salvo_key(7, u32::MAX, 1000);
+        assert!(seen.insert(a.0)); // first frame
+        assert!(!seen.insert(salvo_key(7, u32::MAX, 1000).0)); // later frame, same salvo
+        let b = salvo_key(7, u32::MAX, 2500);
+        assert!(seen.insert(b.0)); // different fired time
+        assert_ne!(a.1, b.1);
+        assert_ne!(a.1, salvo_key(8, u32::MAX, 1000).1);
+        let real = salvo_key(7, 42, 1000);
+        assert_eq!(real.1, "7:42");
+        assert_eq!(real.0, salvo_key(7, 42, 9999).0); // fired time ignored
     }
 }
 
