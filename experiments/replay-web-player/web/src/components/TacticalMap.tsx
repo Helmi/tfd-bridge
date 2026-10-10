@@ -408,10 +408,12 @@ function drawMap(runtime: Runtime): void {
     if (ordnance.event.kind === 'shell') {
       // Short stroke along the flight direction, colored by shell type — no
       // long trail, no head dot.
-      const strokeLength = viewport.size * 0.009;
+      // Secondary-battery shells: ~60% length, about half the alpha.
+      const secondary = ordnance.event.secondary === true;
+      const strokeLength = viewport.size * (secondary ? 0.0054 : 0.009);
       const tail = { x: position.x - forward.x * strokeLength, y: position.y - forward.y * strokeLength };
       const color = shellColor(ordnance.event.ammoType);
-      graphics.moveTo(tail.x, tail.y).lineTo(position.x, position.y).stroke({ color, width: 1, alpha: 0.85 });
+      graphics.moveTo(tail.x, tail.y).lineTo(position.x, position.y).stroke({ color, width: 1, alpha: secondary ? 0.42 : 0.85 });
     } else {
       // Torpedoes read as a capsule trailing a faint wake, colored by side
       // (enemy red / friendly green); the armed state is carried by alpha below.

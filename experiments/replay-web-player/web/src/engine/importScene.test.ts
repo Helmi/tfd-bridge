@@ -122,6 +122,17 @@ describe('ReplayScene V1 adapter', () => {
     expect(evaluateScene(scene, 23).buffZones[1].collectible).toBe(true);
   });
 
+  it('carries the secondary flag from salvos to shell ordnance events', () => {
+    const base = payload.events.salvos[0];
+    const scene = loadReplayScene({
+      ...payload,
+      events: { ...payload.events, salvos: [base, { ...base, id: 'secondary-salvo', secondary: true }] },
+    });
+    const shells = scene.ordnance.filter((event) => event.kind === 'shell');
+    expect(shells.find((event) => event.id.startsWith('salvo:'))?.secondary).toBeUndefined();
+    expect(shells.find((event) => event.id.startsWith('secondary-salvo:'))?.secondary).toBe(true);
+  });
+
   it('imports and evaluates smoke, planes, wards, consumables, chat, and pickups', () => {
     const scene = loadReplayScene(payload);
 

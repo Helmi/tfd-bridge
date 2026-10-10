@@ -331,6 +331,7 @@ function ordnanceEvents(payload: ReplaySceneV1): OrdnanceEvent[] {
         targetId: salvo.targetId,
         teamId: entityTeam[sourceId] ?? 'unknown',
         ammoType: salvo.ammoType,
+        ...(salvo.secondary ? { secondary: true } : {}),
         start: seconds(startMs),
         end: seconds(endMs),
         trajectory: rawPath.map((point) => ({ ...point, t: seconds(point.t) })),

@@ -170,6 +170,8 @@ export interface OrdnanceEvent {
   teamId: TeamId;
   /** AP | HE | SAP for shells, when the projectile param resolved. */
   ammoType?: string;
+  /** Secondary-battery (ATBA) shell; drawn dimmer and smaller. */
+  secondary?: boolean;
   start: Seconds;
   end: Seconds;
   trajectory: TrajectoryPoint[];
@@ -471,6 +473,7 @@ export interface ReplaySceneV1 {
       sourceId?: EntityId;
       targetId?: EntityId;
       ammoType?: string;
+      secondary?: boolean;
       projectiles: Array<{
         id: string;
         origin?: WorldPoint;

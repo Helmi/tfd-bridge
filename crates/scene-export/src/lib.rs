@@ -27,7 +27,9 @@ use wowsunpack::data::{ResourceLoader, Version};
 use wowsunpack::game_data;
 use wowsunpack::game_assets::{GuiAsset, GuiAssetDir};
 use wowsunpack::game_params::provider::GameMetadataProvider;
-use wowsunpack::game_params::types::{AmmoType, GameParamProvider, PlaneCategory, Species};
+use wowsunpack::game_params::types::{
+    AmmoType, GameParamProvider, PlaneCategory, Species, is_secondary_ammo,
+};
 use wowsunpack::game_types::{CollisionType, ShellHitType, DamageStatCategory, Ribbon};
 use wowsunpack::rpc::typedefs::ArgValue;
 
@@ -361,7 +363,14 @@ struct SalvoEvent {
     /// AP | HE | SAP | raw game string, when the projectile param resolves.
     #[serde(skip_serializing_if = "Option::is_none")]
     ammo_type: Option<String>,
+    /// Secondary-battery (ATBA) salvo; omitted for main battery.
+    #[serde(skip_serializing_if = "is_false")]
+    secondary: bool,
     projectiles: Vec<ShellEvent>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Serialize)]
@@ -437,6 +446,7 @@ struct SceneCollector<'a> {
     version: Version,
     map_info: MapInfo,
     entities: BTreeMap<String, EntityDescriptor>,
+    ship_param_ids: HashMap<String, wows_replays::types::GameParamId>,
     ships: BTreeMap<String, Vec<ShipSample>>,
     scores: Vec<ScoreSample>,
     owner_stats: Vec<OwnerStatsSample>,
@@ -484,6 +494,7 @@ impl<'a> SceneCollector<'a> {
             version,
             map_info,
             entities: BTreeMap::new(),
+            ship_param_ids: HashMap::new(),
             ships: BTreeMap::new(),
             scores: Vec::new(),
             owner_stats: Vec::new(),
@@ -591,6 +602,7 @@ impl<'a> SceneCollector<'a> {
                 entity.division_id = division_id;
                 continue;
             }
+            self.ship_param_ids.insert(id.clone(), player.vehicle().id());
             let state = player.initial_state();
             let relation = player.relation().name().to_ascii_lowercase();
             let species = player
@@ -1060,11 +1072,18 @@ impl<'a> SceneCollector<'a> {
                                 .to_string()
                         })
                     });
+            let secondary = self
+                .ship_param_ids
+                .get(&active.salvo.owner_id.to_string())
+                .is_some_and(|ship_id| {
+                    is_secondary_ammo(self.metadata, *ship_id, active.salvo.params_id)
+                });
             self.salvos.push(SalvoEvent {
                 id: format!("{}:{}", key.0, key.1),
                 t: ms(active.fired_at),
                 owner_id: active.salvo.owner_id.to_string(),
                 ammo_type,
+                secondary,
                 projectiles,
             });
         }
