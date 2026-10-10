@@ -18,14 +18,13 @@ transitive deps (`pickled`, `bevy_ecs`, …). They **must** be pinned to the sam
 `wows_replays` in the tree, which then force a single incompatible `pickled`
 version onto one of them and fail to build.
 
-**Current rev: `b6a5239735abf755cd2514fdf6365173dc9ce301`** — landaire main
-`b6a52397` (2026-09-30), mirrored as branch `tfd-bridge/upstream-b6a52397` on
+**Current rev: `6e1973e3c225f2e95859bb7d35968f87d1345466`** — landaire main
+`6e1973e3` (2026-10-09), mirrored as branch `tfd-bridge/upstream-6e1973e3` on
 `Helmi/wows-toolkit`. Upstream force-pushes `main`, so every pin gets its own
 `tfd-bridge/upstream-<shortsha>` branch in the fork; the fork then serves the
 commit regardless of upstream reachability. (GitHub fork networks also serve
 upstream commits by SHA, which is what Cargo resolves against until the branch
-exists.) Previous rev `d1c317e5` (branch `tfd-bridge/float64-15.7`) was
-landaire `f328397` + the FLOAT64 cherry-pick; `b6a52397` contains that fix.
+exists.) Previous rev `b6a52397` (branch `tfd-bridge/upstream-b6a52397`).
 
 > **Upstream force-pushed `main`** (observed 2026-08-16:
 > `f3283972...040548ef main -> origin/main (forced update)`; by 2026-09-30
@@ -51,6 +50,20 @@ explicit SHAs. "Bumping the fork" means moving these SHAs to a newer upstream
 commit; the fork is not pinned for any special reason and can track upstream.
 
 ## History
+
+- Bumped to `6e1973e3` (landaire main, 2026-10-09) on 2026-10-10 — **WoWS 15.9 broke the
+  RePlayer roster.** 15.9 inserted `shipFrags` into the player/bot vehicle
+  data, shifting `shipId` / `shipParamsId` / `skinId` (and bots' `teamId`).
+  At `b6a52397` the scene therefore read garbage team ids (21 "teams" instead
+  of 2) and the RePlayer could not show 15.9 replays. Upstream `f71579a3`
+  version-gates the 15.9 key maps and `58737bcf` lets per-build constants
+  (`PLAYER_NUM_MEMBER_MAP` / `BOT_NUM_MEMBER_MAP`) override them. No code
+  changes on our side; `constants.json` refreshed to 15.9.0_13357625 (result
+  layouts unchanged). Re-validated: workspace compiles warning-free, all tests
+  pass; 7 real 15.9 scenes have 2 teams / 24 named ships each, 15.8 scenes
+  unchanged; 14/15 local 15.9 battle results decode `ok` (24/24 loadouts,
+  ship ids consistent; the 15th left early), and the 15.8 economy e2e still
+  reproduces the in-game screen exactly. Crate versions: `wows-battle-world` 0.14.0, `wows_minimap_renderer` 0.40.0, `wows_replays` 0.47.0, `wowsunpack` 0.46.0.
 
 - Bumped to `b6a52397` (landaire main, 2026-09-30) on 2026-10-05 — catch-up to
   upstream after the history rewrite (no common ancestor with `d1c317e5`).
