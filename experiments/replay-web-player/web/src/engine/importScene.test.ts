@@ -133,6 +133,13 @@ describe('ReplayScene V1 adapter', () => {
     expect(shells.find((event) => event.id.startsWith('secondary-salvo:'))?.secondary).toBe(true);
   });
 
+  it('leaves out a ship that was never seen instead of rejecting the replay', () => {
+    const unseen = { ...payload.entities[0], id: 'never-spotted', relation: 'enemy' as const, playerName: 'Bot' };
+    const scene = loadReplayScene({ ...payload, entities: [...payload.entities, unseen] });
+    expect(scene.ships.map((ship) => ship.id)).not.toContain('never-spotted');
+    expect(scene.ships).toHaveLength(payload.entities.length);
+  });
+
   it('imports and evaluates smoke, planes, wards, consumables, chat, and pickups', () => {
     const scene = loadReplayScene(payload);
 

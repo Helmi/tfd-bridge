@@ -494,10 +494,13 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
       ...team,
       score: startTrackAt(compactTrack(input.tracks.scores.map((sample) => ({ t: seconds(sample.t), value: sample.teams[team.id] ?? 0 }))), 0),
     })),
-    ships: input.entities.map((entity) => {
+    // corner: a ship never seen during the whole battle (e.g. an unspotted enemy carrier) has no
+    // position samples; it is left out instead of rejecting the replay. Upgrade path: keep it in
+    // the roster as "never spotted" once the roster supports ships without a map position.
+    ships: input.entities.flatMap((entity) => {
       const track = samplesAtDistinctTimes(input.tracks.ships[entity.id] ?? []);
-      if (!track?.length) throw new Error(`Invalid replay scene: entity ${entity.id} has no ship track`);
-      return {
+      if (!track?.length) return [];
+      return [{
         id: entity.id,
         teamId: entity.teamId,
         relation: entity.relation,
@@ -528,7 +531,7 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
         }))),
         detectedByEnemy: compactTrack(track.map((sample) => ({ t: seconds(sample.t), value: sample.detectedByEnemy }))),
         submerged: compactTrack(track.map((sample) => ({ t: seconds(sample.t), value: sample.submerged }))),
-      };
+      }];
     }),
     captureZones: captureZones(input),
     buffZones: buffZones(input),
