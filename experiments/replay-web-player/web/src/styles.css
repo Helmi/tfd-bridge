@@ -479,14 +479,21 @@ html:has(.replay-player), body:has(.replay-player){height:100%;min-height:0;over
 .replay-picker > header > div { margin-right: auto; }
 .picker-multi-button, .picker-next-button { height: 35px; padding: 0 14px; border: 1px solid rgba(47, 214, 166, 0.34); border-radius: 6px; background: #0f1c18; color: #70d9b7; font-size: 14px; font-weight: 600; cursor: pointer; }
 .picker-multi-button:disabled, .picker-next-button:disabled { opacity: 0.4; cursor: default; }
-.replay-option[role="checkbox"] { grid-template-columns: 24px 40px minmax(0, 1fr) 154px; }
+/* Flex column so the selection bar stays visible however many rows are loaded
+   (the grid's fixed row template slipped the list into an auto row without an error banner). */
+.replay-picker { display: flex; flex-direction: column; }
+.replay-picker > .replay-list { flex: 1 1 auto; min-height: 170px; }
+.replay-picker > header, .replay-picker > .picker-search, .replay-picker > .picker-error, .replay-picker > footer { flex: 0 0 auto; }
+.replay-option[role="checkbox"] { grid-template-columns: 24px 40px minmax(0, 1fr) 270px; }
+.replay-option[role="checkbox"] + .replay-option[role="checkbox"] { margin-top: 4px; }
+.replay-check { align-self: center; justify-self: center; }
 .replay-option.selected { border-color: rgba(47, 214, 166, 0.4); background: rgba(47, 214, 166, 0.12); }
 .replay-check { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid #5f7a70; border-radius: 4px; color: #0d1916; font-size: 14px; font-weight: 800; }
 .replay-option.selected .replay-check { border-color: #2fd6a6; background: #2fd6a6; }
 .replay-picker > footer.picker-selection-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
 .picker-selection-bar strong { color: #eef4f1; font-size: 14px; }
 .picker-selection-bar small { color: #e9c46a; font-size: 13px; }
-@media (max-width: 650px) { .replay-option[role="checkbox"] { grid-template-columns: 24px 32px minmax(0, 1fr); } }
+@media (max-width: 650px) { .replay-option[role="checkbox"] { grid-template-columns: 24px 32px minmax(0, 1fr); } .replay-option[role="checkbox"] .replay-option-meta { grid-column: 3; } }
 .batch-render-list { display: grid; gap: 6px; max-height: 280px; margin: 12px 0; padding: 0; overflow: auto; list-style: none; }
 .batch-render-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
 .batch-render-list .batch-failed { color: #ff9b96; }
