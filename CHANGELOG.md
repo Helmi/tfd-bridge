@@ -20,6 +20,10 @@ Versioning follows [SemVer](https://semver.org/).
 ### Changed
 - **Readable video file names.** Locally rendered videos are named after the battle — date, time, ship and map, e.g. `2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4` — instead of a random id. Rendering the same battle again adds `-1`, `-2`.
 
+### Fixed
+- **Replays with a ship that was never spotted load again.** If an enemy (for example a carrier) stayed hidden for the whole battle, the RePlayer rejected the replay with "entity … has no ship track". Such ships are now left off the map and the replay plays normally, in the player and in video export.
+- **Clearer render errors.** A failed local video now says why — replay file not found, or an incomplete replay — instead of asking to update Bridge.
+
 ## [0.19.1] — 2026-10-10
 
 ### Fixed
