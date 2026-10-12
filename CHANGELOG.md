@@ -11,6 +11,15 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.20.0] — 2026-10-12
+
+### Added
+- **Render multiple battles at once.** In the replay picker, "Render multiple battles" lets you tick up to 20 battles, pick one set of video settings and render them one after another, oldest first. The RePlayer stays locked while the batch runs; "Cancel all" stops it. A summary lists every battle as saved, failed or skipped — a failed battle does not stop the rest.
+- **Secondary battery shells in the RePlayer.** Secondary (ATBA) shells are drawn like main-battery shells but shorter and dimmer, so they stay in the background. Exported videos show them too.
+
+### Changed
+- **Readable video file names.** Locally rendered videos are named after the battle — date, time, ship and map, e.g. `2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4` — instead of a random id. Rendering the same battle again adds `-1`, `-2`.
+
 ## [0.19.1] — 2026-10-10
 
 ### Fixed
@@ -388,7 +397,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.19.1...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/Helmi/tfd-bridge/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/Helmi/tfd-bridge/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Helmi/tfd-bridge/compare/v0.16.0...v0.19.0
 [0.16.0]: https://github.com/Helmi/tfd-bridge/compare/v0.15.1...v0.16.0
