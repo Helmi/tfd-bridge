@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { battleTypeLabel } from '../battleMeta';
+import { MAX_BATCH_SELECTION, selectedReplays, selectionFull, toggleSelection } from './pickerSelection';
 import { shipClassIconUrl, shipClassNames, type ShipClass } from '../shipClassIcons';
 
 export interface LocalReplaySummary {
@@ -39,6 +40,10 @@ interface Props {
   error?: string;
   onChoose: (replay: LocalReplaySummary) => void;
   onLoadMore?: () => void;
+  /** Bridge only: enables "Render multiple battles"; called with the chosen replays on "Next". */
+  onRenderMultiple?: (replays: LocalReplaySummary[]) => void;
+  /** Starts in selection mode with these ids already selected (tests). */
+  initialSelection?: string[];
   onClose: () => void;
 }
 
@@ -59,8 +64,14 @@ export function ReplayPicker({
   error,
   onChoose,
   onLoadMore,
+  onRenderMultiple,
+  initialSelection,
   onClose,
 }: Props) {
+  const [selection, setSelection] = useState<string[] | undefined>(initialSelection);
+  const selecting = selection !== undefined;
+  const chosen = selection ?? [];
+  const full = selectionFull(chosen);
   const [query, setQuery] = useState('');
   const searching = query.trim().length > 0;
   const filtered = useMemo(() => {
@@ -79,6 +90,11 @@ export function ReplayPicker({
             <span className="eyebrow">Local replay folder</span>
             <h2>Choose a battle</h2>
           </div>
+          {onRenderMultiple && (
+            <button className="picker-multi-button" onClick={() => setSelection(selecting ? undefined : [])} disabled={Boolean(loadingId)}>
+              {selecting ? 'Cancel selection' : 'Render multiple battles'}
+            </button>
+          )}
           <button className="picker-close" onClick={onClose} disabled={Boolean(loadingId)} aria-label="Close replay picker">×</button>
         </header>
         <div className="picker-search">
@@ -106,13 +122,16 @@ export function ReplayPicker({
             const preparing = replay.id === loadingId;
             const typeLabel = battleTypeLabel(replay.battleType);
             const incomplete = replay.complete === false;
+            const picked = chosen.includes(replay.id);
             return (
               <button
                 key={replay.id}
-                className={`replay-option ${active ? 'active' : ''} ${incomplete ? 'incomplete' : ''}`}
-                onClick={() => onChoose(replay)}
-                disabled={Boolean(loadingId)}
+                className={`replay-option ${active ? 'active' : ''} ${incomplete ? 'incomplete' : ''} ${picked ? 'selected' : ''}`}
+                onClick={() => (selecting ? setSelection(toggleSelection(chosen, replay.id)) : onChoose(replay))}
+                disabled={Boolean(loadingId) || (selecting && full && !picked)}
+                {...(selecting ? { role: 'checkbox', 'aria-checked': picked } : {})}
               >
+                {selecting && <span className="replay-check" aria-hidden="true">{picked ? '✓' : ''}</span>}
                 <span className="replay-class-icon" title={shipClassNames[replay.shipClass]}>
                   <img src={shipClassIconUrl(replay.shipClass)} alt={shipClassNames[replay.shipClass]} />
                 </span>
@@ -156,7 +175,17 @@ export function ReplayPicker({
           </>
           )}
         </div>
-        <footer>Preparing a replay decodes it locally; nothing is uploaded.</footer>
+        {selecting ? (
+          <footer className="picker-selection-bar">
+            <span>
+              <strong>{chosen.length} selected</strong>
+              {full && <small role="status"> · Maximum of {MAX_BATCH_SELECTION} battles per batch</small>}
+            </span>
+            <button className="picker-next-button" disabled={chosen.length === 0} onClick={() => onRenderMultiple?.(selectedReplays(replays, chosen))}>Next</button>
+          </footer>
+        ) : (
+          <footer>Preparing a replay decodes it locally; nothing is uploaded.</footer>
+        )}
 
         {loadingId && (
           <div className="picker-decoding" role="status" aria-live="polite">

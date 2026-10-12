@@ -3,6 +3,7 @@ import { ReplayPicker, type LocalReplaySummary } from './components/ReplayPicker
 import { ResponsiveBroadcast } from './components/ResponsiveBroadcast';
 import { advancePlayback, seekPlayback, ENDING_SECONDS } from './engine/ending';
 import { RenderProgressDialog } from './components/RenderProgressDialog';
+import { BatchRenderDialog } from './components/BatchRenderDialog';
 import { VideoSettingsDialog } from './components/VideoSettingsDialog';
 import { DEFAULT_LOCAL_VIDEO, type LocalVideoSettings } from './video/renderSettings';
 import { sampleScene } from './data/sampleScene';
@@ -10,6 +11,7 @@ import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
 import { renderAndSave, webCodecsAvailable, type RenderProgress } from './video/encodeMp4';
 import { renderInBridge } from './video/bridgeRender';
+import { runBatch, type BatchReplay, type BatchResult, sortOldestFirst } from './video/batchRender';
 import { useReplayShare } from './video/shareReplay';
 import type { ReplayScene } from './types';
 
@@ -79,6 +81,36 @@ export function App() {
   const [loadingReplayId, setLoadingReplayId] = useState<string>();
   const [localReplayName, setLocalReplayName] = useState<string>();
   const [replayError, setReplayError] = useState<string>();
+
+  // Batch rendering from the picker (bridge only): settings → blocking run → summary.
+  const [batchPending, setBatchPending] = useState<LocalReplaySummary[]>();
+  const [batchSettings, setBatchSettings] = useState<LocalVideoSettings>(DEFAULT_LOCAL_VIDEO);
+  const [batchRun, setBatchRun] = useState<{ total: number; index: number; current?: BatchReplay; progress: RenderProgress; results?: BatchResult[] }>();
+  const [pickerKey, setPickerKey] = useState(0);
+  const batchAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => batchAbort.current?.abort(), []);
+  const startBatch = async (settings: LocalVideoSettings) => {
+    if (!batchPending || batchAbort.current) return;
+    const replays = sortOldestFirst(batchPending);
+    setBatchSettings(settings);
+    setBatchPending(undefined);
+    const controller = new AbortController();
+    batchAbort.current = controller;
+    setBatchRun({ total: replays.length, index: 0, progress: { frame: 0, total: 1, attempt: 1 } });
+    const results = await runBatch({
+      replays,
+      settings,
+      signal: controller.signal,
+      onStart: (index, current) => setBatchRun({ total: replays.length, index, current, progress: { frame: 0, total: 1, attempt: 1 } }),
+      onProgress: (progress) => setBatchRun((run) => run && { ...run, progress }),
+    });
+    batchAbort.current = null;
+    setBatchRun((run) => run && { ...run, results });
+  };
+  const closeBatch = () => {
+    setBatchRun(undefined);
+    setPickerKey((key) => key + 1); // remount the picker: selection mode off
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -197,6 +229,8 @@ export function App() {
 
       {pickerOpen && (
         <ReplayPicker
+          key={pickerKey}
+          onRenderMultiple={isBridge ? setBatchPending : undefined}
           replays={localReplays}
           total={replaysTotal}
           currentFilename={scene?.replay.title ?? ''}
@@ -211,6 +245,8 @@ export function App() {
           onClose={() => setPickerOpen(false)}
         />
       )}
+      {batchPending && <VideoSettingsDialog batchCount={batchPending.length} duration={0} initial={batchSettings} native onClose={() => setBatchPending(undefined)} onRender={(settings) => { void startBatch(settings); }} />}
+      {batchRun && <BatchRenderDialog {...batchRun} onCancel={() => batchAbort.current?.abort()} onClose={closeBatch} />}
     </>
   );
 }

@@ -473,3 +473,22 @@ html:has(.replay-player), body:has(.replay-player){height:100%;min-height:0;over
 .replay-player>.transport{flex:0 0 auto}
 .replay-player>.render-result{position:fixed;z-index:40;top:calc(var(--tfd-bar-h,0px) + 76px);left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:12px 16px;background:#13251e;border:1px solid #527465;border-radius:7px;box-shadow:0 6px 24px #0007}
 @media(max-width:480px){.replay-player .topbar-actions{flex-wrap:wrap;gap:6px}.replay-player .topbar-actions button{padding:0 8px}.replay-player .video-actions{gap:6px}}
+
+/* Batch render: selection mode in the replay picker. */
+.replay-picker > header { gap: 12px; }
+.replay-picker > header > div { margin-right: auto; }
+.picker-multi-button, .picker-next-button { height: 35px; padding: 0 14px; border: 1px solid rgba(47, 214, 166, 0.34); border-radius: 6px; background: #0f1c18; color: #70d9b7; font-size: 14px; font-weight: 600; cursor: pointer; }
+.picker-multi-button:disabled, .picker-next-button:disabled { opacity: 0.4; cursor: default; }
+.replay-option[role="checkbox"] { grid-template-columns: 24px 40px minmax(0, 1fr) 154px; }
+.replay-option.selected { border-color: rgba(47, 214, 166, 0.4); background: rgba(47, 214, 166, 0.12); }
+.replay-check { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid #5f7a70; border-radius: 4px; color: #0d1916; font-size: 14px; font-weight: 800; }
+.replay-option.selected .replay-check { border-color: #2fd6a6; background: #2fd6a6; }
+.replay-picker > footer.picker-selection-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
+.picker-selection-bar strong { color: #eef4f1; font-size: 14px; }
+.picker-selection-bar small { color: #e9c46a; font-size: 13px; }
+@media (max-width: 650px) { .replay-option[role="checkbox"] { grid-template-columns: 24px 32px minmax(0, 1fr); } }
+.batch-render-list { display: grid; gap: 6px; max-height: 280px; margin: 12px 0; padding: 0; overflow: auto; list-style: none; }
+.batch-render-list li { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.batch-render-list .batch-failed { color: #ff9b96; }
+.batch-render-list .batch-saved { color: #70d9b7; }
+.batch-render-list .batch-skipped { color: #98afa5; }
