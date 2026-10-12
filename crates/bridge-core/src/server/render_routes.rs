@@ -227,7 +227,13 @@ pub(super) fn post(
             if std::fs::create_dir_all(&dir).is_err() {
                 return error("save_failed", 500);
             }
-            let filename = format!("replay-{id}.mp4");
+            let meta = state.meta_for(replays_dir, &input.replay_name);
+            let ship = meta.as_ref().and_then(|m| {
+                replays_dir
+                    .parent()
+                    .and_then(|game_dir| scene_export::ship_display_name(game_dir, &m.player_vehicle))
+            });
+            let filename = render_file_name(meta.as_ref(), ship.as_deref(), id);
             let output = match persist_render(&dir, &filename, &bytes) {
                 Ok(p) => p,
                 Err(_) => return error("save_failed", 500),
@@ -246,5 +252,141 @@ pub(super) fn post(
             reply(200, serde_json::json!({"bytes":bytes.len()}))
         }
         _ => error("not_found", 404),
+    }
+}
+
+const NAME_PART_MAX: usize = 40;
+
+/// Keeps letters, digits, `_` and `-`; whitespace becomes `-`; the rest is dropped.
+fn sanitize_name_part(value: &str) -> String {
+    let mut out = String::new();
+    for c in value.chars() {
+        let c = if c.is_whitespace() { '-' } else { c };
+        if (c.is_alphanumeric() || c == '_' || c == '-') && !(c == '-' && out.ends_with('-')) {
+            out.push(c);
+        }
+    }
+    out.trim_matches('-').chars().take(NAME_PART_MAX).collect::<String>().trim_matches('-').to_string()
+}
+
+/// `spaces/22_tierra_del_fuego` -> `Tierra-del-Fuego` (mirrors the RePlayer's `readableName`).
+fn readable_map_name(map_name: &str) -> String {
+    let last = map_name.rsplit(['/', '\\']).next().unwrap_or(map_name);
+    let digits = last.chars().take_while(char::is_ascii_digit).count();
+    let mut rest = last;
+    if digits > 0 && last[digits..].starts_with('_') {
+        rest = &last[digits + 1..];
+        let lower = rest.to_ascii_lowercase();
+        if lower.starts_with("ne_") || lower.starts_with("oc_") {
+            rest = &rest[3..];
+        }
+    }
+    let words: Vec<String> = rest
+        .split(['-', '_', ' '])
+        .filter(|w| !w.is_empty())
+        .enumerate()
+        .map(|(i, w)| {
+            // Connector words stay lowercase ("Tierra-del-Fuego"), unlike the RePlayer.
+            if i > 0 && ["del", "de", "of", "the", "la"].contains(&w.to_ascii_lowercase().as_str()) {
+                return w.to_ascii_lowercase();
+            }
+            let mut chars = w.chars();
+            chars.next().map(|f| f.to_uppercase().chain(chars).collect()).unwrap_or_default()
+        })
+        .collect();
+    sanitize_name_part(&words.join("-"))
+}
+
+/// Parses strict `DD.MM.YYYY HH:MM:SS` into `YYYY-MM-DD_HH-MM`.
+fn date_name_part(date_time: &str) -> Option<String> {
+    let (date, time) = date_time.split_once(' ')?;
+    let nums = |s: &str, sep: char, widths: &[usize]| -> Option<Vec<String>> {
+        let parts: Vec<&str> = s.split(sep).collect();
+        (parts.len() == widths.len()
+            && parts.iter().zip(widths).all(|(p, w)| p.len() == *w && p.bytes().all(|b| b.is_ascii_digit())))
+        .then(|| parts.iter().map(|p| p.to_string()).collect())
+    };
+    let d = nums(date, '.', &[2, 2, 4])?;
+    let t = nums(time, ':', &[2, 2, 2])?;
+    Some(format!("{}-{}-{}_{}-{}", d[2], d[1], d[0], t[0], t[1]))
+}
+
+/// Readable `<date>_<Ship>_<Map>.mp4`; any missing part falls back to `replay-<id>.mp4`.
+fn render_file_name(meta: Option<&scene_export::ReplayMeta>, ship: Option<&str>, id: &str) -> String {
+    let fallback = || format!("replay-{id}.mp4");
+    let Some(meta) = meta else { return fallback() };
+    let Some(date) = date_name_part(&meta.date_time) else { return fallback() };
+    let ship = ship
+        .map(str::to_string)
+        .or_else(|| meta.player_vehicle.split_once('-').map(|(_, n)| n.to_string()))
+        .map(|s| sanitize_name_part(&s))
+        .unwrap_or_default();
+    let map = readable_map_name(&meta.map_name);
+    if ship.is_empty() || map.is_empty() {
+        return fallback();
+    }
+    format!("{date}_{ship}_{map}.mp4")
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    fn meta(date: &str, map: &str, vehicle: &str) -> scene_export::ReplayMeta {
+        scene_export::ReplayMeta {
+            battle_type: None,
+            game_version_short: None,
+            map_name: map.into(),
+            date_time: date.into(),
+            player_name: String::new(),
+            player_vehicle: vehicle.into(),
+            complete: true,
+            header: None,
+            battle_results: None,
+        }
+    }
+
+    #[test]
+    fn normal() {
+        let m = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "PVSB010-Libertad");
+        assert_eq!(render_file_name(Some(&m), Some("Libertad"), "j"), "2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4");
+    }
+
+    #[test]
+    fn ship_falls_back_to_vehicle_suffix() {
+        let m = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "PVSB010-Libertad");
+        assert_eq!(render_file_name(Some(&m), None, "j"), "2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4");
+    }
+
+    #[test]
+    fn map_prefixes() {
+        assert_eq!(readable_map_name("spaces/15_NE_north"), "North");
+        assert_eq!(readable_map_name("spaces/04_OC_islands"), "Islands");
+        assert_eq!(readable_map_name("spaces/10_NE_big_race"), "Big-Race");
+    }
+
+    #[test]
+    fn ship_names_are_sanitized() {
+        let m = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "X-Y");
+        assert!(render_file_name(Some(&m), Some("Fusō"), "j").contains("_Fusō_"));
+        assert!(render_file_name(Some(&m), Some("Orion\u{a0}'44"), "j").contains("_Orion-44_"));
+    }
+
+    #[test]
+    fn missing_or_bad_data_falls_back() {
+        let ok = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "A-B");
+        assert_eq!(render_file_name(None, Some("B"), "j"), "replay-j.mp4");
+        for bad in ["", "2026-10-10 19:59:03", "10.10.2026", "1.10.2026 19:59:03", "10.10.2026 19:59", "aa.bb.cccc dd:ee:ff"] {
+            let mut m = ok.clone();
+            m.date_time = bad.into();
+            assert_eq!(render_file_name(Some(&m), Some("B"), "j"), "replay-j.mp4", "{bad}");
+        }
+    }
+
+    #[test]
+    fn long_parts_are_capped() {
+        let m = meta("10.10.2026 19:59:03", &format!("spaces/1_{}", "a".repeat(200)), "A-B");
+        let name = render_file_name(Some(&m), Some(&"s".repeat(200)), "j");
+        assert!(name.len() < 120, "{name}");
     }
 }
