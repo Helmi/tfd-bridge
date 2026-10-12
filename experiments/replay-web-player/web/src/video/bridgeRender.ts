@@ -7,8 +7,13 @@ export async function renderInBridge(replayName: string, arenaId: string | undef
   const started = performance.now();
   const response = await fetch('/v1/render/jobs', {method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({replay_name:replayName,arena_unique_id:arenaId,video_options:videoOptions})});
-  if (response.status === 404) return undefined; // older Bridge: existing in-page export
-  if (!response.ok) throw new Error(`Could not start replay render (${response.status})`);
+  if (!response.ok) {
+    const code = await response.json().then((body: {error?: string}) => body.error).catch(() => undefined);
+    if (code === 'replay_not_found') throw new Error('Replay file not found.');
+    if (code === 'replay_not_ready') throw new Error('Incomplete replay: the end of the battle was not recorded.');
+    if (response.status === 404) return undefined; // older Bridge: existing in-page export
+    throw new Error(`Could not start replay render (${code ?? response.status})`);
+  }
   const initial = await response.json() as {id:string};
   const url = `/v1/render/jobs/${encodeURIComponent(initial.id)}`;
   const cancel = () => {void fetch(`${url}/cancel`,{method:'POST'}).catch(() => undefined);};

@@ -41,7 +41,8 @@ export async function runBatch(options: {
     if (signal.aborted) { results.push({ replay, status: 'skipped' }); continue; }
     onStart?.(index, replay);
     try {
-      const saved = await render(replay.filename, undefined, (progress) => onProgress?.(progress), signal, settings);
+      // The bridge resolves replays by their replays-folder-relative name (the summary id), not the bare filename.
+      const saved = await render(replay.id, undefined, (progress) => onProgress?.(progress), signal, settings);
       results.push(saved ? { replay, status: 'saved' } : { replay, status: 'failed', error: OLD_BRIDGE_REASON });
     } catch (reason) {
       results.push(signal.aborted

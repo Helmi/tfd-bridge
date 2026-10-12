@@ -3,7 +3,8 @@ import { OLD_BRIDGE_REASON, runBatch, type BatchReplay } from './batchRender';
 import { DEFAULT_LOCAL_VIDEO } from './renderSettings';
 import type { renderInBridge } from './bridgeRender';
 
-const replay = (id: string, playedAt: string): BatchReplay => ({ id, filename: `${id}.wowsreplay`, shipName: id, mapName: 'Map', playedAt });
+// Real summaries: id is the replays-folder-relative name, filename only the basename.
+const replay = (name: string, playedAt: string): BatchReplay => ({ id: `15.9.0.0/${name}.wowsreplay`, filename: `${name}.wowsreplay`, shipName: name, mapName: 'Map', playedAt });
 const saved = { downloadName: 'x.mp4', elapsedMs: 1, frames: 1, bytes: 1 };
 const replays = [replay('new', '2026-01-03T10:00:00Z'), replay('old', '2026-01-01T10:00:00Z'), replay('mid', '2026-01-02T10:00:00Z')];
 
@@ -21,7 +22,7 @@ describe('runBatch', () => {
       return saved;
     };
     const results = await runBatch({ replays, settings: DEFAULT_LOCAL_VIDEO, signal: new AbortController().signal, render });
-    expect(calls).toEqual(['old.wowsreplay', 'mid.wowsreplay', 'new.wowsreplay']);
+    expect(calls).toEqual(['15.9.0.0/old.wowsreplay', '15.9.0.0/mid.wowsreplay', '15.9.0.0/new.wowsreplay']);
     expect(maxRunning).toBe(1);
     expect(results.map(r => r.status)).toEqual(['saved', 'saved', 'saved']);
   });
@@ -40,11 +41,11 @@ describe('runBatch', () => {
     const started: string[] = [];
     const render: typeof renderInBridge = (name, _arena, _progress, signal) => new Promise((resolve, reject) => {
       started.push(name);
-      if (name === 'old.wowsreplay') resolve(saved);
+      if (name === '15.9.0.0/old.wowsreplay') resolve(saved);
       else { setTimeout(() => controller.abort(), 1); signal.addEventListener('abort', () => reject(new Error('Render cancelled'))); }
     });
     const results = await runBatch({ replays, settings: DEFAULT_LOCAL_VIDEO, signal: controller.signal, render });
-    expect(started).toEqual(['old.wowsreplay', 'mid.wowsreplay']);
+    expect(started).toEqual(['15.9.0.0/old.wowsreplay', '15.9.0.0/mid.wowsreplay']);
     expect(results.map(r => r.status)).toEqual(['saved', 'skipped', 'skipped']);
   });
 });
