@@ -1145,6 +1145,9 @@ mod tests {
             name: name.into(),
             size,
             modified_ms: now - age_days * day_ms,
+            ship_name: None,
+            ship_id: None,
+            map_display_name: None,
         };
         let entries = vec![
             entry("recent_b.wowsreplay", 2, 100),
