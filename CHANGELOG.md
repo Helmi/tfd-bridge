@@ -11,6 +11,19 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.21.0] — 2026-10-15
+
+### Added
+- **4K video export and higher bitrates.** Local videos can be saved in 3840 × 2160, with bitrates up to 80 Mbps.
+- **Bitrate suggestions.** The export dialog suggests a "Good" and an "Artifact-free" bitrate for the chosen resolution, frame rate and codec; one click applies it.
+- **File size by battle length.** The export dialog shows the expected size for 10, 15 and 20 minute battles with the current settings, also when rendering several battles at once.
+- **AV1 video (and HEVC where supported).** Choose the codec per export. Each codec shows whether it encodes on your graphics card or only on the CPU, with a short hint on when to pick it. H.264 stays the default because it plays everywhere.
+- **Encoder details after each export.** Recent exports show which codec ran, GPU or CPU, and the frames per second.
+
+### Changed
+- **Large videos are written to disk while they render.** Videos are no longer held in memory as a whole, and the 512 MB save limit is gone for local exports.
+- **Steadier rendering in the background.** The video encoder no longer waits on timers that slow down while the render window is hidden.
+
 ## [0.20.0] — 2026-10-12
 
 ### Added
@@ -401,7 +414,8 @@ Initial release.
 - `resolve_safe_path` rejects symlinks and path traversal in served files.
 - Onboarding uses `createElement`/`textContent` (no `innerHTML`) to prevent injection.
 
-[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/Helmi/tfd-bridge/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/Helmi/tfd-bridge/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/Helmi/tfd-bridge/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/Helmi/tfd-bridge/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Helmi/tfd-bridge/compare/v0.16.0...v0.19.0
