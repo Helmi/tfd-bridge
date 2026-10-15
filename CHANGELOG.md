@@ -14,16 +14,16 @@ Versioning follows [SemVer](https://semver.org/).
 ## [0.21.0] — 2026-10-15
 
 ### Added
-- **4K video export and higher bitrates.** Local videos can be saved in 3840 × 2160, with bitrates up to 80 Mbps.
-- **Bitrate suggestions.** The export dialog suggests a "Good" and an "Artifact-free" bitrate for the chosen resolution, frame rate and codec; one click applies it.
-- **File size by battle length.** The export dialog shows the expected size for 10, 15 and 20 minute battles with the current settings, also when rendering several battles at once.
-- **AV1 video (and HEVC where supported).** Choose the codec per export. Each codec shows whether it encodes on your graphics card or only on the CPU, with a short hint on when to pick it. H.264 stays the default because it plays everywhere.
-- **Encoder details after each export.** Recent exports show which codec ran, GPU or CPU, and the frames per second.
+- **4K video export and higher bitrates.** Local videos can be saved in 3840 × 2160, with bitrates up to 84 Mbps.
+- **New export dialog.** One screen with large buttons for resolution, frame rate, codec, bitrate and battle speed — no presets, no hints. Battle speeds 15× and 25× are new.
+- **AV1 video (and HEVC where supported), on GPU or CPU.** Pick codec and encoder per export. Options your PC can't encode with the current settings are greyed out; for example the GPU may encode 60 fps only up to 1080p. The default is 1080p · 30 fps · AV1 on the GPU · 8 Mbps.
+- **Save as my default.** Store your favourite export settings; the dialog opens with them every time.
 - **Official map and ship names.** Maps and ships carry the names from the game itself, e.g. "Land of Fire" instead of "Tierra Del Fuego", and "Bismarck '41" or "A. da Barbiano". They show in the replay picker, the RePlayer and video file names. Names update automatically with each game patch.
 - **Names for tfd-engine.** The replay list (`/v1/replays`) now also sends ship id, ship name and map name per replay. Battle results now include the official ship name per player and the map name (schema 1.10). The new fields are optional.
 - **Ship and map name tables.** `game-data/` in this repository holds the official short and full ship names and the map names for each game version. They are also attached to every release.
 
 ### Changed
+- **Smoother map edges in every export.** The 2× anti-aliasing is always on and no longer a setting.
 - **Large videos are written to disk while they render.** Videos are no longer held in memory as a whole, and the 512 MB save limit is gone for local exports.
 - **Steadier rendering in the background.** The video encoder no longer waits on timers that slow down while the render window is hidden.
 
