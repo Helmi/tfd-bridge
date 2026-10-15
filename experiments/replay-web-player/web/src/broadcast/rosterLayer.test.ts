@@ -27,20 +27,21 @@ vi.mock('pixi.js', () => {
     accessibleType?: string;
     accessibleTitle?: string;
     tabIndex?: number;
-    listeners = new Map<string, Set<() => void>>();
+    listeners = new Map<string, Set<(...args: unknown[]) => void>>();
     position = { x: 0, y: 0, set(x: number, y: number) { this.x = x; this.y = y; }, copyFrom(p: { x: number; y: number }) { this.x = p.x; this.y = p.y; } };
     scale = { x: 1, y: 1, set(v: number) { this.x = v; this.y = v; } };
     constructor(options?: { label?: string }) { this.label = options?.label; }
     addChild(...nodes: unknown[]) { for (const node of nodes) { this.children = this.children.filter(child => child !== node); this.children.push(node); } }
-    on(type: string, fn: () => void) { (this.listeners.get(type) ?? this.listeners.set(type, new Set()).get(type)!).add(fn); }
-    off(type: string, fn: () => void) { this.listeners.get(type)?.delete(fn); }
-    emit(type: string) { this.listeners.get(type)?.forEach(fn => fn()); }
+    on(type: string, fn: (...args: never[]) => void) { (this.listeners.get(type) ?? this.listeners.set(type, new Set()).get(type)!).add(fn as never); }
+    off(type: string, fn: (...args: never[]) => void) { this.listeners.get(type)?.delete(fn as never); }
+    emit(type: string, ...args: unknown[]) { this.listeners.get(type)?.forEach(fn => fn(...args)); }
     destroy() {}
   }
   class Graphics extends Container {
-    shapes: { kind: string; args: number[]; fill?: string }[] = [];
+    shapes: { kind: string; args: number[]; fill?: string; stroke?: { width: number; color: string } }[] = [];
     rect(...args: number[]) { this.shapes.push({ kind: 'rect', args }); return this; }
     fill(color: string) { this.shapes[this.shapes.length - 1].fill = color; return this; }
+    stroke(style: { width: number; color: string }) { this.shapes[this.shapes.length - 1].stroke = style; return this; }
   }
   class Rectangle { constructor(public x: number, public y: number, public width: number, public height: number) {} }
   class TextStyle { constructor(public options: unknown) {} }
@@ -70,6 +71,7 @@ const ctx = {
   mode: 'interactive',
   createText: (style: { fill?: string }) => { const text = fakeText(); text.style = { fill: style.fill }; return text; },
   classIconSprite: fakeSprite,
+  requestRender: vi.fn(),
 } as unknown as StageContext;
 
 const owner = sampleScene.ships[0];
@@ -208,6 +210,54 @@ describe('roster layer', () => {
     expect(row.eventMode).toBe('passive');
     row.emit('click');
     expect(selectShip).not.toHaveBeenCalled();
+  });
+
+  it('draws a 2 px gold ring while the accessibility overlay focuses a row, and hides it on blur', () => {
+    vi.mocked(ctx.requestRender).mockClear();
+    const layer = createRosterLayer(ctx, scene);
+    layer.update(frameOf(scene, 0, owner.id, true));
+    const [first, second] = rows(layer).ally as unknown as (FakeNode & { emit(t: string, ...a: unknown[]): void })[];
+    const ring = (row: FakeNode) => row.children.at(-1) as unknown as FakeNode & { shapes: { kind: string; args: number[]; stroke?: { width: number; color: string } }[] };
+    expect(ring(first).visible).toBe(false);
+    expect(ring(first).shapes[0]).toMatchObject({ kind: 'rect', args: [-1, -1, 371 + 2, 44 + 2], stroke: { width: 2, color: '#e6b855' } });
+    // Pixi's overlay: focus is a `mouseover` without a native event, blur a `mouseout`.
+    first.emit('mouseover', {});
+    expect(ring(first).visible).toBe(true);
+    // The stage does not tick while paused: each focus change asks for a redraw.
+    expect(ctx.requestRender).toHaveBeenCalledTimes(1);
+    // Tab to the next row: the old ring goes, the new one shows.
+    first.emit('mouseout');
+    second.emit('mouseover', {});
+    expect(ring(first).visible).toBe(false);
+    expect(ring(second).visible).toBe(true);
+    second.emit('mouseout');
+    expect(ring(second).visible).toBe(false);
+    expect(ctx.requestRender).toHaveBeenCalledTimes(4);
+    // A real mouse hover has a native event and draws nothing.
+    first.emit('mouseover', { nativeEvent: {} });
+    expect(ring(first).visible).toBe(false);
+  });
+
+  it('drops the ring on real mouse movement, as Pixi drops its overlay', () => {
+    const listeners = new Map<string, (event: unknown) => void>();
+    vi.stubGlobal('document', {
+      addEventListener: (type: string, fn: (event: unknown) => void) => listeners.set(type, fn),
+      removeEventListener: (type: string) => listeners.delete(type),
+    });
+    try {
+      const layer = createRosterLayer(ctx, scene);
+      layer.update(frameOf(scene, 0, owner.id, true));
+      const first = rows(layer).ally[0] as unknown as FakeNode & { emit(t: string, ...a: unknown[]): void };
+      first.emit('mouseover', {});
+      expect((first.children.at(-1) as FakeNode).visible).toBe(true);
+      listeners.get('mousemove')!({ movementX: 0, movementY: 0 });
+      expect((first.children.at(-1) as FakeNode).visible).toBe(true);
+      listeners.get('mousemove')!({ movementX: 3, movementY: 0 });
+      expect((first.children.at(-1) as FakeNode).visible).toBe(false);
+      expect(listeners.has('mousemove')).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('shows sunk, self, division and long names in the Pixi state', () => {

@@ -30,6 +30,11 @@ export interface StageContext {
   /** Export option, false in interactive mode. */
   readonly mapSupersampling: boolean;
   toFrame(clientX: number, clientY: number): { x: number; y: number };
+  /**
+   * Draw the frame now. The interactive stage only renders when the player ticks, so a layer that
+   * changes while playback is paused (the keyboard focus ring) asks for a redraw. No-op in export.
+   */
+  requestRender(): void;
   /** Resolution follows the stage. */
   createText(style: TextStyleOptions): Text;
   /** Texture loaded once per stage, rotated 90 degrees. The caller sets the tint. */

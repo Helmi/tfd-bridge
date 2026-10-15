@@ -47,6 +47,20 @@ export class BroadcastStage {
   private readonly reducedMotionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : undefined;
   private destroyed = false;
 
+  /**
+   * Pixi places and sizes the Tab overlay buttons only in the `postrender` of a render. A mouse move drops
+   * the overlay, and the next Tab rebuilds it with default 100x100 boxes at the canvas corner. While
+   * playback is paused nothing renders, so the buttons (and the browser focus) stay there. Activate the
+   * overlay on Tab ourselves, ahead of Pixi's listener, and render once so every button sits on its row.
+   */
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Tab' || this.destroyed) return;
+    const accessibility = (this.app.renderer as { accessibility?: { isActive: boolean; setAccessibilityEnabled(enabled: boolean): void } }).accessibility;
+    if (!accessibility || accessibility.isActive) return;
+    accessibility.setAccessibilityEnabled(true);
+    this.render();
+  };
+
   private constructor(private readonly app: Application, readonly mode: StageOptions['mode'], private readonly mapSupersampling: boolean) {}
 
   static async create(scene: ReplayScene, options: StageOptions): Promise<BroadcastStage> {
@@ -69,6 +83,7 @@ export class BroadcastStage {
     };
     await app.init(init);
     const stage = new BroadcastStage(app, options.mode, interactive ? false : options.mapSupersampling ?? false);
+    if (interactive) globalThis.addEventListener?.('keydown', stage.onKeyDown, true);
     try {
       app.stage.sortableChildren = true;
       if (!interactive) app.stage.eventMode = 'none';
@@ -131,6 +146,7 @@ export class BroadcastStage {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    globalThis.removeEventListener?.('keydown', this.onKeyDown, true);
     for (const { layer } of this.layers) layer.destroy();
     this.layers.length = 0;
     this.app.destroy({ removeView: true }, { children: true });
@@ -144,6 +160,7 @@ export class BroadcastStage {
       get resolution() { return stage.resolution; },
       mapSupersampling: this.mapSupersampling,
       toFrame: (clientX, clientY) => toFrame(stage.app.canvas.getBoundingClientRect(), clientX, clientY),
+      requestRender: () => { if (stage.mode === 'interactive' && !stage.destroyed) stage.render(); },
       createText: (style: TextStyleOptions) => new Text({ style: { fontFamily: FONT_SANS, ...style } }),
       classIconSprite: shipClass => createClassIconSprite(stage.icons, shipClass),
     };

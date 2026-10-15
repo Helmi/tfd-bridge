@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {advancePlayback,seekPlayback,videoFrameCount,videoFrameTime} from './ending';
+import {advancePlayback,endingModel,seekPlayback,videoFrameCount,videoFrameTime} from './ending';
 import {estimateLocalVideo,DEFAULT_LOCAL_VIDEO} from '../video/renderSettings';
 
 describe('battle ending timing',()=>{
@@ -25,5 +25,27 @@ describe('battle ending timing',()=>{
   });
   it('includes ending in the save dialog duration and size estimate',()=>{
     expect(estimateLocalVideo(100,DEFAULT_LOCAL_VIDEO).seconds).toBe(14.5);
+  });
+});
+
+describe('ending model',()=>{
+  it('is null before the end and exists from the end on',()=>{
+    expect(endingModel({outcome:'victory',complete:true},-0.01)).toBeNull();
+    expect(endingModel({outcome:'victory',complete:true},0)).not.toBeNull();
+  });
+  it.each([
+    ['victory',true,'Victory',[61,177,126]],
+    ['defeat',true,'Defeat',[194,65,66]],
+    ['draw',true,'Draw',[116,139,149]],
+    [undefined,false,'Recording ended',[116,139,149]],
+    [undefined,true,'Replay ended',[116,139,149]],
+    [undefined,undefined,'Replay ended',[116,139,149]],
+  ] as const)('outcome %s, complete %s shows %s',(outcome,complete,title,rgb)=>{
+    expect(endingModel({outcome,complete},1)).toMatchObject({title,rgb});
+  });
+  it('holds for 3 seconds, fades for 1 second, then stays black',()=>{
+    for(const [elapsed,alpha] of [[0,0],[2.99,0],[3,0],[3.5,0.5],[4,1],[4.5,1],[60,1]]) {
+      expect(endingModel({outcome:'victory',complete:true},elapsed)!.blackAlpha).toBeCloseTo(alpha);
+    }
   });
 });

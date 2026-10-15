@@ -10,6 +10,8 @@ vi.mock('pixi.js', () => {
   class Container {
     label: string;
     children: unknown[] = [];
+    boundsArea?: { x: number; y: number; width: number; height: number };
+    position = { x: 0, y: 0, set(x: number, y: number) { this.x = x; this.y = y; } };
     constructor(options: { label?: string } = {}) { this.label = options.label ?? ''; }
     addChild(child: unknown) { this.children.push(child); return child; }
     destroy() {}
@@ -21,7 +23,8 @@ vi.mock('pixi.js', () => {
     stroke() { return this; }
     clear() { return this; }
   }
-  return { Container, Graphics };
+  class Rectangle { constructor(public x: number, public y: number, public width: number, public height: number) {} }
+  return { Container, Graphics, Rectangle };
 });
 
 import { createScoreboardLayer } from './scoreboardLayer';
@@ -99,6 +102,25 @@ describe('scoreboard layer', () => {
     layer.update(frame(345));
     expect(sprites.filter(s => s.alpha === 0.45)).toHaveLength(4);
     expect(sprites.filter(s => s.alpha === 0.45).every(s => s.tint === '#68766d')).toBe(true);
+  });
+
+  it('gives every survivor icon a 25 x 27 box, 30 px apart, with the glyph centred in it', () => {
+    const { ctx, sprites } = fakeContext();
+    const layer = createScoreboardLayer(ctx, scene);
+    const first = frame(0);
+    layer.update(first);
+    type Box = { label: string; boundsArea: { width: number; height: number }; position: { x: number; y: number }; children: { position: { set: ReturnType<typeof vi.fn> } }[] };
+    const boxes = (layer.container as unknown as { children: Box[] }).children.filter(c => c.label === 'survivor');
+    const friendly = first.ally.length;
+    const left = 249 - (friendly * 30 - 3) / 2;
+    expect(boxes).toHaveLength(scene.ships.length);
+    boxes.slice(0, friendly).forEach((box, i) => {
+      expect(box.boundsArea).toMatchObject({ width: 25, height: 27 });
+      expect(box.position.x).toBeCloseTo(left + 1 + 30 * i);
+      expect(box.position.y).toBe(93);
+      expect(box.children[0].position.set).toHaveBeenCalledWith(12.5, 13.5);
+    });
+    expect(sprites).toHaveLength(boxes.length);
   });
 
   it('colours caps by owner', () => {

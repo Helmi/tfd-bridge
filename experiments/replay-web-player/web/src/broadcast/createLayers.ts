@@ -1,4 +1,5 @@
 import { Container, Graphics } from 'pixi.js';
+import { createEndingLayer } from './endingLayer';
 import { createFeedLayer } from './feedLayer';
 import { COLORS, FRAME, Z } from './layout';
 import { createScoreboardLayer } from './scoreboardLayer';
@@ -28,5 +29,6 @@ export function createLayers(ctx: StageContext, scene: ReplayScene): LayerEntry[
   stage.addLayer(createMapLayer(mapLayerDeps(ctx), scene), Z.MAP);
   stage.addLayer(createPlayerPanelLayer(ctx, scene), Z.PANEL);
   stage.addLayer(createRibbonsLayer(ctx, scene), Z.PANEL);
+  stage.addLayer(createEndingLayer(ctx, scene), Z.ENDING);
   return entries;
 }
