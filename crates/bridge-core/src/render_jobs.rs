@@ -28,6 +28,9 @@ pub struct VideoOptions {
     /// Video codec; requests without it render H.264.
     #[serde(default = "default_codec")]
     pub codec: String,
+    /// `gpu` or `cpu`: only that encoder may run. Absent keeps the legacy order.
+    #[serde(default)]
+    pub encoder: Option<String>,
 }
 
 fn default_codec() -> String {
@@ -43,8 +46,9 @@ impl VideoOptions {
         valid_codec(&self.codec)
             && matches!(self.resolution.as_str(), "1080" | "1440" | "2160")
             && matches!(self.fps, 24 | 30 | 60)
-            && (1_000_000..=80_000_000).contains(&self.bitrate)
-            && matches!(self.speed, 5 | 10 | 20)
+            && self.encoder.as_deref().is_none_or(|e| matches!(e, "gpu" | "cpu"))
+            && (1_000_000..=84_000_000).contains(&self.bitrate)
+            && matches!(self.speed, 5 | 10 | 15 | 20 | 25)
     }
 }
 
@@ -425,17 +429,17 @@ mod tests {
         }
     }
     fn video_options() -> VideoOptions {
-        VideoOptions { map_supersampling: false, resolution: "1080".into(), fps: 30, bitrate: 4_000_000, speed: 10, codec: "h264".into() }
+        VideoOptions { map_supersampling: false, resolution: "1080".into(), fps: 30, bitrate: 4_000_000, speed: 10, codec: "h264".into(), encoder: None }
     }
 
     #[test]
     fn local_video_preferences_are_validated_and_preserved_for_worker() {
         for resolution in ["1080", "1440", "2160"] {
             for fps in [24, 30, 60] {
-                for speed in [5, 10, 20] {
-                    for bitrate in [1_000_000, 4_000_000, 80_000_000] {
+                for speed in [5, 10, 15, 20, 25] {
+                    for bitrate in [1_000_000, 4_000_000, 80_000_000, 84_000_000] {
                         let mut jobs = RenderJobs::default();
-                        let expected = local_request(VideoOptions { map_supersampling: false, resolution: resolution.into(), fps, bitrate, speed, codec: "h264".into() });
+                        let expected = local_request(VideoOptions { map_supersampling: false, resolution: resolution.into(), fps, bitrate, speed, codec: "h264".into(), encoder: None });
                         let StartRender::New { worker, .. } = jobs.start(expected.clone()).unwrap() else { panic!("expected new job") };
                         assert_eq!(jobs.claim(&worker).unwrap(), expected);
                     }
@@ -447,9 +451,11 @@ mod tests {
             VideoOptions { fps: 25, ..video_options() },
             VideoOptions { fps: 61, ..video_options() },
             VideoOptions { bitrate: 999_999, ..video_options() },
-            VideoOptions { bitrate: 80_000_001, ..video_options() },
+            VideoOptions { bitrate: 84_000_001, ..video_options() },
             VideoOptions { speed: 0, ..video_options() },
-            VideoOptions { speed: 15, ..video_options() },
+            VideoOptions { speed: 30, ..video_options() },
+            VideoOptions { encoder: Some("npu".into()), ..video_options() },
+            VideoOptions { encoder: Some(String::new()), ..video_options() },
             VideoOptions { codec: "vp9".into(), ..video_options() },
             VideoOptions { codec: String::new(), ..video_options() },
         ];
@@ -494,6 +500,22 @@ mod tests {
         }
         let value = serde_json::json!({"resolution":"1080","fps":30,"bitrate":4_000_000,"speed":10,"codec":"av1"});
         assert_eq!(serde_json::from_value::<VideoOptions>(value).unwrap().codec, "av1");
+    }
+    #[test]
+    fn encoder_choice_is_validated_and_round_trips() {
+        for encoder in ["gpu", "cpu"] {
+            let options = VideoOptions { encoder: Some(encoder.into()), ..video_options() };
+            let mut jobs = RenderJobs::default();
+            let expected = local_request(options);
+            let StartRender::New { worker, .. } = jobs.start(expected.clone()).unwrap() else { panic!("expected new job") };
+            let claimed = jobs.claim(&worker).unwrap();
+            assert_eq!(claimed, expected);
+            assert_eq!(serde_json::to_value(claimed.video_options.unwrap()).unwrap()["encoder"], encoder);
+        }
+        let value = serde_json::json!({"resolution":"1080","fps":30,"bitrate":4_000_000,"speed":10});
+        assert_eq!(serde_json::from_value::<VideoOptions>(value).unwrap().encoder, None);
+        let value = serde_json::json!({"resolution":"1080","fps":30,"bitrate":4_000_000,"speed":10,"encoder":"cpu"});
+        assert_eq!(serde_json::from_value::<VideoOptions>(value).unwrap().encoder.as_deref(), Some("cpu"));
     }
     #[test]
     fn video_info_accepts_old_and_new_fields_and_exposes_no_paths() {
@@ -592,6 +614,18 @@ mod tests {
         let StartRender::New { worker, .. } = jobs.start(budgeted).unwrap() else { panic!() };
         jobs.claim(&worker).unwrap();
         assert_eq!(jobs.rendered(&worker, "a.mp4".into(), mib600), Err(JobError::ExceedsLimit));
+    }
+
+    /// Regression guard (also passes on the base): the worker's `encoder_unavailable` code reaches the public status.
+    #[test]
+    fn encoder_unavailable_failure_code_is_kept_in_status() {
+        let mut jobs = RenderJobs::default();
+        let StartRender::New { worker, .. } = jobs.start(local_request(video_options())).unwrap() else { panic!("expected new job") };
+        jobs.claim(&worker).unwrap();
+        jobs.fail(&worker, "encoder_unavailable").unwrap();
+        let status = jobs.status(&worker.job_id).unwrap();
+        assert_eq!(status.state, RenderState::Failed);
+        assert_eq!(status.error.as_deref(), Some("encoder_unavailable"));
     }
 
     #[test]

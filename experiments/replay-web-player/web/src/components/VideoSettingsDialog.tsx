@@ -1,61 +1,93 @@
-import {useEffect, useRef, useState} from 'react';
-import {CODEC_HINTS, CODEC_LABELS, CODEC_ORDER, CPU_ONLY_HINT, detectCodecSupport, type CodecSupport, type EncodeReport, type VideoCodec} from '../video/codecs';
-import {battleLengthSizes, BITRATE_OPTIONS_MBPS, estimateLocalVideo, LOCAL_VIDEO_PRESETS, suggestedBitrates, type LocalVideoSettings} from '../video/renderSettings';
+import {useEffect, useRef, useState, type CSSProperties, type ReactNode} from 'react';
+import {CODEC_LABELS, CODEC_ORDER, detectEncoderSupport, type EncoderChoice, type EncoderSupport, type VideoCodec} from '../video/codecs';
+import {BITRATE_OPTIONS_MBPS, estimateLocalVideo, formatFileSize, FPS_OPTIONS, loadVideoDefault, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
 import './render-dialog.css';
 
-export function VideoSettingsDialog({batchCount, duration, initial, native, comparisons = [], onClose, onRender}: {
+const ENCODERS: EncoderChoice[] = ['gpu', 'cpu'];
+const RESOLUTION_LABELS: Record<LocalVideoSettings['resolution'], [string, string]> = {
+  '1080': ['1080p', '1920 × 1080'], '1440': ['1440p', '2560 × 1440'], '2160': ['4K', '3840 × 2160'],
+};
+
+/** HEVC is offered only where the machine supports it (or when it is already selected). */
+export function visibleCodecs(support: EncoderSupport | undefined, selected: VideoCodec): VideoCodec[] {
+  return CODEC_ORDER.filter(c => c !== 'hevc' || c === selected || (support && (support.hevc.gpu || support.hevc.cpu)));
+}
+
+/** Keeps a disabled selection usable: same codec on the CPU, else the first enabled button. */
+export function settleEncoder(settings: LocalVideoSettings, support: EncoderSupport): LocalVideoSettings {
+  const codec = settings.codec ?? 'h264';
+  const encoder = settings.encoder ?? 'gpu';
+  if (support[codec][encoder]) return settings;
+  if (support[codec].cpu) return {...settings, encoder: 'cpu'};
+  for (const c of visibleCodecs(support, codec)) for (const e of ENCODERS) if (support[c][e]) return {...settings, codec: c, encoder: e};
+  return settings;
+}
+
+function Row({label, cols, children}: {label: string; cols: number; children: ReactNode}) {
+  return <div className="video-row" role="group" aria-label={label}>
+    <span className="video-row-label" aria-hidden="true">{label}</span>
+    <div className="video-choices" style={{'--cols': cols} as CSSProperties}>{children}</div>
+  </div>;
+}
+
+/** The button rows; `support` is undefined until the first probe returns (buttons stay enabled meanwhile). */
+export function VideoSettingsFields({batchCount, duration, settings, support, onChange}: {
+  batchCount?: number; duration: number; settings: LocalVideoSettings;
+  support: EncoderSupport | undefined; onChange: (settings: LocalVideoSettings) => void;
+}) {
+  const codec = settings.codec ?? 'h264';
+  const encoder = settings.encoder ?? 'gpu';
+  const codecs = visibleCodecs(support, codec);
+  const gpuMissing = support && codecs.some(c => !support[c].gpu);
+  const estimate = estimateLocalVideo(duration, settings);
+  const seconds = Math.ceil(estimate.seconds);
+  return <>
+    <Row label="Resolution" cols={3}>{RESOLUTION_OPTIONS.map(r => <button type="button" key={r} aria-pressed={settings.resolution === r} onClick={() => onChange({...settings, resolution: r})}>
+      <strong>{RESOLUTION_LABELS[r][0]}</strong><small>{RESOLUTION_LABELS[r][1]}</small></button>)}</Row>
+    <Row label="Frame rate" cols={2}>{FPS_OPTIONS.map(n => <button type="button" key={n} aria-pressed={settings.fps === n} onClick={() => onChange({...settings, fps: n})}>{n} fps</button>)}</Row>
+    <Row label="Codec" cols={2}>{codecs.flatMap(c => ENCODERS.map(e =>
+      <button type="button" key={`${c}-${e}`} aria-pressed={codec === c && encoder === e} disabled={support?.[c][e] === false}
+        onClick={() => onChange({...settings, codec: c, encoder: e})}>{CODEC_LABELS[c]} · {e === 'gpu' ? 'GPU' : 'CPU'}</button>))}</Row>
+    {gpuMissing && <p className="video-encoder-note">GPU encoding isn't available for these settings here — the CPU exporter is used.</p>}
+    <Row label="Bitrate" cols={5}>{BITRATE_OPTIONS_MBPS.map(n => <button type="button" key={n} aria-pressed={settings.bitrate === n * 1_000_000} onClick={() => onChange({...settings, bitrate: n * 1_000_000})}>{n} Mbps</button>)}</Row>
+    <Row label="Battle speed" cols={5}>{SPEED_OPTIONS.map(n => <button type="button" key={n} aria-pressed={settings.speed === n} onClick={() => onChange({...settings, speed: n})}>{n}×</button>)}</Row>
+    {!batchCount && <div className="video-estimate"><strong>{Math.floor(seconds / 60)}:{(seconds % 60).toString().padStart(2, '0')} video</strong><span>· about {formatFileSize(estimate.megabytes)}</span></div>}
+  </>;
+}
+
+export function VideoSettingsDialog({batchCount, duration, onClose, onRender}: {
   /** Batch variant: one settings object for this many battles; no single-battle estimate. */
   batchCount?: number;
-  comparisons?: {settings: LocalVideoSettings; elapsedMs: number; bytes: number; encode?: EncodeReport}[];
-  duration: number; initial: LocalVideoSettings; native: boolean;
+  duration: number;
   onClose: () => void; onRender: (settings: LocalVideoSettings) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [settings, setSettings] = useState(initial);
-  const estimate = estimateLocalVideo(duration, settings);
-  const displaySeconds = Math.ceil(estimate.seconds);
-  const codec = settings.codec ?? 'h264';
-  const [support, setSupport] = useState<Record<VideoCodec, CodecSupport>>();
-  const suggestion = suggestedBitrates(settings.resolution, settings.fps, codec);
-  const resolutionLabel = settings.resolution === '2160' ? '4K' : `${settings.resolution}p`;
-  const active = LOCAL_VIDEO_PRESETS.find(p => Object.entries(p.settings).every(([key, value]) => settings[key as keyof LocalVideoSettings] === value))?.id;
+  const [settings, setSettings] = useState(loadVideoDefault); // every open starts from the saved default (the dialog is mounted per open)
+  const [support, setSupport] = useState<EncoderSupport>();
+  const [saved, setSaved] = useState(false);
   // Live detection for the exact config the encoder would use; never blocks the dialog.
   useEffect(() => {
     let current = true;
-    void detectCodecSupport(settings).then(result => {
+    void detectEncoderSupport(settings).then(result => {
       if (!current) return;
       setSupport(result);
-      setSettings(s => result[s.codec ?? 'h264'] === 'unavailable' ? {...s, codec: 'h264'} : s);
+      setSettings(s => settleEncoder(s, result));
     });
     return () => {current = false;};
-  }, [settings.resolution, settings.fps, settings.bitrate]);
+  }, [settings.resolution, settings.fps]);
   useEffect(() => {const element = dialog.current!; element.showModal(); return () => element.close();}, []);
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [saved]);
   return <dialog ref={dialog} className="render-dialog video-settings-dialog" aria-labelledby="video-settings-title" onCancel={onClose}>
     <div className="render-dialog-heading">LOCAL VIDEO · MP4</div>
     <h2 id="video-settings-title">{batchCount ? `Save ${batchCount} ${batchCount === 1 ? 'replay' : 'replays'}` : 'Save your replay'}</h2>
-    <p>Choose a preset or adjust the settings to compare results.</p>
-    <div className="video-presets" aria-label="Video presets">
-      {LOCAL_VIDEO_PRESETS.map(p => <button key={p.id} aria-pressed={active === p.id} onClick={() => setSettings({...p.settings,mapSupersampling:settings.mapSupersampling})}>
-        <strong>{p.name}</strong><span>{p.description}</span><small>{p.settings.fps} fps · {p.settings.bitrate / 1_000_000} Mbps</small>
-      </button>)}
+    <VideoSettingsFields batchCount={batchCount} duration={duration} settings={settings} support={support} onChange={setSettings}/>
+    <div className="render-dialog-footer">
+      <button type="button" className="video-default-button" onClick={() => setSaved(saveVideoDefault(settings))}>{saved ? 'Saved as default' : 'Save as my default'}</button>
+      <div className="video-footer-actions"><button type="button" onClick={onClose}>Cancel</button><button type="button" className="video-start-button" onClick={() => onRender({...settings, mapSupersampling: true})}>Render & save</button></div>
     </div>
-    <div className="video-setting-fields">
-      <label>Resolution<select value={settings.resolution} onChange={e => setSettings({...settings, resolution:e.target.value as LocalVideoSettings['resolution']})}><option value="1080">1920 × 1080</option><option value="1440">2560 × 1440</option><option value="2160">3840 × 2160</option></select></label>
-      <label>Frame rate<select value={settings.fps} onChange={e => setSettings({...settings, fps:Number(e.target.value) as LocalVideoSettings['fps']})}>{[24,30,60].map(n => <option key={n} value={n}>{n} fps</option>)}</select></label>
-      <label>Bitrate<select value={settings.bitrate} onChange={e => setSettings({...settings, bitrate:Number(e.target.value)})}>{BITRATE_OPTIONS_MBPS.map(n => <option key={n} value={n * 1_000_000}>{n} Mbps</option>)}</select></label>
-      <label>Codec<select value={codec} onChange={e => setSettings({...settings, codec:e.target.value as VideoCodec})}>{CODEC_ORDER.filter(c => c !== 'hevc' || (support && support.hevc !== 'unavailable') || codec === 'hevc').map(c =>
-        <option key={c} value={c} disabled={support?.[c] === 'unavailable'}>{CODEC_LABELS[c]}{support && support[c] !== 'unavailable' ? ` · ${support[c] === 'gpu' ? 'GPU' : 'CPU only'}` : ''}</option>)}</select></label>
-      <label>Battle speed<select value={settings.speed} onChange={e => setSettings({...settings, speed:Number(e.target.value) as LocalVideoSettings['speed']})}>{[5,10,20].map(n => <option key={n} value={n}>{n}×</option>)}</select></label>
-    </div>
-    <p className="video-codec-hint">{CODEC_HINTS[codec]}{support?.[codec] === 'cpu' && <> <strong>{CPU_ONLY_HINT[codec]}</strong></>}</p>
-    <div className="video-suggestion">Suggested for {resolutionLabel} · {settings.fps} fps: {([['Good', suggestion.good], ['Artifact-free', suggestion.artifactFree]] as const).map(([name, mbps]) =>
-      <button key={name} aria-pressed={settings.bitrate === mbps * 1_000_000} onClick={() => setSettings({...settings, bitrate:mbps * 1_000_000})}>{name} {mbps} Mbps</button>)}</div>
-    <div className="video-length-sizes">Expected size: {battleLengthSizes(settings).map(s => <span key={s.minutes}>{s.minutes} min · {s.label}</span>)}</div>
-    <label className="video-antialiasing"><input type="checkbox" checked={settings.mapSupersampling ?? false} onChange={e => setSettings({...settings,mapSupersampling:e.target.checked})}/> Smoother map edges · 2× anti-aliasing</label>
-    <p>Renders the map at twice the width and height, then downsamples it. May reduce icon shimmer; uses more rendering time and memory. Output resolution and bitrate stay the same.</p>
-    {!batchCount && <div className="video-estimate"><strong>{Math.floor(displaySeconds / 60)}:{(displaySeconds % 60).toString().padStart(2,'0')} video</strong><span>About {Math.round(estimate.megabytes)} MB · actual size varies</span></div>}
-    <p className="video-save-location">{native ? <>Saves to your <strong>Videos → TFD Bridge Renders</strong> folder.</> : 'Saves through your browser’s download location.'} {settings.fps === 60 && '60 fps renders twice as many frames as 30 fps.'}</p>
-    {!batchCount && comparisons.length > 0 && <section className="video-comparisons"><strong>Recent exports · this replay</strong>{comparisons.map((run,index) => <div key={index}><span>{run.encode && `${CODEC_LABELS[run.encode.codec]} · ${run.encode.hardware ? 'GPU' : 'CPU'} · ${Math.round(run.encode.fps)} fps · `}{run.settings.mapSupersampling ? '2× anti-aliasing' : 'Standard'} · {run.settings.resolution}p · {run.settings.fps} fps · {run.settings.bitrate / 1_000_000} Mbps · {run.settings.speed}×</span><b>{(run.elapsedMs / 1000).toFixed(1)} s · {(run.bytes / 1_048_576).toFixed(1)} MB</b></div>)}<small>Time includes preparation and saving.</small></section>}
-    <div className="render-dialog-footer"><button onClick={onClose}>Cancel</button><button className="video-start-button" onClick={() => onRender(settings)}>Render & save</button></div>
   </dialog>;
 }

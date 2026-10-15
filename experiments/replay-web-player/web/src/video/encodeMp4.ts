@@ -7,7 +7,7 @@ import type { ReplayScene } from '../types';
 import { SharedFrameRenderer, VIRTUAL_HEIGHT } from './sharedFrameRenderer';
 import { budgetBitrate, retryBitrate } from './encodingPolicy';
 import { videoFrameCount, videoFrameTime } from '../engine/ending';
-import { CODEC_LABELS, MUXER_CODECS, h264CodecString, pickEncoderConfig, type EncodeReport, type VideoCodec } from './codecs';
+import { CODEC_LABELS, EncoderUnavailableError, MUXER_CODECS, h264CodecString, pickEncoderConfig, type EncodeReport, type EncoderChoice, type VideoCodec } from './codecs';
 
 export interface RenderProgress {
   frame: number;
@@ -63,6 +63,8 @@ export interface RenderOptions {
   resolution?: '1080' | '1440' | '2160';
   /** Defaults to H.264; budgeted renders always use H.264. */
   codec?: VideoCodec;
+  /** Only this encoder may run (`gpu` = hardware, `cpu` = software); absent tries hardware, then software. */
+  encoder?: EncoderChoice;
   onProgress?: (p: RenderProgress) => void;
   signal?: AbortSignal;
   maxBytes?: number;
@@ -142,8 +144,9 @@ async function encodeOnce(
     // The level MUST fit the resolution (1440p/4K exceed H.264 L4.0's 1080p cap),
     // and a hardware encoder can reject a config software would accept — so probe
     // for a supported config, preferring hardware but falling back.
-    const picked = await pickEncoderConfig(codec, { width, height, bitrate, framerate: fps });
+    const picked = await pickEncoderConfig(codec, { width, height, bitrate, framerate: fps }, opts.encoder);
     if (!picked) {
+      if (opts.encoder) throw new EncoderUnavailableError();
       throw new Error(`No supported ${CODEC_LABELS[codec]} encoder config for ${width}x${height}. Try a lower resolution.`);
     }
 
@@ -250,7 +253,7 @@ export async function renderAndSave(
   filenameBase: string,
   onProgress?: (p: RenderProgress) => void,
   signal?: AbortSignal,
-  videoOptions?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling' | 'codec'>,
+  videoOptions?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling' | 'codec' | 'encoder'>,
 ): Promise<SavedRender> {
   const result = await renderSceneToMp4(scene, { ...videoOptions, onProgress, signal });
   signal?.throwIfAborted();
