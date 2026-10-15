@@ -19,6 +19,9 @@ Versioning follows [SemVer](https://semver.org/).
 - **File size by battle length.** The export dialog shows the expected size for 10, 15 and 20 minute battles with the current settings, also when rendering several battles at once.
 - **AV1 video (and HEVC where supported).** Choose the codec per export. Each codec shows whether it encodes on your graphics card or only on the CPU, with a short hint on when to pick it. H.264 stays the default because it plays everywhere.
 - **Encoder details after each export.** Recent exports show which codec ran, GPU or CPU, and the frames per second.
+- **Official map and ship names.** Maps and ships carry the names from the game itself, e.g. "Land of Fire" instead of "Tierra Del Fuego", and "Bismarck '41" or "A. da Barbiano". They show in the replay picker, the RePlayer and video file names. Names update automatically with each game patch.
+- **Names for tfd-engine.** The replay list (`/v1/replays`) now also sends ship id, ship name and map name per replay. Battle results now include the official ship name per player and the map name (schema 1.10). The new fields are optional.
+- **Ship and map name tables.** `game-data/` in this repository holds the official short and full ship names and the map names for each game version. They are also attached to every release.
 
 ### Changed
 - **Large videos are written to disk while they render.** Videos are no longer held in memory as a whole, and the 512 MB save limit is gone for local exports.
