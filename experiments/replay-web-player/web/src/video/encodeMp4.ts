@@ -2,7 +2,7 @@
 // wall-clock rAF): rasterize the shared replay frame at explicit timestamps,
 // encode H.264 with WebCodecs and mux into MP4. Raw frames are bounded;
 // compressed output remains in memory until saved.
-import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
+import { ArrayBufferTarget, Muxer, StreamTarget } from 'mp4-muxer';
 import type { ReplayScene } from '../types';
 import { SharedFrameRenderer, VIRTUAL_HEIGHT } from './sharedFrameRenderer';
 import { budgetBitrate, retryBitrate } from './encodingPolicy';
@@ -50,8 +50,22 @@ async function pickH264Config(
   return null;
 }
 
+/** Receives muxer output in emit order; `position` is the byte offset in the file. */
+export interface VideoSink {
+  write(data: Uint8Array, position: number): void;
+  /** Chunks accepted but not yet stored; the frame loop waits while this is high. */
+  pending(): number;
+}
+
+/** Muxer chunk size and the number of queued chunks that stalls the frame loop. */
+export const STREAM_CHUNK_BYTES = 16 * 1024 * 1024;
+export const STREAM_MAX_PENDING = 4;
+
 export interface RenderResult {
+  /** Empty when the output was streamed to a sink; see `bytes`. */
   mp4: Uint8Array;
+  /** Total file size in bytes (also set for streamed output). */
+  bytes: number;
   frames: number;
   width: number;
   height: number;
@@ -72,6 +86,8 @@ export interface RenderOptions {
   onProgress?: (p: RenderProgress) => void;
   signal?: AbortSignal;
   maxBytes?: number;
+  /** Stream the file to a sink instead of holding it in memory (no byte budget only). */
+  sink?: VideoSink;
 }
 
 export async function renderSceneToMp4(scene: ReplayScene, opts: RenderOptions = {}): Promise<RenderResult> {
@@ -82,6 +98,7 @@ export async function renderSceneToMp4(scene: ReplayScene, opts: RenderOptions =
   if (opts.bitrate !== undefined && (!Number.isFinite(opts.bitrate) || opts.bitrate <= 0)) {
     throw new Error('Video bitrate must be positive and finite');
   }
+  if (opts.sink && opts.maxBytes !== undefined) throw new Error('Streaming output cannot be combined with a byte budget');
   if (opts.maxBytes === undefined) return encodeOnce(scene, opts);
   const speed = opts.speed ?? 10;
   if (!Number.isFinite(speed) || speed <= 0) throw new Error('Playback speed must be positive');
@@ -124,10 +141,21 @@ async function encodeOnce(
   let encoder: VideoEncoder | undefined;
   try {
     opts.signal?.throwIfAborted();
+    const sink = opts.sink;
+    let streamedBytes = 0;
     const muxer = new Muxer({
-      target: new ArrayBufferTarget(),
+      target: sink
+        ? new StreamTarget({
+            onData: (data, position) => {
+              streamedBytes = Math.max(streamedBytes, position + data.byteLength);
+              sink.write(data, position);
+            },
+            chunked: true,
+            chunkSize: STREAM_CHUNK_BYTES,
+          })
+        : new ArrayBufferTarget(),
       video: { codec: 'avc', width, height, frameRate: fps },
-      fastStart: 'in-memory',
+      fastStart: sink ? false : 'in-memory',
     });
 
     // The H.264 level MUST fit the resolution (1440p/4K exceed L4.0's 1080p cap),
@@ -164,6 +192,12 @@ async function encodeOnce(
         if (encoderError) throw encoderError;
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
+      // Streaming: stall while too many chunks wait for upload (bounds memory).
+      while (sink && sink.pending() > STREAM_MAX_PENDING) {
+        opts.signal?.throwIfAborted();
+        if (encoderError) throw encoderError;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
       if (opts.onProgress && (i % 5 === 0 || i === total - 1)) {
         opts.onProgress({ frame: i + 1, total, attempt: 1 });
       }
@@ -171,9 +205,10 @@ async function encodeOnce(
     await encoder.flush();
     if (encoderError) throw encoderError;
     muxer.finalize();
-    const { buffer } = muxer.target as ArrayBufferTarget;
+    const mp4 = sink ? new Uint8Array(0) : new Uint8Array((muxer.target as ArrayBufferTarget).buffer);
     return {
-      mp4: new Uint8Array(buffer),
+      mp4,
+      bytes: sink ? streamedBytes : mp4.byteLength,
       frames: total,
       width,
       height,

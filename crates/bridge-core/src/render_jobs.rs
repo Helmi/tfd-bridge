@@ -93,6 +93,17 @@ struct Job {
     status: RenderStatus,
     token: String,
     output: Option<PathBuf>,
+    /// Streamed local-save upload in progress; deleted on failure/cancel.
+    partial: Option<PathBuf>,
+}
+
+/// Largest local-save (unbudgeted) video; budgeted jobs use their `max_bytes`.
+pub const STREAM_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+fn remove_partial(job: &mut Job) {
+    if let Some(path) = job.partial.take() {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// One active render keeps CPU/GPU and encoded-memory use bounded. Wrap in the
@@ -167,6 +178,7 @@ impl RenderJobs {
             status: status.clone(),
             token: token.clone(),
             output: None,
+            partial: None,
         });
         Ok(StartRender::New {
             status,
@@ -253,13 +265,28 @@ impl RenderJobs {
         if job.status.state != RenderState::Rendering {
             return Err(JobError::InvalidTransition);
         }
-        if bytes == 0 || bytes > job.request.max_bytes.unwrap_or(512 * 1024 * 1024) {
+        if bytes == 0 || bytes > job.request.max_bytes.unwrap_or(STREAM_MAX_BYTES) {
             return Err(JobError::ExceedsLimit);
         }
+        job.partial = None; // renamed to `path` by the caller
         job.status.state = RenderState::Rendered;
         job.status.bytes = Some(bytes);
         job.output = Some(path);
         Ok(())
+    }
+
+    /// Partial file for a streamed upload of an unbudgeted, rendering job.
+    pub fn partial_path(&mut self, lease: &WorkerLease, dir: &std::path::Path) -> Result<PathBuf, JobError> {
+        let job = self.worker(lease)?;
+        if job.status.state != RenderState::Rendering {
+            return Err(JobError::InvalidTransition);
+        }
+        if job.request.max_bytes.is_some() {
+            return Err(JobError::Forbidden);
+        }
+        let path = dir.join(format!("{}.mp4.part", job.status.id));
+        job.partial = Some(path.clone());
+        Ok(path)
     }
 
     pub fn fail(&mut self, lease: &WorkerLease, error_code: &str) -> Result<(), JobError> {
@@ -279,6 +306,7 @@ impl RenderJobs {
         {
             return Err(JobError::InvalidRequest);
         }
+        remove_partial(job);
         job.status.state = RenderState::Failed;
         job.status.error = Some(error_code.into());
         Ok(())
@@ -311,6 +339,7 @@ impl RenderJobs {
         if job.status.state != RenderState::Cancelling {
             return Err(JobError::InvalidTransition);
         }
+        remove_partial(job);
         job.status.state = RenderState::Cancelled;
         Ok(())
     }
@@ -473,6 +502,55 @@ mod tests {
         jobs.stopped(&lease).unwrap();
         assert_ne!(start(&mut jobs).job_id, lease.job_id);
     }
+    #[test]
+    fn unbudgeted_jobs_accept_large_files_budgeted_do_not() {
+        let mib600 = 600 * 1024 * 1024;
+        let mut jobs = RenderJobs::default();
+        let mut local = request();
+        local.share_id = None;
+        local.max_bytes = None;
+        let StartRender::New { worker, .. } = jobs.start(local).unwrap() else { panic!() };
+        jobs.claim(&worker).unwrap();
+        assert_eq!(jobs.rendered(&worker, "a.mp4".into(), STREAM_MAX_BYTES + 1), Err(JobError::ExceedsLimit));
+        jobs.rendered(&worker, "a.mp4".into(), mib600).unwrap();
+        let mut jobs = RenderJobs::default();
+        let mut budgeted = request();
+        budgeted.max_bytes = Some(512 * 1024 * 1024);
+        let StartRender::New { worker, .. } = jobs.start(budgeted).unwrap() else { panic!() };
+        jobs.claim(&worker).unwrap();
+        assert_eq!(jobs.rendered(&worker, "a.mp4".into(), mib600), Err(JobError::ExceedsLimit));
+    }
+
+    #[test]
+    fn partial_file_is_deleted_on_fail_and_stopped() {
+        let dir = std::env::temp_dir().join(format!("tfd-partial-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut local = request();
+        local.share_id = None;
+        local.max_bytes = None;
+        for cancel in [false, true] {
+            let mut jobs = RenderJobs::default();
+            let StartRender::New { worker, .. } = jobs.start(local.clone()).unwrap() else { panic!() };
+            jobs.claim(&worker).unwrap();
+            let part = jobs.partial_path(&worker, &dir).unwrap();
+            std::fs::write(&part, b"x").unwrap();
+            if cancel {
+                jobs.cancel(&worker.job_id).unwrap();
+                jobs.stopped(&worker).unwrap();
+            } else {
+                jobs.fail(&worker, "render_failed").unwrap();
+            }
+            assert!(!part.exists());
+            let status = serde_json::to_string(&jobs.status(&worker.job_id).unwrap()).unwrap();
+            assert!(!status.contains(".part"));
+        }
+        let mut jobs = RenderJobs::default();
+        let StartRender::New { worker, .. } = jobs.start(request()).unwrap() else { panic!() };
+        jobs.claim(&worker).unwrap();
+        assert_eq!(jobs.partial_path(&worker, &dir), Err(JobError::Forbidden));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn output_is_bounded_reusable_and_private() {
         let mut jobs = RenderJobs::default();

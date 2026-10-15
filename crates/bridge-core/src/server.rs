@@ -1240,20 +1240,25 @@ fn handle_player_render_save(
     make_json_response(StatusCode(200), &body, None)
 }
 
-/// Persist a new render without replacing any existing local video.
-fn persist_render(dir: &Path, safe: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+/// Reserve a new, unused file name in `dir` (`name.mp4`, `name-1.mp4`, ...) without replacing any video.
+fn reserve_render_file(dir: &Path, safe: &str) -> std::io::Result<(PathBuf, std::fs::File)> {
     let mut out = dir.join(safe);
     let mut attempt = 0;
-    let mut file = loop {
+    loop {
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&out) {
-            Ok(file) => break file,
+            Ok(file) => return Ok((out, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 1000 => {
                 attempt += 1;
                 out = dir.join(format!("{}-{attempt}.mp4", &safe[..safe.len()-4]));
             }
             Err(e) => return Err(e),
         }
-    };
+    }
+}
+
+/// Persist a new render without replacing any existing local video.
+fn persist_render(dir: &Path, safe: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let (out, mut file) = reserve_render_file(dir, safe)?;
     if let Err(error) = std::io::Write::write_all(&mut file, bytes).and_then(|_| file.sync_all()) {
         drop(file);
         let _ = std::fs::remove_file(&out);
