@@ -1,12 +1,11 @@
 // Offline, deterministic scene → mp4. Steps an explicit frame clock (not
-// wall-clock rAF): rasterize the shared replay frame at explicit timestamps,
+// wall-clock rAF): draw the Pixi broadcast frame at explicit timestamps,
 // encode (H.264, AV1 or HEVC) with WebCodecs and mux into MP4. Raw frames are bounded;
 // compressed output remains in memory until saved.
 import { ArrayBufferTarget, Muxer, StreamTarget } from 'mp4-muxer';
 import type { ReplayScene } from '../types';
-import { SharedFrameRenderer, VIRTUAL_HEIGHT } from './sharedFrameRenderer';
 import { PixiFrameRenderer, type FrameRenderer } from './pixiFrameRenderer';
-import { pixiHudEnabled } from '../broadcast/flag';
+import { FRAME } from '../broadcast/layout';
 import { budgetBitrate, retryBitrate } from './encodingPolicy';
 import { videoFrameCount, videoFrameTime } from '../engine/ending';
 import { CODEC_LABELS, MUXER_CODECS, h264CodecString, pickEncoderConfig, type EncodeReport, type VideoCodec } from './codecs';
@@ -19,9 +18,9 @@ export interface RenderProgress {
 
 /** Vertical resolution → renderer scale (layout is authored at 1080p virtual). */
 const RESOLUTION_SCALE: Record<'1080' | '1440' | '2160', number> = {
-  '1080': 1080 / VIRTUAL_HEIGHT,
-  '1440': 1440 / VIRTUAL_HEIGHT,
-  '2160': 2160 / VIRTUAL_HEIGHT,
+  '1080': 1080 / FRAME.height,
+  '1440': 1440 / FRAME.height,
+  '2160': 2160 / FRAME.height,
 };
 
 export { h264CodecString };
@@ -119,9 +118,7 @@ async function encodeOnce(
   const started = performance.now();
 
   const rendererOptions = { scale, mapSupersampling: opts.mapSupersampling ?? false };
-  const renderer: FrameRenderer = pixiHudEnabled()
-    ? await PixiFrameRenderer.create(scene, rendererOptions)
-    : await SharedFrameRenderer.create(scene, rendererOptions);
+  const renderer: FrameRenderer = await PixiFrameRenderer.create(scene, rendererOptions);
   const width = renderer.width;
   const height = renderer.height;
   let encoder: VideoEncoder | undefined;
