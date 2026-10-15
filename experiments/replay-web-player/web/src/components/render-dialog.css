@@ -34,7 +34,7 @@
 .video-antialiasing{display:flex;align-items:center;gap:10px;color:#e4efe8;font-size:14px}.video-antialiasing input{width:18px;height:18px;accent-color:#a8d9b4}
 .video-comparisons{margin-top:18px;padding-top:14px;border-top:1px solid #2b4434;font-size:12px}.video-comparisons>strong{display:block;margin-bottom:10px}.video-comparisons>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;margin:8px 0;color:#b5cdbf}.video-comparisons b{color:#e4efe8;white-space:nowrap}.video-comparisons small{color:#91aa9d}
 .video-suggestion,.video-length-sizes{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px;color:#a5b9ad;font:12px 'Space Grotesk',sans-serif}
-.video-length-sizes span{color:#e4efe8;font:12px 'JetBrains Mono',monospace}
+.video-length-sizes{gap:0 12px}.video-length-sizes span{color:#e4efe8}.video-length-sizes span+span{padding-left:12px;border-left:1px solid #3b5746}
 .render-dialog .video-suggestion button{min-height:28px;padding:0 10px;font-size:12px}
 .render-dialog .video-suggestion button[aria-pressed="true"]{background:#284b36;border-color:#8dd6a3}
 .video-codec-hint{margin:10px 0 0;font-size:12px;color:#91aa9d}.video-codec-hint strong{color:#e8c46a}
