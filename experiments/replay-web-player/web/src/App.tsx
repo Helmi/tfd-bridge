@@ -11,6 +11,7 @@ import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
 import { renderAndSave, webCodecsAvailable, type RenderProgress } from './video/encodeMp4';
 import { renderInBridge } from './video/bridgeRender';
+import type { EncodeReport } from './video/codecs';
 import { runBatch, type BatchReplay, type BatchResult, sortOldestFirst } from './video/batchRender';
 import { useReplayShare } from './video/shareReplay';
 import type { ReplayScene } from './types';
@@ -267,7 +268,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
   // bridge-local). Prototype — see td-18bfca.
   const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [renderNote, setRenderNote] = useState<string>();
-  const [renderComparisons, setRenderComparisons] = useState<{settings:LocalVideoSettings;elapsedMs:number;bytes:number}[]>([]);
+  const [renderComparisons, setRenderComparisons] = useState<{settings:LocalVideoSettings;elapsedMs:number;bytes:number;encode?:EncodeReport}[]>([]);
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false);
   const [videoSettings, setVideoSettings] = useState<LocalVideoSettings>(DEFAULT_LOCAL_VIDEO);
   const renderAbort = useRef<AbortController | null>(null);
@@ -290,7 +291,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
         : undefined;
       const started = performance.now();
       const saved = native ?? await renderAndSave(scene, base, (p) => setRenderProgress(p), renderAbort.current.signal,settings);
-      setRenderComparisons(runs => [{settings:{...settings},elapsedMs:native ? saved.elapsedMs : performance.now()-started,bytes:saved.bytes},...runs].slice(0,2));
+      setRenderComparisons(runs => [{settings:{...settings},elapsedMs:native ? saved.elapsedMs : performance.now()-started,bytes:saved.bytes,encode:saved.encode},...runs].slice(0,2));
     } catch (reason) {
       setRenderNote(renderAbort.current?.signal.aborted ? 'Video render cancelled.' : `Render failed: ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {

@@ -3,7 +3,7 @@ import type { ReplayScene } from '../types';
 
 const fake = vi.hoisted(() => ({
   destroy: vi.fn(), renderFrame: vi.fn(), frameClose: vi.fn(), encoderClose: vi.fn(),
-  fastStart: undefined as unknown, create: vi.fn(), emitted: [] as [number, number][], queue: [] as number[], configureError: false, encodeError: false, sizes: [] as number[],
+  fastStart: undefined as unknown, create: vi.fn(), emitted: [] as [number, number][], queue: [] as number[], muxerCodec: undefined as unknown, listeners: [] as (() => void)[], stall: false, hardwareOk: true, encoder: undefined as { encodeQueueSize: number } | undefined, configureError: false, encodeError: false, sizes: [] as number[],
 }));
 vi.mock('./sharedFrameRenderer', () => ({
   VIRTUAL_HEIGHT: 1080,
@@ -16,8 +16,8 @@ vi.mock('mp4-muxer', () => ({
   },
   Muxer: class {
     target: {options?: {onData: (d: Uint8Array, p: number) => void}};
-    constructor(opts: {target: {options?: {onData: (d: Uint8Array, p: number) => void}}; fastStart: unknown}) {
-      this.target = opts.target; fake.fastStart = opts.fastStart;
+    constructor(opts: {target: {options?: {onData: (d: Uint8Array, p: number) => void}}; fastStart: unknown; video: {codec: unknown}}) {
+      this.target = opts.target; fake.fastStart = opts.fastStart; fake.muxerCodec = opts.video.codec;
     }
     finalize() {
       // Emit order as the real muxer: body chunk first, then the mdat-size patch at the start.
@@ -36,14 +36,21 @@ beforeEach(() => {
   fake.configureError = false;
   fake.encodeError = false;
   fake.sizes = [];
+  fake.listeners = [];
+  fake.stall = false;
+  fake.hardwareOk = true;
+  fake.muxerCodec = undefined;
   fake.create.mockResolvedValue({width:1920, height:1080, canvas:{}, renderFrame:fake.renderFrame, destroy:fake.destroy});
   vi.stubGlobal('VideoFrame', class {close() {fake.frameClose();}});
   vi.stubGlobal('VideoEncoder', class {
-    static async isConfigSupported(config: unknown) {return {supported:true, config};}
+    static async isConfigSupported(config: {hardwareAcceleration?: string}) {return {supported: fake.hardwareOk || config.hardwareAcceleration !== 'prefer-hardware', config};}
     state = 'configured';
     encodeQueueSize = 0;
     configure() {if(fake.configureError) throw new Error('configuration failed');}
-    encode() {if(fake.encodeError) throw new Error('encode failed');}
+    constructor() {fake.encoder = this;}
+    addEventListener(_type: string, listener: () => void) {fake.listeners.push(listener);}
+    removeEventListener(_type: string, listener: () => void) {fake.listeners = fake.listeners.filter(l => l !== listener);}
+    encode() {if(fake.encodeError) throw new Error('encode failed'); if(fake.stall) {this.encodeQueueSize = 9; fake.stall = false;}}
     async flush() {}
     close() {this.state = 'closed'; fake.encoderClose();}
   });
@@ -110,21 +117,54 @@ describe('render resource lifetime and upload size enforcement', () => {
   });
   it('streams muxer output to the sink in emit order without an in-memory buffer', async () => {
     const writes: [number, number][] = [];
-    const sink = {write: (d: Uint8Array, p: number) => {writes.push([d.byteLength, p]);}, pending: () => 0};
+    const sink = {write: (d: Uint8Array, p: number) => {writes.push([d.byteLength, p]);}, pending: () => 0, nextDrain: async () => undefined};
     const result = await renderSceneToMp4(scene, {...options, sink});
     expect(writes).toEqual([[100, 0], [40, 100], [8, 0]]);
     expect(fake.fastStart).toBe(false);
     expect(result.mp4.byteLength).toBe(0);
     expect(result.bytes).toBe(140);
   });
-  it('waits for the sink while too many chunks are pending', async () => {
-    let polls = 0;
-    const sink = {write: () => undefined, pending: () => (++polls <= 3 ? STREAM_MAX_PENDING + 1 : 0)};
+  it('waits for the sink until an upload finishes, without timers', async () => {
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    let pending = STREAM_MAX_PENDING + 3;
+    let drains = 0;
+    const sink = {write: () => undefined, pending: () => pending, nextDrain: async () => {drains++; pending--;}};
     await renderSceneToMp4(scene, {...options, sink});
-    expect(polls).toBeGreaterThan(3);
+    expect(drains).toBe(3);
+    expect(timers).not.toHaveBeenCalled();
+  });
+  it('resumes a stalled encode queue on the dequeue event, without timers', async () => {
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    fake.stall = true;
+    const work = renderSceneToMp4(scene, options);
+    for (let i = 0; i < 50 && fake.listeners.length === 0; i++) await Promise.resolve();
+    expect(fake.listeners.length).toBe(1);
+    fake.encoder!.encodeQueueSize = 0;
+    fake.listeners.forEach(l => l());
+    await work;
+    expect(fake.listeners).toEqual([]);
+    expect(timers).not.toHaveBeenCalled();
+  });
+  it('encodes AV1 with the av1 muxer codec and reports GPU and timing', async () => {
+    const result = await renderSceneToMp4(scene, {...options, codec: 'av1'});
+    expect(fake.muxerCodec).toBe('av1');
+    expect(result.encode).toMatchObject({codec: 'av1', hardware: true});
+    for (const key of ['renderMsPerFrame', 'waitMsPerFrame', 'fps'] as const) expect(result.encode[key]).toBeGreaterThanOrEqual(0);
+  });
+  it('reports CPU when only the software encoder is accepted', async () => {
+    fake.hardwareOk = false;
+    const result = await renderSceneToMp4(scene, {...options, codec: 'hevc'});
+    expect(fake.muxerCodec).toBe('hevc');
+    expect(result.encode.hardware).toBe(false);
+  });
+  it('keeps budgeted renders on H.264 and defaults to H.264', async () => {
+    await renderSceneToMp4(scene, {...options, codec: 'av1', maxBytes: 2_000_000});
+    expect(fake.muxerCodec).toBe('avc');
+    await renderSceneToMp4(scene, options);
+    expect(fake.muxerCodec).toBe('avc');
   });
   it('does not combine streaming with a byte budget', async () => {
-    const sink = {write: () => undefined, pending: () => 0};
+    const sink = {write: () => undefined, pending: () => 0, nextDrain: async () => undefined};
     await expect(renderSceneToMp4(scene, {...options, sink, maxBytes: 1_000_000})).rejects.toThrow('byte budget');
   });
   it('fails after bounded retries instead of returning an oversized file', async () => {

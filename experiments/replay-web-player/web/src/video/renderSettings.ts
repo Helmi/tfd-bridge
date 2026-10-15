@@ -1,8 +1,11 @@
 import { videoFrameCount } from '../engine/ending';
+import type { VideoCodec } from './codecs';
 
 export interface LocalVideoSettings {
   resolution: '1080' | '1440' | '2160';
   mapSupersampling?: boolean;
+  /** Defaults to H.264 when absent. */
+  codec?: VideoCodec;
   fps: 24 | 30 | 60;
   bitrate: number;
   speed: 5 | 10 | 20;
@@ -30,9 +33,17 @@ const SUGGESTED_MBPS: Record<LocalVideoSettings['resolution'], {standard: [numbe
   '2160': {standard: [40, 50], high: [60, 80]},
 };
 
-/** Suggested bitrates in Mbps for a resolution and frame rate. */
-export function suggestedBitrates(resolution: LocalVideoSettings['resolution'], fps: LocalVideoSettings['fps']) {
-  const [good, artifactFree] = SUGGESTED_MBPS[resolution][fps === 60 ? 'high' : 'standard'];
+// AV1 and HEVC reach the same quality at lower bitrates than H.264.
+const SUGGESTED_MBPS_EFFICIENT: typeof SUGGESTED_MBPS = {
+  '1080': {standard: [4, 8], high: [8, 12]},
+  '1440': {standard: [8, 16], high: [16, 25]},
+  '2160': {standard: [25, 30], high: [40, 50]},
+};
+
+/** Suggested bitrates in Mbps for a resolution, frame rate and codec. */
+export function suggestedBitrates(resolution: LocalVideoSettings['resolution'], fps: LocalVideoSettings['fps'], codec: VideoCodec = 'h264') {
+  const table = codec === 'h264' ? SUGGESTED_MBPS : SUGGESTED_MBPS_EFFICIENT;
+  const [good, artifactFree] = table[resolution][fps === 60 ? 'high' : 'standard'];
   return {good, artifactFree};
 }
 

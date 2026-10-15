@@ -25,11 +25,23 @@ pub struct VideoOptions {
     pub fps: u32,
     pub bitrate: u32,
     pub speed: u32,
+    /// Video codec; requests without it render H.264.
+    #[serde(default = "default_codec")]
+    pub codec: String,
+}
+
+fn default_codec() -> String {
+    "h264".into()
+}
+
+fn valid_codec(codec: &str) -> bool {
+    matches!(codec, "h264" | "av1" | "hevc")
 }
 
 impl VideoOptions {
     fn valid(&self) -> bool {
-        matches!(self.resolution.as_str(), "1080" | "1440" | "2160")
+        valid_codec(&self.codec)
+            && matches!(self.resolution.as_str(), "1080" | "1440" | "2160")
             && matches!(self.fps, 24 | 30 | 60)
             && (1_000_000..=80_000_000).contains(&self.bitrate)
             && matches!(self.speed, 5 | 10 | 20)
@@ -60,7 +72,36 @@ pub struct RenderStatus {
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct VideoInfo { pub duration_s: f64, pub width: u32, pub height: u32 }
+pub struct VideoInfo {
+    pub duration_s: f64,
+    pub width: u32,
+    pub height: u32,
+    /// Encoder diagnostics reported by the worker; absent from older workers.
+    #[serde(default)]
+    pub codec: Option<String>,
+    /// True when the accepted encoder config was hardware (GPU) accelerated.
+    #[serde(default)]
+    pub hardware: Option<bool>,
+    #[serde(default)]
+    pub render_ms_per_frame: Option<f64>,
+    #[serde(default)]
+    pub wait_ms_per_frame: Option<f64>,
+    #[serde(default)]
+    pub fps: Option<f64>,
+}
+
+impl VideoInfo {
+    fn valid(&self) -> bool {
+        self.duration_s.is_finite()
+            && self.duration_s > 0.0
+            && self.width != 0
+            && self.height != 0
+            && self.codec.as_deref().is_none_or(valid_codec)
+            && [self.render_ms_per_frame, self.wait_ms_per_frame, self.fps]
+                .iter()
+                .all(|v| v.is_none_or(|v| v.is_finite() && v >= 0.0))
+    }
+}
 
 /// Worker-only capability. Do not serialize it into public status responses.
 #[derive(Clone)]
@@ -195,7 +236,7 @@ impl RenderJobs {
     }
 
     pub fn video_info(&mut self, lease: &WorkerLease, info: VideoInfo) -> Result<(), JobError> {
-        if !info.duration_s.is_finite() || info.duration_s <= 0.0 || info.width == 0 || info.height == 0 { return Err(JobError::InvalidRequest); }
+        if !info.valid() { return Err(JobError::InvalidRequest); }
         let job=self.worker(lease)?;
         if job.status.state != RenderState::Rendering {return Err(JobError::InvalidTransition)}
         job.status.video=Some(info); Ok(())
@@ -384,7 +425,7 @@ mod tests {
         }
     }
     fn video_options() -> VideoOptions {
-        VideoOptions { map_supersampling: false, resolution: "1080".into(), fps: 30, bitrate: 4_000_000, speed: 10 }
+        VideoOptions { map_supersampling: false, resolution: "1080".into(), fps: 30, bitrate: 4_000_000, speed: 10, codec: "h264".into() }
     }
 
     #[test]
@@ -394,7 +435,7 @@ mod tests {
                 for speed in [5, 10, 20] {
                     for bitrate in [1_000_000, 4_000_000, 80_000_000] {
                         let mut jobs = RenderJobs::default();
-                        let expected = local_request(VideoOptions { map_supersampling: false, resolution: resolution.into(), fps, bitrate, speed });
+                        let expected = local_request(VideoOptions { map_supersampling: false, resolution: resolution.into(), fps, bitrate, speed, codec: "h264".into() });
                         let StartRender::New { worker, .. } = jobs.start(expected.clone()).unwrap() else { panic!("expected new job") };
                         assert_eq!(jobs.claim(&worker).unwrap(), expected);
                     }
@@ -409,6 +450,8 @@ mod tests {
             VideoOptions { bitrate: 80_000_001, ..video_options() },
             VideoOptions { speed: 0, ..video_options() },
             VideoOptions { speed: 15, ..video_options() },
+            VideoOptions { codec: "vp9".into(), ..video_options() },
+            VideoOptions { codec: String::new(), ..video_options() },
         ];
         for options in invalid {
             assert!(matches!(RenderJobs::default().start(local_request(options)), Err(JobError::InvalidRequest)));
@@ -437,10 +480,40 @@ mod tests {
         let mut value = serde_json::json!({"resolution":"1080","fps":30,"bitrate":4_000_000,"speed":10});
         let old: VideoOptions = serde_json::from_value(value.clone()).unwrap();
         assert!(!old.map_supersampling);
+        assert_eq!(old.codec, "h264");
         value["mapSupersampling"] = true.into();
         let enhanced: VideoOptions = serde_json::from_value(value).unwrap();
         assert!(enhanced.map_supersampling);
         assert!(RenderJobs::default().start(local_request(enhanced)).is_ok());
+    }
+    #[test]
+    fn codec_is_validated_and_defaults_to_h264() {
+        for codec in ["h264", "av1", "hevc"] {
+            let options = VideoOptions { codec: codec.into(), ..video_options() };
+            assert!(RenderJobs::default().start(local_request(options)).is_ok());
+        }
+        let value = serde_json::json!({"resolution":"1080","fps":30,"bitrate":4_000_000,"speed":10,"codec":"av1"});
+        assert_eq!(serde_json::from_value::<VideoOptions>(value).unwrap().codec, "av1");
+    }
+    #[test]
+    fn video_info_accepts_old_and_new_fields_and_exposes_no_paths() {
+        let old: VideoInfo = serde_json::from_value(serde_json::json!({"duration_s":9.0,"width":1920,"height":1080})).unwrap();
+        assert!(old.valid() && old.codec.is_none() && old.fps.is_none());
+        let new: VideoInfo = serde_json::from_value(serde_json::json!({"duration_s":9.0,"width":1920,"height":1080,
+            "codec":"av1","hardware":true,"render_ms_per_frame":12.5,"wait_ms_per_frame":3.0,"fps":41.0})).unwrap();
+        assert!(new.valid());
+        assert!(!VideoInfo { codec: Some("vp9".into()), ..new.clone() }.valid());
+        assert!(!VideoInfo { fps: Some(-1.0), ..new.clone() }.valid());
+        assert!(!VideoInfo { wait_ms_per_frame: Some(f64::INFINITY), ..new.clone() }.valid());
+        let mut jobs = RenderJobs::default();
+        let StartRender::New { worker, status } = jobs.start(local_request(video_options())).unwrap() else { panic!("expected new job") };
+        jobs.claim(&worker).unwrap();
+        jobs.video_info(&worker, new).unwrap();
+        let json = serde_json::to_value(jobs.status(&status.id).unwrap()).unwrap();
+        assert_eq!(json["video"]["codec"], "av1");
+        assert_eq!(json["video"]["hardware"], true);
+        let text = json.to_string();
+        assert!(!text.contains("path") && !text.contains(":\\") && !text.contains(".mp4"));
     }
     fn start(jobs: &mut RenderJobs) -> WorkerLease {
         match jobs.start(request()).unwrap() {
