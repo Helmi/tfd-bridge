@@ -1,4 +1,6 @@
 import { Application, Text, type AccessibilitySystemOptions, type ApplicationOptions, type TextStyleOptions } from 'pixi.js';
+// Pixi 8 accessibility is an opt-in extension; without it no tabindex overlay is ever created.
+import 'pixi.js/accessibility';
 import { compareFleetShips } from '../engine/fleetOrder';
 import { evaluateScene } from '../engine/timeline';
 import type { EntityId, EvaluatedShip, ReplayScene, Seconds } from '../types';
@@ -59,8 +61,11 @@ export class BroadcastStage {
       backgroundColor: COLORS.frameBg,
       preference: 'webgl',
       autoStart: false,
-      // Keyboard and screen reader support (Tab activates it) only for the live player.
-      accessibilityOptions: { activateOnTab: interactive },
+      // Keyboard and screen reader support only for the live player. Pixi 8.19.0 never registers its Tab
+      // listener while inactive (it is only added in _activate/_deactivate), so activateOnTab alone does
+      // nothing. enabledByDefault builds the overlay at start; a mouse move drops it, and its deactivate
+      // path then registers the Tab listener again.
+      accessibilityOptions: { activateOnTab: interactive, enabledByDefault: interactive },
     };
     await app.init(init);
     const stage = new BroadcastStage(app, options.mode, interactive ? false : options.mapSupersampling ?? false);
