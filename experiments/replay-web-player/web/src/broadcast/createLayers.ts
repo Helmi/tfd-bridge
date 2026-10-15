@@ -4,6 +4,7 @@ import { COLORS, FRAME, Z } from './layout';
 import { createScoreboardLayer } from './scoreboardLayer';
 import { createRosterLayer } from './rosterLayer';
 import type { BroadcastLayer, LayerFactory, StageContext } from './types';
+import { createMapLayer, mapLayerDeps } from './mapLayer';
 import type { ReplayScene } from '../types';
 
 export interface LayerEntry { layer: BroadcastLayer; z: number }
@@ -22,5 +23,6 @@ export function createLayers(ctx: StageContext, scene: ReplayScene): LayerEntry[
   stage.addLayer(createScoreboardLayer(ctx, scene), Z.SCOREBOARD);
   stage.addLayer(createRosterLayer(ctx, scene), Z.PANEL);
   stage.addLayer(createFeedLayer(ctx, scene), Z.PANEL);
+  stage.addLayer(createMapLayer(mapLayerDeps(ctx), scene), Z.MAP);
   return entries;
 }
