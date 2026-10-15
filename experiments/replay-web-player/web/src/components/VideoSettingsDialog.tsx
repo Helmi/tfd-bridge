@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState, type CSSProperties, type ReactNode} from 'react';
 import {CODEC_LABELS, CODEC_ORDER, detectEncoderSupport, type EncoderChoice, type EncoderSupport, type VideoCodec} from '../video/codecs';
-import {BITRATE_OPTIONS_MBPS, estimateLocalVideo, formatFileSize, FPS_OPTIONS, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
+import {BITRATE_OPTIONS_MBPS, estimateLocalVideo, formatFileSize, FPS_OPTIONS, loadVideoDefault, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
 import './render-dialog.css';
 
 const ENCODERS: EncoderChoice[] = ['gpu', 'cpu'];
@@ -55,14 +55,14 @@ export function VideoSettingsFields({batchCount, duration, settings, support, on
   </>;
 }
 
-export function VideoSettingsDialog({batchCount, duration, initial, onClose, onRender}: {
+export function VideoSettingsDialog({batchCount, duration, onClose, onRender}: {
   /** Batch variant: one settings object for this many battles; no single-battle estimate. */
   batchCount?: number;
-  duration: number; initial: LocalVideoSettings;
+  duration: number;
   onClose: () => void; onRender: (settings: LocalVideoSettings) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [settings, setSettings] = useState(initial);
+  const [settings, setSettings] = useState(loadVideoDefault); // every open starts from the saved default (the dialog is mounted per open)
   const [support, setSupport] = useState<EncoderSupport>();
   const [saved, setSaved] = useState(false);
   // Live detection for the exact config the encoder would use; never blocks the dialog.

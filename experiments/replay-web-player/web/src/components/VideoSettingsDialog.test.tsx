@@ -1,11 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 const detect = vi.hoisted(() => vi.fn());
 vi.mock('../video/codecs', async importOriginal => ({...await importOriginal<typeof import('../video/codecs')>(), detectEncoderSupport: detect}));
 import { detectEncoderSupport, type EncoderSupport } from '../video/codecs';
 import { VideoSettingsDialog, VideoSettingsFields, settleEncoder } from './VideoSettingsDialog';
-import type { LocalVideoSettings } from '../video/renderSettings';
+import { saveVideoDefault, type LocalVideoSettings } from '../video/renderSettings';
 
 const settings: LocalVideoSettings = {resolution:'1080', fps:30, codec:'av1', encoder:'gpu', bitrate:8_000_000, speed:10};
 const all = {gpu: true, cpu: true};
@@ -19,14 +19,14 @@ const NOTE = 'GPU encoding isn&#x27;t available for these settings here — the 
 
 describe('VideoSettingsDialog layout', () => {
   it('has one labelled group per row and the dialog title', () => {
-    const markup = renderToStaticMarkup(<VideoSettingsDialog duration={754} initial={settings} onClose={() => {}} onRender={() => {}}/>);
+    const markup = renderToStaticMarkup(<VideoSettingsDialog duration={754} onClose={() => {}} onRender={() => {}}/>);
     for (const label of ['Resolution', 'Frame rate', 'Codec', 'Bitrate', 'Battle speed']) expect(markup).toContain(`role="group" aria-label="${label}"`);
     expect(markup).toContain('Save your replay');
     expect(markup).toContain('Save as my default');
     expect(markup).toContain('Render &amp; save');
   });
   it('shows nothing from the removed parts', () => {
-    const markup = renderToStaticMarkup(<VideoSettingsDialog duration={754} initial={settings} onClose={() => {}} onRender={() => {}}/>);
+    const markup = renderToStaticMarkup(<VideoSettingsDialog duration={754} onClose={() => {}} onRender={() => {}}/>);
     for (const gone of ['<select', 'checkbox', 'Recent exports', 'Suggested for', 'Smoother map edges', 'Expected size', 'Compact', 'Balanced', '24 fps', 'Saves to']) expect(markup).not.toContain(gone);
   });
   it('labels the buttons as specified', () => {
@@ -109,8 +109,39 @@ describe('size line', () => {
   });
   it('is hidden for a batch save', () => {
     expect(fields({batchCount: 3, support: support()})).not.toContain('video</strong>');
-    const dialog = renderToStaticMarkup(<VideoSettingsDialog batchCount={3} duration={0} initial={settings} onClose={() => {}} onRender={() => {}}/>);
+    const dialog = renderToStaticMarkup(<VideoSettingsDialog batchCount={3} duration={0} onClose={() => {}} onRender={() => {}}/>);
     expect(dialog).toContain('Save 3 replays');
     expect(dialog).not.toContain('about');
+  });
+});
+
+describe('dialog opens with the saved default', () => {
+  const memory = () => {
+    const data = new Map<string, string>();
+    return {getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v)};
+  };
+  const open = (batchCount?: number) => renderToStaticMarkup(<VideoSettingsDialog batchCount={batchCount} duration={754} onClose={() => {}} onRender={() => {}}/>);
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('starts from the built-in default when nothing is saved', () => {
+    vi.stubGlobal('localStorage', memory());
+    const markup = open();
+    expect(button(markup, '1080p')).toContain('aria-pressed="true"');
+    expect(button(markup, '30 fps')).toContain('aria-pressed="true"');
+    expect(button(markup, '10×')).toContain('aria-pressed="true"');
+  });
+  it('shows the just-saved values on every reopen, single and batch', () => {
+    vi.stubGlobal('localStorage', memory());
+    expect(saveVideoDefault({...settings, resolution: '2160', fps: 30, speed: 20})).toBe(true);
+    for (const batchCount of [undefined, 3]) {
+      const markup = open(batchCount);
+      expect(button(markup, '4K')).toContain('aria-pressed="true"');
+      expect(button(markup, '30 fps')).toContain('aria-pressed="true"');
+      expect(button(markup, '20×')).toContain('aria-pressed="true"');
+      expect(button(markup, 'AV1 · GPU')).toContain('aria-pressed="true"');
+    }
+    saveVideoDefault({...settings, resolution: '1440', speed: 5});
+    expect(button(open(), '1440p')).toContain('aria-pressed="true"');
+    expect(button(open(), '5×')).toContain('aria-pressed="true"');
   });
 });

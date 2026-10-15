@@ -5,7 +5,7 @@ import { advancePlayback, seekPlayback, ENDING_SECONDS } from './engine/ending';
 import { RenderProgressDialog } from './components/RenderProgressDialog';
 import { BatchRenderDialog } from './components/BatchRenderDialog';
 import { VideoSettingsDialog } from './components/VideoSettingsDialog';
-import { loadVideoDefault, type LocalVideoSettings } from './video/renderSettings';
+import { type LocalVideoSettings } from './video/renderSettings';
 import { sampleScene } from './data/sampleScene';
 import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
@@ -84,7 +84,6 @@ export function App() {
 
   // Batch rendering from the picker (bridge only): settings → blocking run → summary.
   const [batchPending, setBatchPending] = useState<LocalReplaySummary[]>();
-  const [batchSettings, setBatchSettings] = useState<LocalVideoSettings>(loadVideoDefault);
   const [batchRun, setBatchRun] = useState<{ total: number; index: number; current?: BatchReplay; progress: RenderProgress; results?: BatchResult[] }>();
   const [pickerKey, setPickerKey] = useState(0);
   const batchAbort = useRef<AbortController | null>(null);
@@ -92,7 +91,6 @@ export function App() {
   const startBatch = async (settings: LocalVideoSettings) => {
     if (!batchPending || batchAbort.current) return;
     const replays = sortOldestFirst(batchPending);
-    setBatchSettings(settings);
     setBatchPending(undefined);
     const controller = new AbortController();
     batchAbort.current = controller;
@@ -245,7 +243,7 @@ export function App() {
           onClose={() => setPickerOpen(false)}
         />
       )}
-      {batchPending && <VideoSettingsDialog batchCount={batchPending.length} duration={0} initial={batchSettings} onClose={() => setBatchPending(undefined)} onRender={(settings) => { void startBatch(settings); }} />}
+      {batchPending && <VideoSettingsDialog batchCount={batchPending.length} duration={0} onClose={() => setBatchPending(undefined)} onRender={(settings) => { void startBatch(settings); }} />}
       {batchRun && <BatchRenderDialog {...batchRun} onCancel={() => batchAbort.current?.abort()} onClose={closeBatch} />}
     </>
   );
@@ -268,14 +266,12 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
   const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [renderNote, setRenderNote] = useState<string>();
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false);
-  const [videoSettings, setVideoSettings] = useState<LocalVideoSettings>(loadVideoDefault);
   const renderAbort = useRef<AbortController | null>(null);
   useEffect(() => () => renderAbort.current?.abort(), []);
   const sharingRenderActive=Boolean(share.renderProgress);
   useEffect(()=>{if(sharingRenderActive)setPlaying(false);},[sharingRenderActive]);
   const onRenderVideo = async (settings: LocalVideoSettings) => {
     if (renderProgress) return;
-    setVideoSettings(settings);
     setVideoSettingsOpen(false);
     setRenderNote(undefined);
     renderAbort.current = new AbortController();
@@ -386,7 +382,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
           </div>
 
       {renderNote && <div className="render-note render-result" role="status"><span>{renderNote}</span><button onClick={()=>setRenderNote(undefined)} aria-label="Dismiss video result">×</button></div>}
-      {videoSettingsOpen && <VideoSettingsDialog duration={scene.replay.duration} initial={videoSettings} onClose={()=>setVideoSettingsOpen(false)} onRender={settings=>{void onRenderVideo(settings);}}/>}
+      {videoSettingsOpen && <VideoSettingsDialog duration={scene.replay.duration} onClose={()=>setVideoSettingsOpen(false)} onRender={settings=>{void onRenderVideo(settings);}}/>}
       {(renderProgress || share.renderProgress) && <RenderProgressDialog progress={(renderProgress ?? share.renderProgress)!} onCancel={()=>{if(renderProgress)renderAbort.current?.abort();else return share.cancelRender();}}/>}
     </main>
   );
