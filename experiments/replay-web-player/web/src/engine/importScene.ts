@@ -486,6 +486,7 @@ export function loadReplayScene(input: unknown, options: LoadSceneOptions = {}):
     },
     map: {
       name: input.map.name,
+      displayName: input.map.displayName?.trim() || undefined,
       bounds: { minX: 0, minY: 0, maxX: normalized ? 1 : size.width, maxY: normalized ? 1 : size.height },
       image: input.map.imageUrl ? { href: resolveAsset(input.map.imageUrl, options.baseUrl)! } : undefined,
       spaceSize: input.map.spaceSize,

@@ -17,6 +17,11 @@ describe('replayEntryToSummary', () => {
     });
     expect(summary).toMatchObject({shipName: 'Almirante Irizar', shipClass: 'cruiser', mapName: 'Military Naval Base', damage: 73319, kills: 2, outcome: 'victory'});
   });
+  it('prefers the official map name and falls back to the guess when absent', () => {
+    const base = {name: '20261010_195900_PASB110-Libertad_22_tierra_del_fuego.wowsreplay', size: 0, modified_ms: 0, mapName: 'spaces/22_tierra_del_fuego'};
+    expect(replayEntryToSummary({...base, mapDisplayName: 'Land of Fire'}).mapName).toBe('Land of Fire');
+    expect(replayEntryToSummary(base).mapName).toBe('Tierra Del Fuego');
+  });
   it('keeps unavailable results distinct from a zero-damage defeat', () => {
     const summary = replayEntryToSummary({name: 'test.wowsreplay', size: 0, modified_ms: 0, complete: false});
     expect(summary.damage).toBeUndefined();

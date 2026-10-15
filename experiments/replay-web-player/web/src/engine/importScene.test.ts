@@ -211,6 +211,12 @@ describe('ReplayScene V1 adapter', () => {
     expect(byTime.get(30)).toMatchObject({ kind: 'other', amount: 9_000 });
   });
 
+  it('carries the official map name and omits it when absent', () => {
+    const named = loadReplayScene({ ...payload, map: { ...payload.map, displayName: 'Land of Fire' } });
+    expect(named.map.displayName).toBe('Land of Fire');
+    expect(loadReplayScene(payload).map.displayName).toBeUndefined();
+  });
+
   it('fails clearly on an incompatible schema', () => {
     expect(() => loadReplayScene({ schema: 'other', version: 1 })).toThrow(/Unsupported replay scene/);
   });

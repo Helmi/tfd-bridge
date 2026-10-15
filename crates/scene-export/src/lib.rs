@@ -102,6 +102,8 @@ struct Perspective {
 #[serde(rename_all = "camelCase")]
 struct MapDescriptor {
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
     image_url: Option<String>,
     coordinate_space: &'static str,
     space_size: i32,
@@ -1717,6 +1719,7 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
         },
         map: MapDescriptor {
             name: replay.meta.mapName.clone(),
+            display_name: map_display_name(game_dir, &replay.meta.mapName),
             image_url: map_file,
             coordinate_space: "normalized",
             space_size: map_info.space_size,
@@ -1832,16 +1835,29 @@ pub fn read_replay_meta(replay_path: &Path) -> Result<ReplayMeta> {
     })
 }
 
-/// Resolve the stable ship index with the game's own display-name catalog.
-/// This needs only global.mo, not GameParams or a full replay decode. Cache by
-/// file metadata so an installed game update refreshes names automatically.
-pub fn ship_display_name(game_dir: &Path, player_vehicle: &str) -> Option<String> {
+/// Catalog key of a ship: `IDS_<index>` where the index is the part of a
+/// `playerVehicle` / replay file name before the first `-` or `_`.
+fn ship_catalog_key(player_vehicle: &str) -> Option<String> {
+    let index = player_vehicle.split(['-', '_']).next()?.to_ascii_uppercase();
+    if index.is_empty() || !index.bytes().all(|c| c.is_ascii_alphanumeric()) { return None; }
+    Some(format!("IDS_{index}"))
+}
+
+/// Catalog key of a map: `IDS_SPACES/<name without "spaces/", uppercased>`
+/// (the key wows-toolkit's `translate_map_name` builds).
+fn map_catalog_key(map_name: &str) -> Option<String> {
+    let name = map_name.strip_prefix("spaces/").unwrap_or(map_name).trim();
+    if name.is_empty() { return None; }
+    Some(format!("IDS_SPACES/{}", name.to_ascii_uppercase()))
+}
+
+/// Look `key` up in the newest installed client's English catalog (`global.mo`).
+/// Cache the parsed catalog by file metadata so an installed game update
+/// refreshes names automatically.
+fn catalog_text(game_dir: &Path, key: &str) -> Option<String> {
     use std::sync::{Arc, Mutex, OnceLock};
     type CatalogCache = HashMap<std::path::PathBuf, (std::time::SystemTime, u64, Arc<gettext::Catalog>)>;
     static CACHE: OnceLock<Mutex<CatalogCache>> = OnceLock::new();
-    let index = player_vehicle.split(['-', '_']).next()?.to_ascii_uppercase();
-    if index.is_empty() || !index.bytes().all(|c| c.is_ascii_alphanumeric()) { return None; }
-    let key = format!("IDS_{index}");
     for build in game_data::list_available_builds(game_dir).ok()?.into_iter().rev() {
         let path = game_data::translations_path(game_dir, build);
         let Ok(stat) = fs::metadata(&path) else { continue };
@@ -1857,10 +1873,22 @@ pub fn ship_display_name(game_dir: &Path, player_vehicle: &str) -> Option<String
                 catalog
             }
         };
-        let name = catalog.gettext(&key);
+        let name = catalog.gettext(key);
         if name != key && !name.trim().is_empty() { return Some(name.to_owned()); }
     }
     None
+}
+
+/// Resolve the stable ship index with the game's own display-name catalog.
+/// This needs only global.mo, not GameParams or a full replay decode.
+pub fn ship_display_name(game_dir: &Path, player_vehicle: &str) -> Option<String> {
+    catalog_text(game_dir, &ship_catalog_key(player_vehicle)?)
+}
+
+/// Official English map name (e.g. `spaces/22_tierra_del_fuego` -> "Land of Fire")
+/// from the same catalog. None when the key or the catalog is missing.
+pub fn map_display_name(game_dir: &Path, map_name: &str) -> Option<String> {
+    catalog_text(game_dir, &map_catalog_key(map_name)?)
 }
 
 /// Whether the replay captured the battle's end: a `BattleResults` (0x22)
@@ -2555,5 +2583,43 @@ mod ending_tests {
         assert_eq!(replay_outcome(Some(-1), Some("0")), Some("draw"));
         assert_eq!(replay_outcome(None, Some("0")), None);
         assert_eq!(replay_outcome(Some(0), None), None);
+    }
+}
+
+#[cfg(test)]
+mod catalog_name_tests {
+    use super::*;
+
+    #[test]
+    fn map_key_is_uppercased_without_spaces_prefix() {
+        assert_eq!(map_catalog_key("spaces/22_tierra_del_fuego").as_deref(), Some("IDS_SPACES/22_TIERRA_DEL_FUEGO"));
+        assert_eq!(map_catalog_key("19_OC_prey").as_deref(), Some("IDS_SPACES/19_OC_PREY"));
+        assert_eq!(map_catalog_key("spaces/"), None);
+    }
+
+    #[test]
+    fn ship_key_uses_index_before_first_separator() {
+        assert_eq!(ship_catalog_key("PGSB708-Bismarck-1941").as_deref(), Some("IDS_PGSB708"));
+        assert_eq!(ship_catalog_key("pisd710_x").as_deref(), Some("IDS_PISD710"));
+        assert_eq!(ship_catalog_key(""), None);
+        assert_eq!(ship_catalog_key("bad key"), None);
+    }
+
+    #[test]
+    fn missing_catalog_gives_none() {
+        let dir = std::env::temp_dir().join("tfd-no-such-game-dir");
+        assert_eq!(map_display_name(&dir, "spaces/22_tierra_del_fuego"), None);
+        assert_eq!(ship_display_name(&dir, "PGSB708"), None);
+    }
+
+    #[test]
+    #[ignore = "needs the installed client at C:\\Games\\World_of_Warships"]
+    fn real_client_official_names() {
+        let dir = Path::new("C:\\Games\\World_of_Warships");
+        assert_eq!(map_display_name(dir, "spaces/22_tierra_del_fuego").as_deref(), Some("Land of Fire"));
+        assert_eq!(map_display_name(dir, "spaces/45_Zigzag").as_deref(), Some("Loop"));
+        assert_eq!(map_display_name(dir, "spaces/19_OC_prey").as_deref(), Some("Trap"));
+        assert_eq!(ship_display_name(dir, "PGSB708").as_deref(), Some("Bismarck\u{a0}'41"));
+        assert_eq!(ship_display_name(dir, "PISD710").as_deref(), Some("A. da Barbiano"));
     }
 }
