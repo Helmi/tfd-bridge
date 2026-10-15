@@ -14,7 +14,7 @@ const support = (patch: Partial<EncoderSupport> = {}): EncoderSupport => ({h264:
 
 const fields = (opts: {settings?: LocalVideoSettings; support?: EncoderSupport; batchCount?: number} = {}) =>
   renderToStaticMarkup(<VideoSettingsFields batchCount={opts.batchCount} duration={754} settings={opts.settings ?? settings} support={opts.support} onChange={() => {}}/>);
-const button = (markup: string, label: string) => markup.match(new RegExp(`<button[^>]*>(?:(?!</button>).)*${label}(?:(?!</button>).)*</button>`))?.[0];
+const button = (markup: string, label: string) => markup.match(/<button[^>]*>.*?<\/button>/g)?.find(b => b.includes(`aria-label="${label}"`) || b.replace(/<[^>]+>/g, '').includes(label));
 const NOTE = 'GPU encoding isn&#x27;t available for these settings here — the CPU exporter is used.'; // as serialised in HTML
 
 describe('VideoSettingsDialog layout', () => {

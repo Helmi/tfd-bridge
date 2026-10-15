@@ -45,11 +45,11 @@ export function VideoSettingsFields({batchCount, duration, settings, support, on
     <Row label="Resolution" cols={3}>{RESOLUTION_OPTIONS.map(r => <button type="button" key={r} aria-pressed={settings.resolution === r} onClick={() => onChange({...settings, resolution: r})}>
       <strong>{RESOLUTION_LABELS[r][0]}</strong><small>{RESOLUTION_LABELS[r][1]}</small></button>)}</Row>
     <Row label="Frame rate" cols={2}>{FPS_OPTIONS.map(n => <button type="button" key={n} aria-pressed={settings.fps === n} onClick={() => onChange({...settings, fps: n})}>{n} fps</button>)}</Row>
-    <Row label="Codec" cols={2}>{codecs.flatMap(c => ENCODERS.map(e =>
-      <button type="button" key={`${c}-${e}`} aria-pressed={codec === c && encoder === e} disabled={support?.[c][e] === false}
-        onClick={() => onChange({...settings, codec: c, encoder: e})}>{CODEC_LABELS[c]} · {e === 'gpu' ? 'GPU' : 'CPU'}</button>))}</Row>
+    <Row label="Codec" cols={codecs.length * ENCODERS.length}>{codecs.flatMap(c => ENCODERS.map(e =>
+      <button type="button" key={`${c}-${e}`} aria-label={`${CODEC_LABELS[c]} · ${e === 'gpu' ? 'GPU' : 'CPU'}`} aria-pressed={codec === c && encoder === e} disabled={support?.[c][e] === false}
+        onClick={() => onChange({...settings, codec: c, encoder: e})}><strong>{CODEC_LABELS[c]}</strong><small>{e === 'gpu' ? 'GPU' : 'CPU'}</small></button>))}</Row>
     {gpuMissing && <p className="video-encoder-note">GPU encoding isn't available for these settings here — the CPU exporter is used.</p>}
-    <Row label="Bitrate" cols={5}>{BITRATE_OPTIONS_MBPS.map(n => <button type="button" key={n} aria-pressed={settings.bitrate === n * 1_000_000} onClick={() => onChange({...settings, bitrate: n * 1_000_000})}>{n} Mbps</button>)}</Row>
+    <Row label="Bitrate" cols={BITRATE_OPTIONS_MBPS.length}>{BITRATE_OPTIONS_MBPS.map(n => <button type="button" key={n} aria-label={`${n} Mbps`} aria-pressed={settings.bitrate === n * 1_000_000} onClick={() => onChange({...settings, bitrate: n * 1_000_000})}><strong>{n}</strong><small>Mbps</small></button>)}</Row>
     <Row label="Battle speed" cols={5}>{SPEED_OPTIONS.map(n => <button type="button" key={n} aria-pressed={settings.speed === n} onClick={() => onChange({...settings, speed: n})}>{n}×</button>)}</Row>
     {!batchCount && <div className="video-estimate"><strong>{Math.floor(seconds / 60)}:{(seconds % 60).toString().padStart(2, '0')} video</strong><span>· about {formatFileSize(estimate.megabytes)}</span></div>}
   </>;
