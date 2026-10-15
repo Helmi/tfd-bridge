@@ -7,7 +7,10 @@ const fake = vi.hoisted(() => ({
   apps: [] as { init: unknown; stage: { addChild: (c: unknown) => void; children: { zIndex: number }[] }; renderer: { resolution: number; resize: (...a: number[]) => void }; render: () => void; destroy: (...a: unknown[]) => void }[],
   layers: [] as { layer: unknown; z: number }[],
   order: [] as string[],
+  a11yLoaded: 0,
 }));
+
+vi.mock('pixi.js/accessibility', () => { fake.a11yLoaded += 1; return {}; });
 
 vi.mock('pixi.js', () => ({
   Application: class {
@@ -38,6 +41,10 @@ beforeEach(() => { fake.apps.length = 0; fake.layers.length = 0; fake.order.leng
 afterEach(() => { vi.useRealTimers(); });
 
 describe('BroadcastStage.create', () => {
+  it('registers the Pixi accessibility extension (roster rows need the tabindex overlay)', () => {
+    expect(fake.a11yLoaded).toBe(1);
+  });
+
   it('initialises Pixi at the requested resolution without an auto-render ticker', async () => {
     const stage = await BroadcastStage.create(sampleScene, { mode: 'interactive', scale: 1.5 });
     const options = (fake.apps[0].init as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[0][0];

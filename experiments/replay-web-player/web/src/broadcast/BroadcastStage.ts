@@ -1,4 +1,6 @@
 import { Application, Text, type AccessibilitySystemOptions, type ApplicationOptions, type TextStyleOptions } from 'pixi.js';
+// Pixi 8 accessibility is an opt-in extension; without it no tabindex overlay is ever created.
+import 'pixi.js/accessibility';
 import { compareFleetShips } from '../engine/fleetOrder';
 import { evaluateScene } from '../engine/timeline';
 import type { EntityId, EvaluatedShip, ReplayScene, Seconds } from '../types';
