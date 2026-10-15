@@ -1,5 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import { COLORS, FRAME, Z } from './layout';
+import { createRosterLayer } from './rosterLayer';
 import type { BroadcastLayer, LayerFactory, StageContext } from './types';
 import type { ReplayScene } from '../types';
 
@@ -16,5 +17,6 @@ export function createLayers(ctx: StageContext, scene: ReplayScene): LayerEntry[
   const entries: LayerEntry[] = [];
   const stage = { addLayer: (layer: BroadcastLayer, z: number) => { entries.push({ layer, z }); } };
   stage.addLayer(createBackgroundLayer(ctx, scene), Z.BACKGROUND);
+  stage.addLayer(createRosterLayer(ctx, scene), Z.PANEL);
   return entries;
 }
