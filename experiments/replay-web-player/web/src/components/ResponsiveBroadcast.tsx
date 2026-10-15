@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { BroadcastFrame } from './BroadcastFrame';
+import { PixiBroadcast } from './PixiBroadcast';
+import { pixiHudEnabled } from '../broadcast/flag';
 import type { ReplayScene } from '../types';
 
 export function ResponsiveBroadcast(props: {
@@ -15,10 +17,11 @@ export function ResponsiveBroadcast(props: {
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  const [pixiHud] = useState(pixiHudEnabled);
   const scale = Math.min(size.width / 1920, size.height / 1080);
   return <div ref={host} className="broadcast-viewport">
     <div style={{position:'absolute',width:1920,height:1080,left:(size.width-1920*scale)/2,top:(size.height-1080*scale)/2,transform:`scale(${scale})`,transformOrigin:'top left'}}>
-      <BroadcastFrame {...props}/>
+      {pixiHud ? <PixiBroadcast {...props} viewportScale={scale}/> : <BroadcastFrame {...props}/>}
     </div>
   </div>;
 }

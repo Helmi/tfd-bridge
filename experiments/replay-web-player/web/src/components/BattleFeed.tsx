@@ -1,9 +1,9 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { chatChannelColor } from '../chatColors';
 import { shipClassIconUrl } from '../shipClassIcons';
+import { clock } from '../time';
 import type { ReplayScene, ShipDefinition } from '../types';
 
-const clock = (t: number) => `${Math.floor(t / 60).toString().padStart(2, '0')}:${Math.floor(t % 60).toString().padStart(2, '0')}`;
 const ENTRANCE_SECONDS = 3.2;
 const ROW_GAP = 2;
 // Seven minimum-height rows cover the 156px viewport, including a clipped oldest row.

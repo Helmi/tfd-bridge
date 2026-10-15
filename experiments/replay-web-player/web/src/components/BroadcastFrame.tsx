@@ -7,11 +7,11 @@ import { compareFleetShips } from '../engine/fleetOrder';
 import { shipClassIconUrl } from '../shipClassIcons';
 import { DIVISION_COLOR, isOwnDivision, shipIconColor } from '../divisions';
 import { BattleFeed } from './BattleFeed';
+import { clock } from '../time';
 import type { EvaluatedShip, ReplayScene, ShipDefinition } from '../types';
 import './broadcast.css';
 import '../fonts.css';
 
-const clock = (t: number) => `${Math.floor(t / 60).toString().padStart(2, '0')}:${Math.floor(t % 60).toString().padStart(2, '0')}`;
 const number = (n: number) => Math.round(n).toLocaleString('en-US');
 function ShipIcon({ ship, dead = false, ships = [], selectedId }: { ship: ShipDefinition; dead?: boolean; ships?: ShipDefinition[]; selectedId?: string }) {
   return <span className={`ship-icon ${dead ? 'dead' : ''}`} role="img" title={ship.shipName} aria-label={`${ship.shipName}, ${ship.shipClass}${dead ? ', sunk' : ''}`} style={{ maskImage: `url(${shipClassIconUrl(ship.shipClass)})`, color: shipIconColor(ship, ships, selectedId, 'inherit') }} />;

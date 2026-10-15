@@ -5,6 +5,8 @@
 import { ArrayBufferTarget, Muxer, StreamTarget } from 'mp4-muxer';
 import type { ReplayScene } from '../types';
 import { SharedFrameRenderer, VIRTUAL_HEIGHT } from './sharedFrameRenderer';
+import { PixiFrameRenderer, type FrameRenderer } from './pixiFrameRenderer';
+import { pixiHudEnabled } from '../broadcast/flag';
 import { budgetBitrate, retryBitrate } from './encodingPolicy';
 import { videoFrameCount, videoFrameTime } from '../engine/ending';
 import { CODEC_LABELS, MUXER_CODECS, h264CodecString, pickEncoderConfig, type EncodeReport, type VideoCodec } from './codecs';
@@ -116,7 +118,10 @@ async function encodeOnce(
   const total = videoFrameCount(scene.replay.duration, speed, fps);
   const started = performance.now();
 
-  const renderer = await SharedFrameRenderer.create(scene, { scale, mapSupersampling: opts.mapSupersampling ?? false });
+  const rendererOptions = { scale, mapSupersampling: opts.mapSupersampling ?? false };
+  const renderer: FrameRenderer = pixiHudEnabled()
+    ? await PixiFrameRenderer.create(scene, rendererOptions)
+    : await SharedFrameRenderer.create(scene, rendererOptions);
   const width = renderer.width;
   const height = renderer.height;
   let encoder: VideoEncoder | undefined;
