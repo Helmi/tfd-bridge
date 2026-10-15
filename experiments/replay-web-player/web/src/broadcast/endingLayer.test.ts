@@ -1,18 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sampleScene } from '../data/sampleScene';
 import type { ReplayScene } from '../types';
-import { allOf, FakeContainer, FakeFillGradient, FakeGraphics, FakeSprite, FakeText } from './pixiFake';
+import { allOf, FakeContainer, FakeGraphics, FakeSprite, FakeText } from './pixiFake';
+import { FakeCanvas } from './fogFake';
 import type { BroadcastFrameState, StageContext } from './types';
 
+const canvases: FakeCanvas[] = [];
 vi.mock('pixi.js', async () => {
   const fake = await import('./pixiFake');
+  const { FakeCanvas } = await import('./fogFake');
   return {
-    Container: fake.FakeContainer, Graphics: fake.FakeGraphics, Sprite: fake.FakeSprite, FillGradient: fake.FakeFillGradient,
-    DOMAdapter: { get: () => ({}) }, Texture: { from: () => ({}) },
+    Container: fake.FakeContainer, Graphics: fake.FakeGraphics, Sprite: fake.FakeSprite,
+    DOMAdapter: { get: () => ({ createCanvas: (width: number, height: number) => { const c = new FakeCanvas(width, height); canvases.push(c); return c; } }) },
+    Texture: { from: (canvas: FakeCanvas) => ({ canvas, source: { update: vi.fn() }, destroy: vi.fn() }) },
   };
 });
 
-import { createEndingLayer, premultipliedStops } from './endingLayer';
+import { createEndingLayer, paintFog, premultipliedStops } from './endingLayer';
 
 const scene = (outcome?: 'victory' | 'defeat' | 'draw', complete = true): ReplayScene =>
   ({ ...sampleScene, replay: { ...sampleScene.replay, outcome, complete } });
@@ -27,19 +31,17 @@ function build(target: ReplayScene) {
   return {
     layer, root,
     title: allOf(root, FakeText)[0],
-    black: allOf(root, FakeGraphics)[1],
-    fog: allOf(root, FakeGraphics)[0],
+    black: allOf(root, FakeGraphics)[0],
+    canvas: canvases.at(-1)!.context,
   };
 }
-const gradientsOf = (fog: FakeGraphics) => fog.ops.filter(o => o.op === 'fill').map(o => (o.args[0] as FakeFillGradient));
 
 describe('ending layer', () => {
   it('is a full-frame layer that never takes pointer events', () => {
     const { root, layer } = build(scene('victory'));
     expect(layer.container.label).toBe('ending');
     expect((root as unknown as { eventMode: string }).eventMode).toBe('none');
-    const sprite = allOf(root, FakeSprite)[0] as unknown as { width: number; height: number };
-    expect(sprite).toMatchObject({ width: 1920, height: 1080 });
+    for (const sprite of allOf(root, FakeSprite)) expect(sprite).toMatchObject({ width: 1920, height: 1080 });
   });
 
   it('is hidden before the end and shown from the end on', () => {
@@ -77,34 +79,58 @@ describe('ending layer', () => {
     }
   });
 
-  it('draws the three fog ellipses in the outcome colour, centre gradient first', () => {
-    const target = scene('victory');
-    const { layer, fog } = build(target);
+  it('paints the fog once per colour and destroys its texture on destroy', () => {
+    const target = scene('defeat');
+    const { layer, canvas } = build(target);
     layer.update(frame(target, 0));
-    const [center, lower, upper] = gradientsOf(fog).map(g => g.options);
-    expect(center).toMatchObject({ type: 'radial', center: { x: 960, y: 540 }, scale: 540 / 960, textureSpace: 'global' });
-    expect(center.outerRadius).toBeCloseTo(Math.SQRT2 * 960);
-    expect((center.colorStops as { color: string }[])[0].color).toBe('rgba(61, 177, 126, 0.5)');
-    expect((center.colorStops as { color: string }[]).at(-1)!.color).toBe('rgba(3, 10, 9, 0.92)');
-    expect(lower).toMatchObject({ center: { x: 1440, y: 756 }, scale: 756 / 1440 });
-    expect(lower.colorStops).toEqual([
-      { offset: 0, color: 'rgba(61, 177, 126, 0.35)' }, { offset: 0.6, color: 'rgba(61, 177, 126, 0)' }, { offset: 1, color: 'rgba(61, 177, 126, 0)' },
-    ]);
-    expect(upper).toMatchObject({ center: { x: 480, y: 432 }, scale: 648 / 1440 });
-    expect((upper.colorStops as { offset: number }[])[1].offset).toBe(0.65);
+    const first = canvas.fills.length;
+    expect(first).toBe(3);
+    layer.update(frame(target, 1));
+    expect(canvas.fills).toHaveLength(first);
+    layer.destroy();
+    expect(shadow.destroy).toHaveBeenCalled();
+  });
+});
+
+describe('fog composite', () => {
+  // The canvas is a quarter of the 1920x1080 frame.
+  const k = 0.25;
+  const paint = (rgb: readonly [number, number, number] = [61, 177, 126]) => {
+    const canvas = new FakeCanvas(480, 270);
+    paintFog(canvas.context as never, 480, 270, rgb);
+    return canvas.context;
+  };
+  const at = (context: ReturnType<typeof paint>, x: number, y: number) => context.alphaAt(x * k, y * k);
+  // CSS: 1 - (1 - a) products, with each ellipse fading linearly to its end stop.
+  const ellipse = (peak: number, end: number, dx: number, dy: number) => peak * Math.max(0, 1 - Math.hypot(dx, dy) / Math.SQRT2 / end);
+
+  it('has no opaque base fill: every layer is a gradient', () => {
+    const context = paint();
+    expect(context.fills).toHaveLength(3);
+    expect(context.fills.every(f => typeof f.style === 'object')).toBe(true);
   });
 
-  it('builds the fog once per colour and destroys gradients on destroy', () => {
-    const target = scene('defeat');
-    const { layer, fog } = build(target);
-    layer.update(frame(target, 0));
-    const first = gradientsOf(fog);
-    layer.update(frame(target, 1));
-    expect(gradientsOf(fog)).toEqual(first);
-    expect((first[0].options.colorStops as { color: string }[])[0].color).toBe('rgba(194, 65, 66, 0.5)');
-    layer.destroy();
-    expect(first.every(g => g.destroyed)).toBe(true);
-    expect(shadow.destroy).toHaveBeenCalled();
+  it('is about half opaque at the centre, plus the two ellipses', () => {
+    const upper = ellipse(0.48, 0.65, 480 / 1440, 108 / 648);
+    const lower = ellipse(0.35, 0.6, 480 / 1440, 216 / 756);
+    const expected = 1 - (1 - 0.5) * (1 - lower) * (1 - upper);
+    expect(expected).toBeCloseTo(0.703, 2);
+    expect(at(paint(), 960, 540)).toBeCloseTo(expected, 2);
+  });
+
+  it('reaches 0.92 in a far corner that no ellipse touches', () => {
+    expect(at(paint(), 0, 1080)).toBeCloseTo(0.92, 2);
+  });
+
+  it('stacks the 25%/40% ellipse on top of the 75%/70% one', () => {
+    const context = paint();
+    const centres = context.fills.map(f => f.tx / k);
+    expect(centres).toEqual([960, 1440, 480]);
+  });
+
+  it('keeps the frame visible through the right-hand panel area', () => {
+    // (1450, 150) is where the lead measured the extra darkening. The old opaque base fill gave about 0.95 here.
+    expect(at(paint(), 1450, 150)).toBeCloseTo(0.77, 1);
   });
 });
 
