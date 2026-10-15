@@ -3,6 +3,8 @@ import { createFeedLayer } from './feedLayer';
 import { COLORS, FRAME, Z } from './layout';
 import { createScoreboardLayer } from './scoreboardLayer';
 import { createRosterLayer } from './rosterLayer';
+import { createPlayerPanelLayer } from './playerPanelLayer';
+import { createRibbonsLayer } from './ribbonsLayer';
 import type { BroadcastLayer, LayerFactory, StageContext } from './types';
 import { createMapLayer, mapLayerDeps } from './mapLayer';
 import type { ReplayScene } from '../types';
@@ -24,5 +26,7 @@ export function createLayers(ctx: StageContext, scene: ReplayScene): LayerEntry[
   stage.addLayer(createRosterLayer(ctx, scene), Z.PANEL);
   stage.addLayer(createFeedLayer(ctx, scene), Z.PANEL);
   stage.addLayer(createMapLayer(mapLayerDeps(ctx), scene), Z.MAP);
+  stage.addLayer(createPlayerPanelLayer(ctx, scene), Z.PANEL);
+  stage.addLayer(createRibbonsLayer(ctx, scene), Z.PANEL);
   return entries;
 }
