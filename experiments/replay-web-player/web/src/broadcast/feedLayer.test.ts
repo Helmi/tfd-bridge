@@ -137,18 +137,26 @@ describe('feed layer', () => {
     kills: [{ t: 50, killerId: owner.id, victimId: enemy.id }],
     chat: [{ id: '1', t: 10, senderId: enemy.id, senderName: 'Opponent', channel: 'team', message: 'hello' }],
   };
-  const rowsOf = (layer: ReturnType<typeof createFeedLayer>) => (layer.container.children[1] as unknown as InstanceType<typeof fake.Node>).children;
+  const windowOf = (layer: ReturnType<typeof createFeedLayer>) => layer.container.children[1] as unknown as InstanceType<typeof fake.Node> & { mask: InstanceType<typeof fake.Graphics>; position: { x: number; y: number } };
+  const rowsOf = (layer: ReturnType<typeof createFeedLayer>) => (windowOf(layer).children[1] as InstanceType<typeof fake.Node>).children;
 
   it('is labelled, masked at 156 px, and shows the empty text with no events', () => {
     textObjects.length = 0;
     const layer = createFeedLayer(makeCtx(), base, measure);
     layer.update(frame(base, 5));
     expect(layer.container.label).toBe('feed');
-    expect((layer.container.mask as unknown as InstanceType<typeof fake.Graphics>).rects).toEqual([[0, 0, 770, 156]]);
-    expect(layer.container.position).toMatchObject({ x: 1115, y: 345 });
+    expect(windowOf(layer).mask.rects).toEqual([[0, 0, 770, 156]]);
+    expect(windowOf(layer).position).toMatchObject({ x: 1115, y: 345 });
     const empty = textObjects.find(t => t.text === FEED_EMPTY_TEXT)!;
     expect(empty.visible).toBe(true);
     expect(rowsOf(layer)).toHaveLength(0);
+  });
+
+  it('draws the 1 px separator at the top of the feed box, outside the mask', () => {
+    const layer = createFeedLayer(makeCtx(), base, measure);
+    const line = layer.container.children[0] as unknown as InstanceType<typeof fake.Graphics>;
+    expect(line.rects).toEqual([[1115, 334, 771, 1]]);
+    expect(windowOf(layer).children).not.toContain(line);
   });
 
   it('pools rows by key: the same Text survives updates, and is destroyed when the row leaves', () => {
@@ -189,7 +197,9 @@ describe('feed layer', () => {
   it('destroys everything on destroy', () => {
     const layer = createFeedLayer(makeCtx(), feedScene, measure);
     layer.update(frame(feedScene, 100));
+    const window = windowOf(layer);
     layer.destroy();
     expect((layer.container as unknown as { destroyed: boolean }).destroyed).toBe(true);
+    expect((window as unknown as { destroyed: boolean }).destroyed).toBe(true);
   });
 });

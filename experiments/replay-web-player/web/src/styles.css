@@ -499,3 +499,5 @@ html:has(.replay-player), body:has(.replay-player){height:100%;min-height:0;over
 .batch-render-list .batch-failed { color: #ff9b96; }
 .batch-render-list .batch-saved { color: #70d9b7; }
 .batch-render-list .batch-skipped { color: #98afa5; }
+/* Pixi accessibility overlay: the roster ring is drawn on the canvas, so the browser outline stays off. */
+.broadcast-viewport button:focus-visible { outline: none; }

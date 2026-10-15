@@ -1,4 +1,4 @@
-import { Assets, ColorMatrixFilter, Container, Graphics, Sprite, type Text, type Texture, type TextStyleOptions } from 'pixi.js';
+import { Assets, ColorMatrixFilter, type ColorMatrix, Container, Graphics, Sprite, type Text, type Texture, type TextStyleOptions } from 'pixi.js';
 import { shipIconColor } from '../divisions';
 import { formatNumber, selectedPanelModel, type PanelStat } from './intelModel';
 import { BOX, COLORS, FONT_MONO } from './layout';
@@ -11,18 +11,22 @@ const WIDTH = BOX.player.w;
 const EYEBROW = { y: 2.6, lineHeight: 18 };
 const NAME = { y: 23.6, lineHeight: 32 };
 const SHIP_LINE = { y: 63.5, height: 23, iconBox: { w: 25, h: 20 }, gap: 10 };
-const SILHOUETTE = { x: WIDTH - 310, y: 8, w: 310, h: 84 };
+/** `right:0` of the 771 px content box (the intel column is one px wider than BOX.player): frame x 1576. */
+const SILHOUETTE = { x: WIDTH + 1 - 310, y: 8, w: 310, h: 84 };
 /** Grid columns of `.stats` as `fr` shares, and the column gap. */
 const OWNER_COLUMNS = [1.3, 1, 0.85];
 const OTHER_COLUMNS = [0.8, 1.2, 1];
 const STATS_GAP = 20;
-const LABEL_Y = 145.5;
+/** Owner stats, measured in the DOM: values at frame y 136.9 (36 px) and 145.9 (21 px), labels at 176.9. */
+const OWNER_STATS_Y = { values: [102.9, 111.9, 111.9], label: 142.9 };
+const OTHER_STATS_Y = { values: [105.5, 105.5, 105.5], label: 145.5 };
 const HP = { ownerY: 180.8, otherY: 179.5, lineHeight: 25, trackW: 350, trackH: 8, gap: 20 };
 const HP_MAX_LABEL_COLOR = COLORS.muted;
 const TRACK_COLOR = 0x253d30;
 const HP_FILL_COLOR = COLORS.green;
-/** CSS `brightness(0) invert(.85)`: every opaque pixel becomes the same light grey. */
+/** CSS `brightness(0) invert(.85)` and `opacity:.85`: every opaque pixel becomes #d9d9d9 at alpha .85. */
 const SILHOUETTE_GREY = 0.85;
+const SILHOUETTE_ALPHA = 0.85;
 
 const EYEBROW_STYLE: TextStyleOptions = { fontSize: 12, lineHeight: EYEBROW.lineHeight, letterSpacing: 1.5, fill: COLORS.gold };
 const NAME_STYLE: TextStyleOptions = { fontSize: 29, fontWeight: '600', lineHeight: NAME.lineHeight, letterSpacing: -0.8, fill: COLORS.text };
@@ -65,13 +69,13 @@ export const createPlayerPanelLayer: LayerFactory = (ctx, scene) => {
   const setName = fitter(name, NAME_STYLE, WIDTH);
   const setShipName = fitter(shipName, SHIP_STYLE, WIDTH - SHIP_LINE.iconBox.w - SHIP_LINE.gap);
 
-  const makeGroup = (columns: number[], valueStyles: TextStyleOptions[], valueYs: number[], labelStyle: TextStyleOptions): StatGroup => {
+  const makeGroup = (columns: number[], valueStyles: TextStyleOptions[], ys: { values: number[]; label: number }, labelStyle: TextStyleOptions): StatGroup => {
     const group: StatGroup = { container: new Container({ label: 'stats' }), values: [], labels: [] };
     columnXs(columns).forEach((x, i) => {
       const value = ctx.createText(valueStyles[i]);
-      value.position.set(x, valueYs[i]);
+      value.position.set(x, ys.values[i]);
       const label = ctx.createText(labelStyle);
-      label.position.set(x, LABEL_Y);
+      label.position.set(x, ys.label);
       group.values.push(value);
       group.labels.push(label);
       group.container.addChild(value, label);
@@ -84,13 +88,13 @@ export const createPlayerPanelLayer: LayerFactory = (ctx, scene) => {
   const ownerGroup = makeGroup(
     OWNER_COLUMNS,
     [monoValue(36, 36, { letterSpacing: -2, fill: '#f5f1df' }), monoValue(21, 28), monoValue(21, 28)],
-    [105.5, 113.5, 113.5],
+    OWNER_STATS_Y,
     { fontSize: 12, lineHeight: 15, letterSpacing: 1.8, fill: '#9ab0a2' },
   );
   const otherGroup = makeGroup(
     OTHER_COLUMNS,
     [monoValue(21, 36), monoValue(21, 36), monoValue(21, 36)],
-    [105.5, 105.5, 105.5],
+    OTHER_STATS_Y,
     { fontSize: 11, lineHeight: 14, letterSpacing: 1, fill: '#9ab0a2' },
   );
   const setStats = (group: StatGroup, stats: PanelStat[]) => stats.forEach((stat, i) => {
@@ -122,8 +126,7 @@ export const createPlayerPanelLayer: LayerFactory = (ctx, scene) => {
       const scale = Math.min(SILHOUETTE.w / texture.width, SILHOUETTE.h / texture.height);
       sprite.scale.set(scale);
       sprite.position.set(SILHOUETTE.x + SILHOUETTE.w / 2, SILHOUETTE.y + SILHOUETTE.h / 2);
-      sprite.alpha = 0.85;
-      sprite.filters = [grey()];
+      sprite.filters = [silhouetteFilter()];
       sprite.visible = false;
       silhouette = sprite;
       // Behind the identity texts, like the CSS stacking (`.identity` z-index 1).
@@ -167,15 +170,22 @@ export const createPlayerPanelLayer: LayerFactory = (ctx, scene) => {
   } satisfies BroadcastLayer;
 };
 
-function grey(): ColorMatrixFilter {
-  const filter = new ColorMatrixFilter();
+/**
+ * R = G = B = grey and alpha x .85, set in the matrix: the result does not depend on how Pixi
+ * applies the sprite alpha around a filter. Offsets are in 0..1; the shader un-premultiplies first.
+ */
+export function silhouetteMatrix(): ColorMatrix {
   const g = SILHOUETTE_GREY;
-  // R = G = B = grey, alpha unchanged.
-  filter.matrix = [
+  return [
     0, 0, 0, 0, g,
     0, 0, 0, 0, g,
     0, 0, 0, 0, g,
-    0, 0, 0, 1, 0,
+    0, 0, 0, SILHOUETTE_ALPHA, 0,
   ];
+}
+
+function silhouetteFilter(): ColorMatrixFilter {
+  const filter = new ColorMatrixFilter();
+  filter.matrix = silhouetteMatrix();
   return filter;
 }

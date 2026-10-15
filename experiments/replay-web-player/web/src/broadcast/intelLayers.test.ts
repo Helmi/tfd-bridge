@@ -81,8 +81,31 @@ describe('player panel layer', () => {
     expect(silhouettes[0].visible).toBe(true);
     // 200 x 100 texture fitted "contain" into 310 x 84.
     expect(silhouettes[0].scale.x).toBeCloseTo(0.84);
-    expect(silhouettes[0].position).toMatchObject({ x: 460 + 155, y: 8 + 42 });
-    expect(silhouettes[0].alpha).toBe(0.85);
+    // Frame box 310 x 84 at x 1576, y 42.
+    expect(silhouettes[0].position).toMatchObject({ x: 461 + 155, y: 8 + 42 });
+    expect(layer.container.position.x + 461).toBe(1576);
+    // #d9d9d9 at alpha .85, the look of CSS `brightness(0) invert(.85)` with `opacity:.85`.
+    const matrix = (silhouettes[0].filters![0] as { matrix: number[] }).matrix;
+    const pixel = (r: number, g: number, b: number, a: number) => [0, 1, 2, 3].map(row =>
+      matrix[row * 5] * r + matrix[row * 5 + 1] * g + matrix[row * 5 + 2] * b + matrix[row * 5 + 3] * a + matrix[row * 5 + 4]);
+    for (const color of [[0, 0, 0], [0.9, 0.4, 0.1], [1, 1, 1]]) {
+      const [r, g, b, a] = pixel(color[0], color[1], color[2], 1);
+      expect([r, g, b].map(v => Math.round(v * 255))).toEqual([217, 217, 217]);
+      expect(a).toBe(0.85);
+    }
+    expect(pixel(0.5, 0.5, 0.5, 0)[3]).toBe(0);
+    expect(silhouettes[0].alpha).toBe(1);
+  });
+
+  it('places the owner stat boxes where the DOM puts them (frame y 136.9, 145.9, labels 176.9)', () => {
+    const layer = createPlayerPanelLayer(ctx, scene);
+    layer.update(frame(owner.id));
+    const texts = allOf(layer.container as unknown as FakeContainer, FakeText);
+    const frameY = (value: string) => 34 + texts.find(t => t.text === value)!.y;
+    expect(frameY('123,456')).toBeCloseTo(136.9, 0);
+    expect(frameY('555,555')).toBeCloseTo(145.9, 0);
+    expect(frameY('77,777')).toBeCloseTo(145.9, 0);
+    for (const label of ['DAMAGE', 'POTENTIAL', 'SPOTTING']) expect(frameY(label)).toBeCloseTo(176.9, 0);
   });
 
   it('hides owner-only data when another ship is selected', async () => {

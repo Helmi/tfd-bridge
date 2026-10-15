@@ -118,7 +118,11 @@ function createEventTextures(ctx: StageContext): Record<'chat' | 'kill', Texture
 }
 
 export function createFeedLayer(ctx: StageContext, scene: ReplayScene, measure: MeasureText = measureWithPixi): BroadcastLayer {
-  const container = new Container({ label: 'feed' });
+  const root = new Container({ label: 'feed' });
+  // `.feed{border-top}`: 1 px, spanning the 771 px content box of the intel column.
+  root.addChild(new Graphics().rect(BOX.feed.x, BOX.feed.y, BOX.feed.w + 1, 1).fill(COLORS.line));
+  const container = new Container({ label: 'feed-window' });
+  root.addChild(container);
   container.position.set(BOX.feedWindow.x, BOX.feedWindow.y);
   const mask = new Graphics().rect(0, 0, BOX.feedWindow.w, FEED_WINDOW_HEIGHT).fill(0xffffff);
   container.addChild(mask);
@@ -168,7 +172,7 @@ export function createFeedLayer(ctx: StageContext, scene: ReplayScene, measure: 
   }
 
   return {
-    container,
+    container: root,
     update(frame: BroadcastFrameState) {
       if (rowsOwnerTeamId !== frame.ownerTeamId) {
         for (const key of [...rows.keys()]) destroyRow(key);
@@ -193,7 +197,7 @@ export function createFeedLayer(ctx: StageContext, scene: ReplayScene, measure: 
     },
     destroy() {
       rows.clear();
-      container.destroy({ children: true });
+      root.destroy({ children: true });
       textures.chat.destroy(true);
       textures.kill.destroy(true);
     },

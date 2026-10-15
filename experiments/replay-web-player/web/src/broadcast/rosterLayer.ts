@@ -24,6 +24,7 @@ const LETTER_CENTER_Y = 13.8;
 const LETTER_MARGIN = 7;
 const MARKER = { x: -9, y: 6, w: 2, h: 29 } as const;
 const SUNK_ROW_ALPHA = 0.42;
+const FOCUS_RING = 2;
 const DEAD_ICON = { tint: '#68766d', alpha: 0.45 } as const;
 const NAME_COLOR = '#e1e9e2';
 const SUB_COLOR = '#b8c2bc';
@@ -91,7 +92,11 @@ interface RowView {
   sub: Text;
   fill: Graphics;
   marker: Graphics;
+  /** `.roster-row:focus-visible`: 2 px gold, outside the row box. */
+  outline: Graphics;
   onSelect: () => void;
+  onFocusIn: (event: { nativeEvent?: unknown }) => void;
+  onFocusOut: () => void;
   shown: { iconTint?: string; iconAlpha?: number; letterColor?: string; nameColor?: string; subColor?: string; scaleX?: number; title?: string };
 }
 
@@ -129,8 +134,12 @@ function createRow(ctx: Parameters<LayerFactory>[0], model: RosterRowModel, colu
   sub.position.set(NAME_X, SUB_CENTER_Y);
   setTextIfChanged(sub, truncateToWidth(model.playerLine, SUB_STYLE, textWidth));
 
-  container.addChild(marker, icon, ...(letter ? [letter] : []), name, sub, track, fill);
-  return { container, icon, letter, name, sub, fill, marker, onSelect: () => {}, shown: {} };
+  const outline = new Graphics().rect(-FOCUS_RING / 2, -FOCUS_RING / 2, column.width + FOCUS_RING, ROSTER_ROW_HEIGHT + FOCUS_RING)
+    .stroke({ width: FOCUS_RING, color: COLORS.gold });
+  outline.visible = false;
+
+  container.addChild(marker, icon, ...(letter ? [letter] : []), name, sub, track, fill, outline);
+  return { container, icon, letter, name, sub, fill, marker, outline, onSelect: () => {}, onFocusIn: () => {}, onFocusOut: () => {}, shown: {} };
 }
 
 /** Both fleet rosters: class icon, division letter, ship name, player, health bar. Rows select a ship. */
@@ -152,6 +161,23 @@ export const createRosterLayer: LayerFactory = (ctx) => {
   let current: BroadcastFrameState | undefined;
   let interactive = false;
 
+  // Pixi's accessibility overlay turns a focus on its button into `mouseover` and a blur into `mouseout`
+  // on the row, without a `nativeEvent`. A real hover has one and must not draw the ring.
+  let focused: RowView | undefined;
+  // Pixi removes the overlay on real mouse movement, and the focused button then goes without a blur.
+  const onMouseMove = (event: MouseEvent) => { if (event.movementX !== 0 || event.movementY !== 0) clearFocus(); };
+  function clearFocus(): void {
+    if (focused) focused.outline.visible = false;
+    focused = undefined;
+    globalThis.document?.removeEventListener('mousemove', onMouseMove, true);
+  }
+  function showFocus(row: RowView): void {
+    clearFocus();
+    focused = row;
+    row.outline.visible = true;
+    globalThis.document?.addEventListener('mousemove', onMouseMove, true);
+  }
+
   const setInteractive = (row: RowView, on: boolean) => {
     const { container } = row;
     if (on) {
@@ -162,9 +188,14 @@ export const createRosterLayer: LayerFactory = (ctx) => {
       container.tabIndex = 0;
       container.on('pointertap', row.onSelect);
       container.on('click', row.onSelect);
+      container.on('mouseover', row.onFocusIn);
+      container.on('mouseout', row.onFocusOut);
     } else {
       container.off('pointertap', row.onSelect);
       container.off('click', row.onSelect);
+      container.off('mouseover', row.onFocusIn);
+      container.off('mouseout', row.onFocusOut);
+      if (focused === row) clearFocus();
       container.eventMode = 'passive';
       container.cursor = 'default';
       container.accessible = false;
@@ -211,7 +242,10 @@ export const createRosterLayer: LayerFactory = (ctx) => {
           let row = rows.get(model.id);
           if (!row) {
             row = createRow(ctx, model, column);
+            const created = row;
             row.onSelect = () => current?.selectShip(model.id);
+            row.onFocusIn = event => { if (!event.nativeEvent) showFocus(created); };
+            row.onFocusOut = () => { if (focused === created) clearFocus(); };
             rows.set(model.id, row);
             column.container.addChild(row.container);
             if (interactive) setInteractive(row, true);
@@ -226,6 +260,6 @@ export const createRosterLayer: LayerFactory = (ctx) => {
         }
       }
     },
-    destroy() { root.destroy({ children: true }); },
+    destroy() { clearFocus(); root.destroy({ children: true }); },
   } satisfies BroadcastLayer;
 };
