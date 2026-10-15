@@ -5,13 +5,12 @@ import { advancePlayback, seekPlayback, ENDING_SECONDS } from './engine/ending';
 import { RenderProgressDialog } from './components/RenderProgressDialog';
 import { BatchRenderDialog } from './components/BatchRenderDialog';
 import { VideoSettingsDialog } from './components/VideoSettingsDialog';
-import { DEFAULT_LOCAL_VIDEO, type LocalVideoSettings } from './video/renderSettings';
+import { loadVideoDefault, type LocalVideoSettings } from './video/renderSettings';
 import { sampleScene } from './data/sampleScene';
 import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
 import { renderAndSave, webCodecsAvailable, type RenderProgress } from './video/encodeMp4';
 import { renderInBridge } from './video/bridgeRender';
-import type { EncodeReport } from './video/codecs';
 import { runBatch, type BatchReplay, type BatchResult, sortOldestFirst } from './video/batchRender';
 import { useReplayShare } from './video/shareReplay';
 import type { ReplayScene } from './types';
@@ -85,7 +84,7 @@ export function App() {
 
   // Batch rendering from the picker (bridge only): settings → blocking run → summary.
   const [batchPending, setBatchPending] = useState<LocalReplaySummary[]>();
-  const [batchSettings, setBatchSettings] = useState<LocalVideoSettings>(DEFAULT_LOCAL_VIDEO);
+  const [batchSettings, setBatchSettings] = useState<LocalVideoSettings>(loadVideoDefault);
   const [batchRun, setBatchRun] = useState<{ total: number; index: number; current?: BatchReplay; progress: RenderProgress; results?: BatchResult[] }>();
   const [pickerKey, setPickerKey] = useState(0);
   const batchAbort = useRef<AbortController | null>(null);
@@ -246,7 +245,7 @@ export function App() {
           onClose={() => setPickerOpen(false)}
         />
       )}
-      {batchPending && <VideoSettingsDialog batchCount={batchPending.length} duration={0} initial={batchSettings} native onClose={() => setBatchPending(undefined)} onRender={(settings) => { void startBatch(settings); }} />}
+      {batchPending && <VideoSettingsDialog batchCount={batchPending.length} duration={0} initial={batchSettings} onClose={() => setBatchPending(undefined)} onRender={(settings) => { void startBatch(settings); }} />}
       {batchRun && <BatchRenderDialog {...batchRun} onCancel={() => batchAbort.current?.abort()} onClose={closeBatch} />}
     </>
   );
@@ -268,9 +267,8 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
   // bridge-local). Prototype — see td-18bfca.
   const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [renderNote, setRenderNote] = useState<string>();
-  const [renderComparisons, setRenderComparisons] = useState<{settings:LocalVideoSettings;elapsedMs:number;bytes:number;encode?:EncodeReport}[]>([]);
   const [videoSettingsOpen, setVideoSettingsOpen] = useState(false);
-  const [videoSettings, setVideoSettings] = useState<LocalVideoSettings>(DEFAULT_LOCAL_VIDEO);
+  const [videoSettings, setVideoSettings] = useState<LocalVideoSettings>(loadVideoDefault);
   const renderAbort = useRef<AbortController | null>(null);
   useEffect(() => () => renderAbort.current?.abort(), []);
   const sharingRenderActive=Boolean(share.renderProgress);
@@ -289,9 +287,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
       const native = isBridge && localReplayName
         ? await renderInBridge(localReplayName,scene.replay.arenaUniqueId,setRenderProgress,renderAbort.current.signal,settings)
         : undefined;
-      const started = performance.now();
-      const saved = native ?? await renderAndSave(scene, base, (p) => setRenderProgress(p), renderAbort.current.signal,settings);
-      setRenderComparisons(runs => [{settings:{...settings},elapsedMs:native ? saved.elapsedMs : performance.now()-started,bytes:saved.bytes,encode:saved.encode},...runs].slice(0,2));
+      if (!native) await renderAndSave(scene, base, (p) => setRenderProgress(p), renderAbort.current.signal,settings);
     } catch (reason) {
       setRenderNote(renderAbort.current?.signal.aborted ? 'Video render cancelled.' : `Render failed: ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {
@@ -390,7 +386,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
           </div>
 
       {renderNote && <div className="render-note render-result" role="status"><span>{renderNote}</span><button onClick={()=>setRenderNote(undefined)} aria-label="Dismiss video result">×</button></div>}
-      {videoSettingsOpen && <VideoSettingsDialog comparisons={renderComparisons} duration={scene.replay.duration} initial={videoSettings} native={isBridge} onClose={()=>setVideoSettingsOpen(false)} onRender={settings=>{void onRenderVideo(settings);}}/>}
+      {videoSettingsOpen && <VideoSettingsDialog duration={scene.replay.duration} initial={videoSettings} onClose={()=>setVideoSettingsOpen(false)} onRender={settings=>{void onRenderVideo(settings);}}/>}
       {(renderProgress || share.renderProgress) && <RenderProgressDialog progress={(renderProgress ?? share.renderProgress)!} onCancel={()=>{if(renderProgress)renderAbort.current?.abort();else return share.cancelRender();}}/>}
     </main>
   );

@@ -1,73 +1,116 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { VideoSettingsDialog } from './VideoSettingsDialog';
-import { BITRATE_OPTIONS_MBPS, battleLengthSizes, estimateLocalVideo, formatFileSize, suggestedBitrates, type LocalVideoSettings } from '../video/renderSettings';
 
-const settings: LocalVideoSettings = {resolution:'2160', fps:30, bitrate:80_000_000, speed:10};
-const resolutions = ['1080', '1440', '2160'] as const;
+const detect = vi.hoisted(() => vi.fn());
+vi.mock('../video/codecs', async importOriginal => ({...await importOriginal<typeof import('../video/codecs')>(), detectEncoderSupport: detect}));
+import { detectEncoderSupport, type EncoderSupport } from '../video/codecs';
+import { VideoSettingsDialog, VideoSettingsFields, settleEncoder } from './VideoSettingsDialog';
+import type { LocalVideoSettings } from '../video/renderSettings';
 
-describe('suggested bitrates', () => {
-  it('match the table for every resolution and frame rate', () => {
-    const table = {'1080':[[8,12],[8,12],[12,16]], '1440':[[16,25],[16,25],[25,40]], '2160':[[40,50],[40,50],[60,80]]};
-    for (const r of resolutions) [24,30,60].forEach((fps, i) => {
-      const s = suggestedBitrates(r, fps as 24|30|60);
-      expect([s.good, s.artifactFree]).toEqual(table[r][i]);
-    });
-  });
-  it('are selectable bitrates and Good is below Artifact-free', () => {
-    for (const r of resolutions) for (const fps of [24,30,60] as const) {
-      const s = suggestedBitrates(r, fps);
-      expect(BITRATE_OPTIONS_MBPS).toContain(s.good);
-      expect(BITRATE_OPTIONS_MBPS).toContain(s.artifactFree);
-      expect(s.good).toBeLessThan(s.artifactFree);
-    }
-  });
-});
+const settings: LocalVideoSettings = {resolution:'1080', fps:30, codec:'av1', encoder:'gpu', bitrate:8_000_000, speed:10};
+const all = {gpu: true, cpu: true};
+const none = {gpu: false, cpu: false};
+const support = (patch: Partial<EncoderSupport> = {}): EncoderSupport => ({h264: all, av1: all, hevc: none, ...patch});
 
-describe('codec-aware suggested bitrates', () => {
-  it('follow the AV1/HEVC table and stay selectable', () => {
-    const table = {'1080':[[4,8],[4,8],[8,12]], '1440':[[8,16],[8,16],[16,25]], '2160':[[25,30],[25,30],[40,50]]};
-    for (const codec of ['av1', 'hevc'] as const) for (const r of resolutions) [24,30,60].forEach((fps, i) => {
-      const s = suggestedBitrates(r, fps as 24|30|60, codec);
-      expect([s.good, s.artifactFree]).toEqual(table[r][i]);
-      expect(BITRATE_OPTIONS_MBPS).toContain(s.good);
-      expect(BITRATE_OPTIONS_MBPS).toContain(s.artifactFree);
-      expect(s.good).toBeLessThan(s.artifactFree);
-    });
-  });
-});
+const fields = (opts: {settings?: LocalVideoSettings; support?: EncoderSupport; batchCount?: number} = {}) =>
+  renderToStaticMarkup(<VideoSettingsFields batchCount={opts.batchCount} duration={754} settings={opts.settings ?? settings} support={opts.support} onChange={() => {}}/>);
+const button = (markup: string, label: string) => markup.match(new RegExp(`<button[^>]*>(?:(?!</button>).)*${label}(?:(?!</button>).)*</button>`))?.[0];
+const NOTE = 'GPU encoding isn&#x27;t available for these settings here — the CPU exporter is used.'; // as serialised in HTML
 
-describe('battle length sizes', () => {
-  it('use estimateLocalVideo for 10, 15 and 20 minutes', () => {
-    expect(battleLengthSizes(settings).map(s => [s.minutes, s.megabytes])).toEqual([10,15,20].map(m => [m, estimateLocalVideo(m * 60, settings).megabytes]));
+describe('VideoSettingsDialog layout', () => {
+  it('has one labelled group per row and the dialog title', () => {
+    const markup = renderToStaticMarkup(<VideoSettingsDialog duration={754} initial={settings} onClose={() => {}} onRender={() => {}}/>);
+    for (const label of ['Resolution', 'Frame rate', 'Codec', 'Bitrate', 'Battle speed']) expect(markup).toContain(`role="group" aria-label="${label}"`);
+    expect(markup).toContain('Save your replay');
+    expect(markup).toContain('Save as my default');
+    expect(markup).toContain('Render &amp; save');
   });
-  it('formats MB below 1000 and GB above', () => {
-    expect(formatFileSize(999.4)).toBe('999 MB');
-    expect(formatFileSize(1000)).toBe('1.0 GB');
-    expect(formatFileSize(1234)).toBe('1.2 GB');
+  it('shows nothing from the removed parts', () => {
+    const markup = renderToStaticMarkup(<VideoSettingsDialog duration={754} initial={settings} onClose={() => {}} onRender={() => {}}/>);
+    for (const gone of ['<select', 'checkbox', 'Recent exports', 'Suggested for', 'Smoother map edges', 'Expected size', 'Compact', 'Balanced', '24 fps', 'Saves to']) expect(markup).not.toContain(gone);
   });
-});
-
-describe('VideoSettingsDialog recent exports', () => {
-  it('shows codec, GPU/CPU and frames per second', () => {
-    const encode = {codec: 'av1' as const, hardware: true, renderMsPerFrame: 10, waitMsPerFrame: 2, fps: 41.3};
-    const markup = renderToStaticMarkup(<VideoSettingsDialog comparisons={[{settings, elapsedMs: 5000, bytes: 1_048_576, encode}]} duration={600} initial={settings} native onClose={() => {}} onRender={() => {}}/>);
-    expect(markup).toContain('AV1 · GPU · 41 fps');
+  it('labels the buttons as specified', () => {
+    const markup = fields({support: support()});
+    for (const text of ['1080p', '1920 × 1080', '1440p', '2560 × 1440', '4K', '3840 × 2160', '30 fps', '60 fps',
+      'H.264 · GPU', 'H.264 · CPU', 'AV1 · GPU', 'AV1 · CPU', '5×', '10×', '15×', '20×', '25×']) expect(markup).toContain(text);
+    for (const n of [4, 8, 12, 20, 24, 36, 48, 60, 84]) expect(markup).toContain(`${n} Mbps`);
+    expect(markup).not.toContain('80 Mbps');
+  });
+  it('marks the current selection with aria-pressed', () => {
+    const markup = fields({support: support()});
+    expect(button(markup, 'AV1 · GPU')).toContain('aria-pressed="true"');
+    expect(button(markup, 'AV1 · CPU')).toContain('aria-pressed="false"');
+    expect(button(markup, '1080p')).toContain('aria-pressed="true"');
+    expect(button(markup, '30 fps')).toContain('aria-pressed="true"');
+    expect(button(markup, '8 Mbps')).toContain('aria-pressed="true"');
+    expect(button(markup, '10×')).toContain('aria-pressed="true"');
+    expect(button(markup, '60 fps')).toContain('aria-pressed="false"');
   });
 });
 
-describe('VideoSettingsDialog', () => {
-  const render = (batchCount?: number) => renderToStaticMarkup(<VideoSettingsDialog batchCount={batchCount} duration={600} initial={settings} native onClose={() => {}} onRender={() => {}}/>);
-  it.each([undefined, 3])('shows 4K, 80 Mbps, suggestions and sizes (batchCount %s)', batchCount => {
-    const markup = render(batchCount);
-    expect(markup).toContain('3840 × 2160');
-    expect(markup).toContain('80 Mbps');
-    expect(markup).toContain('Good 40 Mbps');
-    expect(markup).toContain('Artifact-free 50 Mbps');
-    expect(markup).toContain('Plays everywhere: Discord, phones, editors. Largest files.');
-    expect(markup).toContain('<option value="av1"');
-    expect(markup).not.toContain('<option value="hevc"');
-    for (const s of battleLengthSizes(settings)) expect(markup).toContain(`<span>${s.minutes} min · ${s.label}</span>`);
-    expect(markup.match(/<span>\d+ min · /g)).toHaveLength(3);
+describe('encoder support', () => {
+  it('keeps every button enabled and shows no note until the first probe returns', () => {
+    const markup = fields();
+    expect(markup).not.toContain('disabled');
+    expect(markup).not.toContain(NOTE);
+    expect(markup).not.toContain('HEVC');
+  });
+  it('disables buttons from the mocked probe and shows the single info line', async () => {
+    detect.mockResolvedValue(support({av1: {gpu: false, cpu: true}}));
+    const result = await detectEncoderSupport({resolution: '1440', fps: 60, bitrate: 8_000_000});
+    const markup = fields({support: result});
+    expect(button(markup, 'AV1 · GPU')).toContain('disabled');
+    expect(button(markup, 'AV1 · CPU')).not.toContain('disabled');
+    expect(button(markup, 'H.264 · GPU')).not.toContain('disabled');
+    expect(markup.split(NOTE)).toHaveLength(2);
+  });
+  it('shows no info line when every visible GPU button is enabled', () => {
+    expect(fields({support: support()})).not.toContain(NOTE);
+  });
+  it('ignores a missing HEVC GPU encoder while HEVC is hidden, but not when it is shown', () => {
+    expect(fields({support: support({hevc: none})})).not.toContain('HEVC');
+    expect(fields({support: support({hevc: none})})).not.toContain(NOTE);
+    expect(fields({support: support({hevc: {gpu: false, cpu: true}})})).toContain(NOTE);
+  });
+  it('shows the info line on a machine without any GPU encoder', () => {
+    const cpuOnly = {gpu: false, cpu: true};
+    const markup = fields({support: {h264: cpuOnly, av1: cpuOnly, hevc: none}});
+    expect(markup).toContain(NOTE);
+    expect(button(markup, 'AV1 · GPU')).toContain('disabled');
+  });
+  it('offers HEVC buttons only when supported', () => {
+    expect(fields({support: support({hevc: all})})).toContain('HEVC · GPU');
+    expect(fields({support: support({hevc: all})})).toContain('HEVC · CPU');
+    expect(fields({support: support({hevc: none})})).not.toContain('HEVC');
+  });
+});
+
+describe('selection fallback', () => {
+  it('keeps an enabled selection', () => {
+    expect(settleEncoder(settings, support())).toBe(settings);
+  });
+  it('moves to the same codec on the CPU when the GPU button is disabled', () => {
+    expect(settleEncoder(settings, support({av1: {gpu: false, cpu: true}}))).toEqual({...settings, codec: 'av1', encoder: 'cpu'});
+  });
+  it('moves to the first enabled button when the codec has neither', () => {
+    expect(settleEncoder(settings, support({av1: none}))).toEqual({...settings, codec: 'h264', encoder: 'gpu'});
+    expect(settleEncoder(settings, support({av1: none, h264: {gpu: false, cpu: true}}))).toEqual({...settings, codec: 'h264', encoder: 'cpu'});
+  });
+  it('leaves the selection alone when nothing is available', () => {
+    expect(settleEncoder(settings, {h264: none, av1: none, hevc: none})).toBe(settings);
+  });
+});
+
+describe('size line', () => {
+  it('shows video length and approximate size for a single save', () => {
+    const markup = fields({support: support()});
+    expect(markup).toMatch(/\d+:\d\d video<\/strong><span>· about \d+ MB/);
+    expect(markup).not.toContain('min ·');
+  });
+  it('is hidden for a batch save', () => {
+    expect(fields({batchCount: 3, support: support()})).not.toContain('video</strong>');
+    const dialog = renderToStaticMarkup(<VideoSettingsDialog batchCount={3} duration={0} initial={settings} onClose={() => {}} onRender={() => {}}/>);
+    expect(dialog).toContain('Save 3 replays');
+    expect(dialog).not.toContain('about');
   });
 });

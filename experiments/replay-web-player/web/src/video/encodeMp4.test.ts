@@ -27,6 +27,7 @@ vi.mock('mp4-muxer', () => ({
     }
   },
 }));
+import { EncoderUnavailableError } from './codecs';
 import { h264CodecString, renderSceneToMp4, STREAM_MAX_PENDING } from './encodeMp4';
 
 const scene = { replay: {duration: 1} } as ReplayScene;
@@ -75,6 +76,13 @@ describe('render resource lifetime and upload size enforcement', () => {
   it('uses a 1080p canvas for the default local export', async () => {
     await renderSceneToMp4(scene, options);
     expect(fake.create).toHaveBeenCalledWith(scene, {scale:1,mapSupersampling:false});
+  });
+  it('fails with encoder_unavailable instead of switching when the chosen encoder is unsupported', async () => {
+    fake.hardwareOk = false;
+    await expect(renderSceneToMp4(scene, {...options, encoder: 'gpu'})).rejects.toBeInstanceOf(EncoderUnavailableError);
+    expect(fake.renderFrame).not.toHaveBeenCalled();
+    expect((await renderSceneToMp4(scene, {...options, encoder: 'cpu'})).encode.hardware).toBe(false);
+    expect((await renderSceneToMp4(scene, options)).encode.hardware).toBe(false); // no choice: legacy fallback
   });
   it('rejects invalid timing or bitrate before allocating a renderer', async () => {
     for (const duration of [0, -1, NaN, Infinity]) {

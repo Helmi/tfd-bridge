@@ -1,24 +1,20 @@
 // Codec strings, encoder config probing and live GPU/CPU detection (WebCodecs).
 export type VideoCodec = 'h264' | 'av1' | 'hevc';
 export type Resolution = '1080' | '1440' | '2160';
-export type CodecSupport = 'gpu' | 'cpu' | 'unavailable';
+export type EncoderChoice = 'gpu' | 'cpu';
+export type EncoderSupport = Record<VideoCodec, Record<EncoderChoice, boolean>>;
 
 export const CODEC_LABELS: Record<VideoCodec, string> = {h264: 'H.264', av1: 'AV1', hevc: 'HEVC'};
 export const CODEC_ORDER: VideoCodec[] = ['h264', 'av1', 'hevc'];
 /** mp4-muxer codec for each video codec. */
 export const MUXER_CODECS = {h264: 'avc', av1: 'av1', hevc: 'hevc'} as const;
 
-export const CODEC_HINTS: Record<VideoCodec, string> = {
-  h264: 'Plays everywhere: Discord, phones, editors. Largest files.',
-  av1: 'Same quality with files about a third smaller. Plays in Discord, YouTube, Chrome, Edge, Firefox and VLC; may not play on older iPhones, some TVs or older video editors.',
-  hevc: 'Small files and good on Apple devices. On Windows it may need the HEVC extension and often does not play in Discord or browsers.',
-};
-const CPU_HINT_BASE = 'No GPU encoder for these settings — the CPU encodes instead, which is';
-export const CPU_ONLY_HINT: Record<VideoCodec, string> = {
-  h264: `${CPU_HINT_BASE} usually slower.`,
-  hevc: `${CPU_HINT_BASE} usually slower.`,
-  av1: `${CPU_HINT_BASE} much slower.`,
-};
+export const ENCODER_UNAVAILABLE_MESSAGE = "The selected encoder isn't available for these settings. Pick another codec option.";
+
+/** The chosen GPU/CPU encoder cannot encode this configuration; there is no silent switch. */
+export class EncoderUnavailableError extends Error {
+  constructor() { super(ENCODER_UNAVAILABLE_MESSAGE); this.name = 'EncoderUnavailableError'; }
+}
 
 /** Output size of each resolution (the renderer lays out 16:9 at 1080p virtual). */
 export const RESOLUTION_SIZE: Record<Resolution, [number, number]> = {
@@ -89,11 +85,12 @@ export function encoderConfig(codec: VideoCodec, base: EncoderBase, acceleration
     hardwareAcceleration: acceleration, latencyMode: 'quality'};
 }
 
-/** Probe for a supported encoder config, preferring hardware, then software. */
+/** Probe for a supported encoder config. `gpu` tries only hardware, `cpu` only software; without a choice: hardware, then software. */
 export async function pickEncoderConfig(
-  codec: VideoCodec, base: EncoderBase,
+  codec: VideoCodec, base: EncoderBase, encoder?: EncoderChoice,
 ): Promise<{config: VideoEncoderConfig; hardware: boolean} | null> {
-  const accels: HardwareAcceleration[] = ['prefer-hardware', 'no-preference', 'prefer-software'];
+  const accels: HardwareAcceleration[] = encoder === 'gpu' ? ['prefer-hardware'] : encoder === 'cpu' ? ['prefer-software']
+    : ['prefer-hardware', 'no-preference', 'prefer-software'];
   for (const acceleration of accels) {
     const cfg = encoderConfig(codec, base, acceleration);
     try {
@@ -104,20 +101,18 @@ export async function pickEncoderConfig(
   return null;
 }
 
-/** GPU / CPU only / unavailable for each codec, with the config the encoder would use. */
-export async function detectCodecSupport(
+/** Whether the GPU and the CPU encoder each accept the exact config for every codec. */
+export async function detectEncoderSupport(
   settings: {resolution: Resolution; fps: number; bitrate: number},
-): Promise<Record<VideoCodec, CodecSupport>> {
+): Promise<EncoderSupport> {
   const [width, height] = RESOLUTION_SIZE[settings.resolution];
   const base = {width, height, bitrate: settings.bitrate, framerate: settings.fps};
   const supported = async (codec: VideoCodec, acceleration: HardwareAcceleration) => {
     try { return Boolean((await VideoEncoder.isConfigSupported(encoderConfig(codec, base, acceleration))).supported); }
     catch { return false; }
   };
-  const detect = async (codec: VideoCodec): Promise<CodecSupport> =>
-    (await supported(codec, 'prefer-hardware')) ? 'gpu'
-      : (await supported(codec, 'prefer-software')) ? 'cpu' : 'unavailable';
-  if (typeof VideoEncoder === 'undefined') return {h264: 'unavailable', av1: 'unavailable', hevc: 'unavailable'};
+  const detect = async (codec: VideoCodec) => ({gpu: await supported(codec, 'prefer-hardware'), cpu: await supported(codec, 'prefer-software')});
+  if (typeof VideoEncoder === 'undefined') return {h264: {gpu: false, cpu: false}, av1: {gpu: false, cpu: false}, hevc: {gpu: false, cpu: false}};
   const [h264, av1, hevc] = await Promise.all(CODEC_ORDER.map(detect));
   return {h264, av1, hevc};
 }

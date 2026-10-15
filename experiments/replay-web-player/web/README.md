@@ -51,10 +51,15 @@ one background native webview per render job; older versions retain the in-page
 save path. H.264 encoding uses an explicit frame clock. An optional byte budget
 can retry at lower bitrate, checking actual MP4 length before accepting output.
 
-Local Save video opens a settings dialog. All presets use H.264 MP4, 1080p and
-10× battle speed: Compact (30 fps / 2 Mbps), Balanced (30 fps / 4 Mbps, default),
-Sharper (30 fps / 6 Mbps), and Smooth (60 fps / 6 Mbps). Resolution (1080p/1440p/4K),
-frame rate (24/30/60), bitrate (1–80 Mbps), codec (H.264 / AV1, plus HEVC where supported) and speed (5×/10×/20×) are adjustable.
+Local Save video opens a button-based settings dialog (MP4, 2× anti-aliasing
+always on): resolution (1080p/1440p/4K), frame rate (30/60), codec × encoder
+(H.264 / AV1 · GPU / CPU, plus HEVC where supported), bitrate (4, 8, 12, 20, 24,
+36, 48, 60, 84 Mbps) and battle speed (5×/10×/15×/20×/25×). Codec buttons are
+disabled when a WebCodecs probe says that encoder is not available for the chosen
+resolution and frame rate. The built-in default is 1080p, 30 fps, AV1 · GPU,
+8 Mbps, 10×; "Save as my default" stores the selection in `localStorage`
+(`tfd.video.default`, per origin). An unsupported encoder choice is never
+switched silently: the render fails with `encoder_unavailable`.
 The duration/size estimate is approximate; encoder output is variable. Native
 saves go to the user's Videos/TFD Bridge Renders directory. Rendering shows a
 blocking, cancellable progress dialog instead of changing the toolbar layout.
@@ -72,7 +77,9 @@ Local job routes (only enabled with a native renderer dispatcher):
 configured. This capability does not imply Discord authorization or delivery.
 
 - `POST /v1/render/jobs`: replay_name, optional arena_unique_id decimal string,
-  optional max_bytes and video_options `{resolution,fps,bitrate,speed}`.
+  optional max_bytes and video_options `{resolution,fps,bitrate,speed,codec,encoder}`
+  (`encoder`: `gpu` or `cpu`, absent = hardware then software; speed 5/10/15/20/25,
+  bitrate 1–84 Mbps; fps 24 and codec hevc stay accepted for compatibility).
   Video options are local-save only; share jobs retain the Engine byte-budget
   policy. Same-origin player only. Complete, local replay required.
 - `GET /v1/render/jobs/{id}`: state, attempt, frame, total, bytes and error code.

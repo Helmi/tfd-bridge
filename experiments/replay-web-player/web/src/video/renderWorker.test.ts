@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const fake = vi.hoisted(() => ({load:vi.fn(), encode:vi.fn()}));
 vi.mock('../engine/importScene', () => ({loadReplayScene:fake.load}));
 vi.mock('./encodeMp4', () => ({renderSceneToMp4:fake.encode}));
+import { EncoderUnavailableError } from './codecs';
 import { runRenderWorker } from './renderWorker';
 
 beforeEach(() => {
@@ -16,7 +17,7 @@ beforeEach(() => {
 afterEach(() => {vi.useRealTimers(); vi.unstubAllGlobals();});
 
 it.each([
-  {options:{resolution:'1440',fps:24,bitrate:6_000_000,speed:5,mapSupersampling:true},cap:null},
+  {options:{resolution:'1440',fps:24,bitrate:6_000_000,speed:5,mapSupersampling:true,codec:'av1',encoder:'cpu'},cap:null},
   {options:null,cap:20_000_000},
 ])('preserves claimed settings and reports actual encoded dimensions ($options)', async ({options,cap}) => {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -104,4 +105,25 @@ it('sends encoder diagnostics with the metadata', async () => {
   const metadata = fetchMock.mock.calls.find(([url]) => url.endsWith('/metadata'));
   expect(JSON.parse(String(metadata?.[1]?.body))).toEqual({duration_s:2,width:1920,height:1080,
     codec:'av1',hardware:false,render_ms_per_frame:12,wait_ms_per_frame:3,fps:41});
+});
+
+it.each([
+  {error: new EncoderUnavailableError(), code: 'encoder_unavailable'},
+  {error: new Error('boom'), code: 'render_failed'},
+])('posts $code when the encode fails with $error', async ({error, code}) => {
+  fake.encode.mockRejectedValue(error);
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/claim')) return new Response(JSON.stringify({replay_name:'battle.wowsreplay',
+      arena_unique_id:'9007199254740993',max_bytes:null,video_options:{encoder:'gpu'}}));
+    if (url.endsWith('/scene')) return new Response('{}');
+    if (!init?.method) return new Response(JSON.stringify({state:'rendering'}));
+    return new Response('{}');
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  const work = runRenderWorker('job', 'worker-token');
+  await vi.runAllTimersAsync();
+  await work;
+  expect(fake.encode.mock.calls[0][1]).toMatchObject({encoder:'gpu'});
+  const fail = fetchMock.mock.calls.find(([url]) => url.endsWith('/fail'));
+  expect(JSON.parse(String(fail?.[1]?.body))).toEqual({error:code});
 });
