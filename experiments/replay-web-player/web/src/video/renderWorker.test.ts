@@ -39,3 +39,49 @@ it.each([
   expect(JSON.parse(String(metadata?.[1]?.body))).toEqual({duration_s:2,width:2560,height:1440});
   expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/fail'))).toBe(false);
 });
+
+it('streams unbudgeted renders in chunks at their positions, then finishes', async () => {
+  fake.encode.mockImplementation(async (_scene: unknown, opts: {sink: {write(d: Uint8Array, p: number): void}}) => {
+    opts.sink.write(new Uint8Array([1, 2, 3]), 0);
+    opts.sink.write(new Uint8Array([4]), 3);
+    opts.sink.write(new Uint8Array([9, 9]), 0);
+    return {mp4:new Uint8Array(0),bytes:4,frames:48,fps:24,width:1920,height:1080};
+  });
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/claim')) return new Response(JSON.stringify({replay_name:'battle.wowsreplay',
+      arena_unique_id:'9007199254740993',max_bytes:null,video_options:null}));
+    if (url.endsWith('/scene')) return new Response('{}');
+    if (!init?.method) return new Response(JSON.stringify({state:'rendering'}));
+    return new Response('{}');
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  const work = runRenderWorker('job', 'worker-token');
+  await vi.runAllTimersAsync();
+  await work;
+  const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST').map(([url, init]) => [url.split('/').pop(), (init!.headers as Record<string, string>)['X-TFD-Chunk-Position']]);
+  expect(posts.filter(([a]) => a === 'video-chunk')).toEqual([['video-chunk', '0'], ['video-chunk', '3'], ['video-chunk', '0']]);
+  const order = posts.map(([a]) => a);
+  expect(order.indexOf('metadata')).toBeLessThan(order.indexOf('video-finish'));
+  expect(order.lastIndexOf('video-chunk')).toBeLessThan(order.indexOf('video-finish'));
+  expect(order).not.toContain('video');
+  expect(order).not.toContain('fail');
+});
+
+it('keeps the single video upload when a byte budget is set', async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/claim')) return new Response(JSON.stringify({replay_name:'battle.wowsreplay',
+      arena_unique_id:'9007199254740993',max_bytes:20_000_000,video_options:null}));
+    if (url.endsWith('/scene')) return new Response('{}');
+    if (!init?.method) return new Response(JSON.stringify({state:'rendering'}));
+    return new Response('{}');
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  const work = runRenderWorker('job', 'worker-token');
+  await vi.runAllTimersAsync();
+  await work;
+  expect(fake.encode.mock.calls.at(-1)![1].sink).toBeUndefined();
+  const urls = fetchMock.mock.calls.map(([url]) => url.split('/').pop());
+  expect(urls).toContain('video');
+  expect(urls).not.toContain('video-chunk');
+  expect(urls).not.toContain('video-finish');
+});

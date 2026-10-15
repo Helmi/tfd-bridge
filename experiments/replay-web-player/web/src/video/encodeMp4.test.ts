@@ -3,7 +3,7 @@ import type { ReplayScene } from '../types';
 
 const fake = vi.hoisted(() => ({
   destroy: vi.fn(), renderFrame: vi.fn(), frameClose: vi.fn(), encoderClose: vi.fn(),
-  create: vi.fn(), configureError: false, encodeError: false, sizes: [] as number[],
+  fastStart: undefined as unknown, create: vi.fn(), emitted: [] as [number, number][], queue: [] as number[], configureError: false, encodeError: false, sizes: [] as number[],
 }));
 vi.mock('./sharedFrameRenderer', () => ({
   VIRTUAL_HEIGHT: 1080,
@@ -11,13 +11,23 @@ vi.mock('./sharedFrameRenderer', () => ({
 }));
 vi.mock('mp4-muxer', () => ({
   ArrayBufferTarget: class { buffer = new ArrayBuffer(fake.sizes.shift() ?? 8); },
+  StreamTarget: class {
+    constructor(public options: {onData: (d: Uint8Array, p: number) => void; chunked: boolean; chunkSize: number}) {}
+  },
   Muxer: class {
-    target: unknown;
-    constructor(opts: {target: unknown}) { this.target = opts.target; }
-    finalize() {}
+    target: {options?: {onData: (d: Uint8Array, p: number) => void}};
+    constructor(opts: {target: {options?: {onData: (d: Uint8Array, p: number) => void}}; fastStart: unknown}) {
+      this.target = opts.target; fake.fastStart = opts.fastStart;
+    }
+    finalize() {
+      // Emit order as the real muxer: body chunk first, then the mdat-size patch at the start.
+      this.target.options?.onData(new Uint8Array(100), 0);
+      this.target.options?.onData(new Uint8Array(40), 100);
+      this.target.options?.onData(new Uint8Array(8), 0);
+    }
   },
 }));
-import { h264CodecString, renderSceneToMp4 } from './encodeMp4';
+import { h264CodecString, renderSceneToMp4, STREAM_MAX_PENDING } from './encodeMp4';
 
 const scene = { replay: {duration: 1} } as ReplayScene;
 const options = {fps: 1, speed: 1};
@@ -97,6 +107,25 @@ describe('render resource lifetime and upload size enforcement', () => {
     expect(result.mp4.byteLength).toBe(1_000_000);
     expect(fake.create).toHaveBeenCalledTimes(2);
     expect(fake.destroy).toHaveBeenCalledTimes(2);
+  });
+  it('streams muxer output to the sink in emit order without an in-memory buffer', async () => {
+    const writes: [number, number][] = [];
+    const sink = {write: (d: Uint8Array, p: number) => {writes.push([d.byteLength, p]);}, pending: () => 0};
+    const result = await renderSceneToMp4(scene, {...options, sink});
+    expect(writes).toEqual([[100, 0], [40, 100], [8, 0]]);
+    expect(fake.fastStart).toBe(false);
+    expect(result.mp4.byteLength).toBe(0);
+    expect(result.bytes).toBe(140);
+  });
+  it('waits for the sink while too many chunks are pending', async () => {
+    let polls = 0;
+    const sink = {write: () => undefined, pending: () => (++polls <= 3 ? STREAM_MAX_PENDING + 1 : 0)};
+    await renderSceneToMp4(scene, {...options, sink});
+    expect(polls).toBeGreaterThan(3);
+  });
+  it('does not combine streaming with a byte budget', async () => {
+    const sink = {write: () => undefined, pending: () => 0};
+    await expect(renderSceneToMp4(scene, {...options, sink, maxBytes: 1_000_000})).rejects.toThrow('byte budget');
   });
   it('fails after bounded retries instead of returning an oversized file', async () => {
     fake.sizes = [3_000_000, 3_000_000, 3_000_000];

@@ -1,7 +1,9 @@
 //! Local worker routes. Remote Engine start remains disabled until the
 //! authorization handoff contract is implemented; no share is authorized here.
 use super::*;
-use crate::render_jobs::{JobError, RenderRequest, RenderState, StartRender, WorkerLease};
+use crate::render_jobs::{
+    JobError, RenderRequest, RenderState, StartRender, WorkerLease, STREAM_MAX_BYTES,
+};
 use serde::de::DeserializeOwned;
 
 type Reply = Response<std::io::Cursor<Vec<u8>>>;
@@ -251,8 +253,116 @@ pub(super) fn post(
             }
             reply(200, serde_json::json!({"bytes":bytes.len()}))
         }
+        "video-chunk" => {
+            let position = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("X-TFD-Chunk-Position"))
+                .and_then(|h| h.value.as_str().parse::<u64>().ok());
+            let Some(position) = position else {
+                return error("invalid_position", 400);
+            };
+            let partial = {
+                let mut jobs = state.jobs.lock().unwrap();
+                match jobs.partial_path(&lease, &render_output_dir()) {
+                    Ok(p) => p,
+                    Err(JobError::InvalidTransition) => return error("job_not_rendering", 409),
+                    Err(e) => return job_error(e),
+                }
+            };
+            let mut bytes = Vec::new();
+            if request
+                .as_reader()
+                .take(CHUNK_MAX_BYTES + 1)
+                .read_to_end(&mut bytes)
+                .is_err()
+            {
+                return error("read_failed", 400);
+            }
+            if let Some(code) = chunk_rejection(bytes.len() as u64, position) {
+                return error(code, 413);
+            }
+            match write_chunk(&partial, position, &bytes) {
+                Ok(()) => reply(200, serde_json::json!({"ok":true})),
+                Err(_) => error("save_failed", 500),
+            }
+        }
+        "video-finish" => {
+            let partial = {
+                let mut jobs = state.jobs.lock().unwrap();
+                match jobs.partial_path(&lease, &render_output_dir()) {
+                    Ok(p) => p,
+                    Err(JobError::InvalidTransition) => return error("job_not_rendering", 409),
+                    Err(e) => return job_error(e),
+                }
+            };
+            let meta = state.meta_for(replays_dir, &input.replay_name);
+            let ship = meta.as_ref().and_then(|m| {
+                replays_dir
+                    .parent()
+                    .and_then(|game_dir| scene_export::ship_display_name(game_dir, &m.player_vehicle))
+            });
+            let filename = render_file_name(meta.as_ref(), ship.as_deref(), id);
+            let (output, size) = match finish_partial(&partial, &render_output_dir(), &filename) {
+                Ok(v) => v,
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                    return error("invalid_mp4", 400)
+                }
+                Err(_) => return error("save_failed", 500),
+            };
+            let result = state.jobs.lock().unwrap().rendered(&lease, output.clone(), size);
+            if let Err(e) = result {
+                let _ = std::fs::remove_file(&output); // created exclusively above
+                return job_error(e);
+            }
+            reply(200, serde_json::json!({"bytes":size}))
+        }
         _ => error("not_found", 404),
     }
+}
+
+const CHUNK_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+fn chunk_rejection(len: u64, position: u64) -> Option<&'static str> {
+    if len > CHUNK_MAX_BYTES {
+        Some("chunk_too_large")
+    } else if position.saturating_add(len) > STREAM_MAX_BYTES {
+        Some("exceeds_max_bytes")
+    } else {
+        None
+    }
+}
+
+/// Writes `bytes` at `position`, creating the partial file on first use.
+fn write_chunk(path: &Path, position: u64, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(path)?;
+    file.seek(SeekFrom::Start(position))?;
+    file.write_all(bytes)
+}
+
+/// Checks the MP4 signature, then moves the partial file onto a fresh, collision-free
+/// name in `dir`. Returns the final path and size. The partial file is kept on error.
+fn finish_partial(partial: &Path, dir: &Path, filename: &str) -> std::io::Result<(PathBuf, u64)> {
+    use std::io::{Error, ErrorKind, Read};
+    let mut file = std::fs::File::open(partial)?;
+    let size = file.metadata()?.len();
+    let mut head = [0u8; 8];
+    if file.read_exact(&mut head).is_err() || &head[4..8] != b"ftyp" {
+        return Err(Error::new(ErrorKind::InvalidData, "not an mp4"));
+    }
+    drop(file);
+    std::fs::OpenOptions::new().write(true).open(partial)?.sync_all()?;
+    let (output, reserved) = reserve_render_file(dir, filename)?;
+    drop(reserved);
+    if let Err(e) = std::fs::rename(partial, &output) {
+        let _ = std::fs::remove_file(&output);
+        return Err(e);
+    }
+    Ok((output, size))
 }
 
 const NAME_PART_MAX: usize = 40;
@@ -326,6 +436,56 @@ fn render_file_name(meta: Option<&scene_export::ReplayMeta>, ship: Option<&str>,
         return fallback();
     }
     format!("{date}_{ship}_{map}.mp4")
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    fn temp() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tfd-stream-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn chunks_are_written_at_their_position_including_a_patch() {
+        let dir = temp();
+        let part = dir.join("j.mp4.part");
+        write_chunk(&part, 0, b"\0\0\0\0ftypXXXX").unwrap();
+        write_chunk(&part, 12, b"tail").unwrap();
+        write_chunk(&part, 0, b"\0\0\0\x10").unwrap(); // out-of-order patch at the start
+        assert_eq!(std::fs::read(&part).unwrap(), b"\0\0\0\x10ftypXXXXtail");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finish_checks_ftyp_and_never_overwrites() {
+        let dir = temp();
+        let part = dir.join("j.mp4.part");
+        assert!(finish_partial(&part, &dir, "a.mp4").is_err()); // missing
+        write_chunk(&part, 0, b"notmp4data").unwrap();
+        assert_eq!(finish_partial(&part, &dir, "a.mp4").unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert!(part.exists());
+        std::fs::write(dir.join("a.mp4"), b"existing").unwrap();
+        std::fs::write(dir.join("a-1.mp4"), b"existing").unwrap();
+        write_chunk(&part, 0, b"\0\0\0\x10ftypdata").unwrap();
+        let (out, size) = finish_partial(&part, &dir, "a.mp4").unwrap();
+        assert_eq!(out, dir.join("a-2.mp4"));
+        assert_eq!(size, 12);
+        assert!(!part.exists());
+        assert_eq!(std::fs::read(dir.join("a.mp4")).unwrap(), b"existing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn limits_are_as_specified() {
+        assert_eq!(chunk_rejection(CHUNK_MAX_BYTES, 0), None);
+        assert_eq!(chunk_rejection(CHUNK_MAX_BYTES + 1, 0), Some("chunk_too_large"));
+        assert_eq!(chunk_rejection(10, STREAM_MAX_BYTES - 10), None);
+        assert_eq!(chunk_rejection(11, STREAM_MAX_BYTES - 10), Some("exceeds_max_bytes"));
+        assert_eq!(chunk_rejection(1, u64::MAX), Some("exceeds_max_bytes"));
+    }
 }
 
 #[cfg(test)]
