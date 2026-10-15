@@ -23,20 +23,30 @@ export function shipLabelLayout(width: number, height: number, opts: LabelOption
   };
 }
 
-export function createShipLabel(name: Text, opts: LabelOptions): Container {
+/** Place an existing label (position, alpha, name offset) and sync its division dot. The caller styles `name`. */
+export function updateShipLabel(label: Container, name: Text, opts: LabelOptions): void {
   name.anchor.set(0, 0);
-  name.style.fill = opts.color;
   const layout = shipLabelLayout(name.width, name.height, opts);
-  const label = new Container({label:'ship-name-label'});
   label.position.set(layout.x, layout.y);
   label.alpha = opts.alpha;
   name.position.set(layout.nameX, 0);
-  label.addChild(name);
-  if (opts.ownDivision) {
-    const dot = new Graphics({label:'division-name-dot'});
-    dot.circle(layout.dotX, layout.dotY, DOT_RADIUS)
-      .fill({color:opts.color}).stroke({color:'#06120e',width:DOT_OUTLINE});
+  let dot = label.getChildByLabel('division-name-dot') as Graphics | null;
+  if (!opts.ownDivision) {
+    if (dot) { label.removeChild(dot); dot.destroy(); }
+    return;
+  }
+  if (!dot) {
+    dot = new Graphics({label:'division-name-dot'});
     label.addChild(dot);
   }
+  dot.clear().circle(layout.dotX, layout.dotY, DOT_RADIUS)
+    .fill({color:opts.color}).stroke({color:'#06120e',width:DOT_OUTLINE});
+}
+
+export function createShipLabel(name: Text, opts: LabelOptions): Container {
+  name.style.fill = opts.color;
+  const label = new Container({label:'ship-name-label'});
+  label.addChild(name);
+  updateShipLabel(label, name, opts);
   return label;
 }

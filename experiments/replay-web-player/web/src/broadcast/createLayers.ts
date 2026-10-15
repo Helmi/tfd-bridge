@@ -1,6 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import { COLORS, FRAME, Z } from './layout';
 import type { BroadcastLayer, LayerFactory, StageContext } from './types';
+import { createMapLayer, mapLayerDeps } from './mapLayer';
 import type { ReplayScene } from '../types';
 
 export interface LayerEntry { layer: BroadcastLayer; z: number }
@@ -16,5 +17,6 @@ export function createLayers(ctx: StageContext, scene: ReplayScene): LayerEntry[
   const entries: LayerEntry[] = [];
   const stage = { addLayer: (layer: BroadcastLayer, z: number) => { entries.push({ layer, z }); } };
   stage.addLayer(createBackgroundLayer(ctx, scene), Z.BACKGROUND);
+  stage.addLayer(createMapLayer(mapLayerDeps(ctx), scene), Z.MAP);
   return entries;
 }
