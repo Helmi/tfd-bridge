@@ -1,4 +1,5 @@
 import { loadReplayScene } from '../engine/importScene';
+import { EncoderUnavailableError } from './codecs';
 import { renderSceneToMp4, type RenderOptions, type VideoSink } from './encodeMp4';
 
 /** Dedicated local Bridge webview. The capability stays in the URL fragment,
@@ -33,7 +34,7 @@ export async function runRenderWorker(jobId: string, token: string): Promise<voi
   try {
     root.textContent = 'Preparing replay video…';
     const request = await post('claim') as {replay_name:string;arena_unique_id?:string;max_bytes?:number;
-      video_options?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling' | 'codec'> | null};
+      video_options?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling' | 'codec' | 'encoder'> | null};
     const sceneUrl = `/v1/replays/${encodeURIComponent(request.replay_name)}/scene`;
     const response = await fetch(sceneUrl, {signal:controller.signal});
     if (!response.ok) throw new Error('Replay unavailable');
@@ -81,11 +82,11 @@ export async function runRenderWorker(jobId: string, token: string): Promise<voi
       if (!saved.ok) throw new Error('Saving replay video failed');
     }
     root.textContent = 'Replay video saved.';
-  } catch {
+  } catch (error) {
     await progress;
     // Re-read after a rejected late progress/save, in case cancellation won.
     try {const response=await fetch(base); const status=await response.json(); cancelling ||= status.state==='cancelling';} catch { /* native owner handles lost workers */ }
-    try {await post(cancelling?'stopped':'fail',cancelling?undefined:{error:'render_failed'});} catch { /* native timeout/exit fallback */ }
+    try {await post(cancelling?'stopped':'fail',cancelling?undefined:{error:error instanceof EncoderUnavailableError?'encoder_unavailable':'render_failed'});} catch { /* native timeout/exit fallback */ }
     root.textContent = cancelling ? 'Render cancelled.' : 'Render failed.';
   } finally {stopped=true; await poll;}
 }

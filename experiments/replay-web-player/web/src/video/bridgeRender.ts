@@ -1,9 +1,9 @@
-import type { EncodeReport, VideoCodec } from './codecs';
+import { ENCODER_UNAVAILABLE_MESSAGE, type EncodeReport, type VideoCodec } from './codecs';
 import type { RenderOptions, RenderProgress, SavedRender } from './encodeMp4';
 
 export async function renderInBridge(replayName: string, arenaId: string | undefined,
   onProgress: (progress: RenderProgress) => void, signal: AbortSignal,
-  videoOptions?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling' | 'codec'>): Promise<SavedRender | undefined> {
+  videoOptions?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling' | 'codec' | 'encoder'>): Promise<SavedRender | undefined> {
   signal.throwIfAborted();
   const started = performance.now();
   const response = await fetch('/v1/render/jobs', {method:'POST',headers:{'Content-Type':'application/json'},
@@ -31,7 +31,10 @@ export async function renderInBridge(replayName: string, arenaId: string | undef
       if (status.state === 'rendered') return {jobId:initial.id,downloadName:`replay-${initial.id}.mp4`,
         elapsedMs:performance.now()-started,frames:status.total,bytes:status.bytes!,
         encode:encodeReport(status.video)};
-      if (status.state === 'failed' || status.state === 'cancelled') throw new Error(status.error ?? 'Render cancelled');
+      if (status.state === 'failed' || status.state === 'cancelled') {
+        if (status.error === 'encoder_unavailable') throw new Error(ENCODER_UNAVAILABLE_MESSAGE);
+        throw new Error(status.error ?? 'Render cancelled');
+      }
       await new Promise(resolve => setTimeout(resolve,750));
     }
   } finally {signal.removeEventListener('abort',cancel);}
