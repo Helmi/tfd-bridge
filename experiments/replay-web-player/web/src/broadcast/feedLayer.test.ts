@@ -39,7 +39,8 @@ vi.mock('pixi.js', () => ({
 }));
 
 import { createFeedLayer, FEED_EMPTY_TEXT, feedRowHeight, feedRowTokens, feedStackOffset, layoutFeedRow, visibleFeedEvents } from './feedLayer';
-import { buildFeedEvents, ENTRANCE_SECONDS, feedEntranceRemaining, ROW_GAP, VIEWPORT_ROWS } from '../components/BattleFeed';
+import { COLORS } from './layout';
+import { buildFeedEvents, ENTRANCE_SECONDS, feedEntranceRemaining, ROW_GAP, VIEWPORT_ROWS } from './feedModel';
 
 // Every character is 8 px wide: 697 px holds 87 characters.
 const measure: MeasureText = value => Array.from(value).length * 8;
@@ -89,6 +90,24 @@ describe('feed model', () => {
     expect(text(1)).toContain('| [HOME] Owner');
     expect(text(2)).toContain('Enemy\u00a0ship');
     expect(text(2)).toContain('| [AWAY] Opponent');
+  });
+
+  it('colours participants by team, marks unknown ones, and only draws known class icons', () => {
+    const tokens = (scene: ReplayScene, index = 0) => feedRowTokens(buildFeedEvents(scene)[index], 'a');
+    const texts = (list: ReturnType<typeof tokens>) => list.flatMap(t => 'text' in t ? [t.text] : []);
+    const icons = (list: ReturnType<typeof tokens>) => list.flatMap(t => 'icon' in t && t.icon.startsWith('class:') ? [t.icon] : []);
+    const chat = tokens({ ...base, chat: [{ id: '1', t: 1, senderId: enemy.id, senderName: enemy.playerName, channel: 'team', message: 'Test body' }] });
+    expect(icons(chat)).toEqual([`class:${enemy.shipClass}:${COLORS.red}`]);
+    expect(chat.at(-1)).toMatchObject({ text: 'Test body', style: { fill: '#4fe0a0' } });
+    const own = tokens({ ...base, kills: [{ t: 1, killerId: owner.id, victimId: enemy.id }] });
+    expect(icons(own)).toEqual([`class:${owner.shipClass}:${COLORS.green}`, `class:${enemy.shipClass}:${COLORS.red}`]);
+    expect(texts(own)).toContain(' sunk ');
+    const unknown = tokens({ ...base, kills: [{ t: 1, killerId: 'missing', victimId: 'missing' }] });
+    expect(texts(unknown).filter(t => t === 'Unknown')).toHaveLength(2);
+    expect(icons(unknown)).toHaveLength(0);
+    const invalid = tokens({ ...base, ships: [{ ...owner, shipClass: 'unknown' as typeof owner.shipClass }], kills: [{ t: 1, killerId: owner.id, victimId: 'missing' }] });
+    expect(icons(invalid)).toHaveLength(0);
+    expect(texts(invalid)).toContain('Owner\u00a0ship');
   });
 
   it('computes row height as max(24, lines x 22)', () => {

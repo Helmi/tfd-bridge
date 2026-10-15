@@ -5,7 +5,7 @@ import { BOX, COLORS, FONT_MONO } from './layout';
 import { setTextIfChanged, truncateToWidth } from './text';
 import type { BroadcastLayer, LayerFactory } from './types';
 
-// Inner metrics of the `.player` section (final CSS in components/broadcast.css), in px
+// Inner metrics of the `.player` section (final CSS of the former broadcast.css, see git history), in px
 // relative to the panel box. Line boxes follow Space Grotesk / JetBrains Mono "normal" line heights.
 const WIDTH = BOX.player.w;
 const EYEBROW = { y: 2.6, lineHeight: 18 };

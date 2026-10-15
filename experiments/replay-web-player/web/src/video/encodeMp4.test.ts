@@ -5,9 +5,8 @@ const fake = vi.hoisted(() => ({
   destroy: vi.fn(), renderFrame: vi.fn(), frameClose: vi.fn(), encoderClose: vi.fn(),
   fastStart: undefined as unknown, create: vi.fn(), emitted: [] as [number, number][], queue: [] as number[], muxerCodec: undefined as unknown, listeners: [] as (() => void)[], stall: false, hardwareOk: true, encoder: undefined as { encodeQueueSize: number } | undefined, configureError: false, encodeError: false, sizes: [] as number[],
 }));
-vi.mock('./sharedFrameRenderer', () => ({
-  VIRTUAL_HEIGHT: 1080,
-  SharedFrameRenderer: { create: fake.create },
+vi.mock('./pixiFrameRenderer', () => ({
+  PixiFrameRenderer: { create: fake.create },
 }));
 vi.mock('mp4-muxer', () => ({
   ArrayBufferTarget: class { buffer = new ArrayBuffer(fake.sizes.shift() ?? 8); },

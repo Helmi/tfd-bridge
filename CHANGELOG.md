@@ -11,6 +11,16 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.22.0] — TBD
+
+### Changed
+- **Faster RePlayer and video export.** The broadcast frame (map, scoreboard, player panel, ribbons, feed, rosters and ending) is now drawn by one Pixi stage instead of HTML. The player and the video export use the same stage. Render time per frame: TBD by lead (0.21.0: 16.2 ms at 1080p30, about 14 ms at 4K30).
+
+### Removed
+- **The old HTML broadcast frame.** The `?hud=pixi` / `?hud=dom` switch is gone, and so are the HTML frame, its capture renderer and the two browser preview pages for it.
+
+---
+
 ## [0.21.0] — 2026-10-15
 
 ### Added

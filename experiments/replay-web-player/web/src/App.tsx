@@ -264,7 +264,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
   );
   const previousFrame = useRef<number | undefined>(undefined);
 
-  // Experimental: render this replay to a 16:9 broadcast-layout mp4 (offline,
+  // Experimental: render this replay to a 16:9 broadcast frame mp4 (offline,
   // bridge-local). Prototype — see td-18bfca.
   const [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [renderNote, setRenderNote] = useState<string>();

@@ -5,7 +5,7 @@ renderer. The directory retains its original experiment name.
 
 The important boundary is the `ReplaySceneV1` transport contract and `loadReplayScene()` adapter in `src/types.ts` / `src/engine/importScene.ts`: decoded replay semantics go in, while presentation choices stay in the viewer. The deterministic synthetic battle remains a fallback UI/test harness.
 
-The tactical layer uses PixiJS 8 with the WebGL renderer explicitly requested. React/DOM owns controls, rosters, readable stats, and accessibility. This lets us change the tactical renderer later without changing the exported scene data. On startup the app tries `/generated/scene.json`; its relative map asset is resolved against that JSON URL and drawn behind the tactical grid. If it is absent or invalid, the synthetic scene loads instead.
+The broadcast frame (map, scoreboard, player panel, ribbons, feed, rosters, ending) is one PixiJS 8 stage with the WebGL renderer explicitly requested. React/DOM owns the app shell and controls. Roster rows get an accessibility overlay from Pixi. This lets us change the renderer later without changing the exported scene data. On startup the app tries `/generated/scene.json`; its relative map asset is resolved against that JSON URL and drawn behind the tactical grid. If it is absent or invalid, the synthetic scene loads instead.
 
 ```powershell
 npm install
@@ -35,7 +35,7 @@ The decoder should emit this shape (or an evolution of it) in time chunks. It sh
 
 ## Shared layout and local video jobs (September 2026)
 
-The Bridge build now uses the same `BroadcastFrame` as offline MP4 export.
+The interactive player and the offline MP4 export draw the same Pixi broadcast frame (`src/broadcast/`, `BroadcastStage`).
 The enemy team's top icon strip is mirrored; both side rosters retain normal
 class/tier order. Bees to Honey, Two Brothers, Ice Islands and Shards use bundled
 land/water artwork in both views. The original map hash guards each replacement,
@@ -59,9 +59,8 @@ The duration/size estimate is approximate; encoder output is variable. Native
 saves go to the user's Videos/TFD Bridge Renders directory. Rendering shows a
 blocking, cancellable progress dialog instead of changing the toolbar layout.
 
-Frame capture copies the live map canvas directly and reuses the HUD raster
-while its DOM is unchanged. This avoids PNG encoding/decoding of every map frame
-and repeated per-element style computation. Hardware encoding is preferred via
+Video frames are read straight from the Pixi WebGL canvas after each explicit
+frame-clock step. Hardware encoding is preferred via
 WebCodecs, with software fallback; the preference is a hint, not proof of a
 particular hardware backend. H.264 level selection considers frame rate as well
 as resolution (1080p60 uses L4.2).

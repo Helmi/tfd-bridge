@@ -15,7 +15,7 @@ function useDevicePixelRatio(): number {
   return dpr;
 }
 
-/** Pixi version of `BroadcastFrame`: one canvas, redrawn by one effect per tick. */
+/** The broadcast frame: one Pixi canvas, redrawn by one effect per tick. */
 export function PixiBroadcast({ scene, time, selectedShipId, onSelectShip, viewportScale }: {
   scene: ReplayScene; time: number; selectedShipId: string; onSelectShip: (id: string) => void;
   /** Scale of the 1920x1080 frame inside its viewport (`ResponsiveBroadcast`). */

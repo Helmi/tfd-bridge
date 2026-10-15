@@ -4,7 +4,7 @@ import { BOX, COLORS, FONT_MONO } from './layout';
 import { setTextIfChanged, truncateToWidth } from './text';
 import type { BroadcastLayer, LayerFactory } from './types';
 
-// Inner metrics of the `.ribbons` section (final CSS in components/broadcast.css), in px
+// Inner metrics of the `.ribbons` section (final CSS of the former broadcast.css, see git history), in px
 // relative to the strip box: 1 px top border, 18 px padding, then a 42 px content row.
 const WIDTH = BOX.ribbons.w;
 const CONTENT_Y = 19;

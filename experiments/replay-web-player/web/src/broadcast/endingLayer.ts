@@ -5,7 +5,7 @@ import { setTextIfChanged } from './text';
 import type { BroadcastFrameState, BroadcastLayer, StageContext } from './types';
 import type { ReplayScene } from '../types';
 
-// The final `.battle-ending` rules in components/broadcast.css.
+// Values from the former broadcast.css (see git history): the final `.battle-ending` rules.
 const DEEP_RGB = [3, 10, 9] as const;
 const FOG = [
   // Listed top first, like the CSS. They are drawn bottom first.
