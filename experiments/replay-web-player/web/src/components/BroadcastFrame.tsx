@@ -7,14 +7,18 @@ import { compareFleetShips } from '../engine/fleetOrder';
 import { shipClassIconUrl } from '../shipClassIcons';
 import { DIVISION_COLOR, isOwnDivision, shipIconColor } from '../divisions';
 import { BattleFeed } from './BattleFeed';
-import { clock } from '../time';
+import { buildScoreboardModel } from '../broadcast/scoreboardModel';
 import type { EvaluatedShip, ReplayScene, ShipDefinition } from '../types';
 import './broadcast.css';
 import '../fonts.css';
 
 const number = (n: number) => Math.round(n).toLocaleString('en-US');
+type ClassIconProps = { name: string; shipClass: ShipDefinition['shipClass']; dead: boolean; color: string };
+function ClassIcon({ name, shipClass, dead, color }: ClassIconProps) {
+  return <span className={`ship-icon ${dead ? 'dead' : ''}`} role="img" title={name} aria-label={`${name}, ${shipClass}${dead ? ', sunk' : ''}`} style={{ maskImage: `url(${shipClassIconUrl(shipClass)})`, color }} />;
+}
 function ShipIcon({ ship, dead = false, ships = [], selectedId }: { ship: ShipDefinition; dead?: boolean; ships?: ShipDefinition[]; selectedId?: string }) {
-  return <span className={`ship-icon ${dead ? 'dead' : ''}`} role="img" title={ship.shipName} aria-label={`${ship.shipName}, ${ship.shipClass}${dead ? ', sunk' : ''}`} style={{ maskImage: `url(${shipClassIconUrl(ship.shipClass)})`, color: shipIconColor(ship, ships, selectedId, 'inherit') }} />;
+  return <ClassIcon name={ship.shipName} shipClass={ship.shipClass} dead={dead} color={shipIconColor(ship, ships, selectedId, 'inherit')} />;
 }
 
 function Fleet({ ships, allShips, selectedId, onSelectShip, enemy = false }: { ships: EvaluatedShip[]; allShips: ShipDefinition[]; selectedId?: string; onSelectShip?: (id:string) => void; enemy?: boolean }) {
@@ -45,12 +49,13 @@ onRendererReady?: (renderer: TacticalMapCapture) => void; onRendererError?: (err
   const fleetOrder = (a: EvaluatedShip, b: EvaluatedShip) => compareFleetShips(a.definition, b.definition);
   const ally = state.ships.filter(s => s.definition.teamId === owner.definition.teamId).sort(fleetOrder);
   const enemy = state.ships.filter(s => s.definition.teamId !== owner.definition.teamId).sort(fleetOrder);
+  const scoreboard = buildScoreboardModel({ scene, time, state, selectedId, ownerTeamId: owner.definition.teamId, ally, enemy }, { friendly: 'inherit', enemy: 'inherit' });
   return <div className="broadcast">
       <section className="map-panel"><TacticalMap resolution={mapResolution} presentation="broadcast" scene={scene} time={time} selectedShipId={selectedId} onSelectShip={onSelectShip ?? (() => {})} onRendererReady={onRendererReady} onRendererError={onRendererError}/>
         <div className="scoreboard">
-          <div className="team-score friendly"><div className="score-number">{state.scores[owner.definition.teamId] ?? 0}</div><div className="survivors">{ally.map(s => <ShipIcon key={s.definition.id} ship={s.definition} ships={scene.ships} selectedId={selectedId} dead={s.health <= 0}/>)}</div></div>
-          <div className="battle-clock"><span>{(scene.map.displayName ?? scene.map.name.split('/').pop()?.replace(/^\d+_(?:NE_)?/, '').replace(/_/g, ' '))?.toUpperCase()}</span><strong>{clock(time)}</strong><div className="caps">{state.captureZones.map(c => <span key={c.definition.id} className={c.owner === owner.definition.teamId ? 'friendly' : c.owner ? 'enemy' : ''}>{c.definition.label}</span>)}</div></div>
-          <div className="team-score enemy"><div className="score-number">{state.scores[enemy[0]?.definition.teamId] ?? 0}</div><div className="survivors">{[...enemy].reverse().map(s => <ShipIcon key={s.definition.id} ship={s.definition} ships={scene.ships} selectedId={selectedId} dead={s.health <= 0}/>)}</div></div>
+          <div className="team-score friendly"><div className="score-number">{scoreboard.friendlyScore}</div><div className="survivors">{scoreboard.friendlyShips.map(s => <ClassIcon key={s.id} name={s.shipName} shipClass={s.shipClass} dead={s.dead} color={s.color}/>)}</div></div>
+          <div className="battle-clock"><span>{scoreboard.mapLabel}</span><strong>{scoreboard.clock}</strong><div className="caps">{scoreboard.caps.map(c => <span key={c.id} className={c.owner ?? ''}>{c.label}</span>)}</div></div>
+          <div className="team-score enemy"><div className="score-number">{scoreboard.enemyScore}</div><div className="survivors">{scoreboard.enemyShips.map(s => <ClassIcon key={s.id} name={s.shipName} shipClass={s.shipClass} dead={s.dead} color={s.color}/>)}</div></div>
         </div>
       </section>
       <aside className="intel">
