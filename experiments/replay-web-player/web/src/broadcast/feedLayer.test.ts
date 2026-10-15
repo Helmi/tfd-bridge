@@ -128,6 +128,7 @@ describe('feed layer', () => {
       return node as never;
     },
     classIconSprite: () => Object.assign(new fake.Sprite({ width: 32, height: 32 }), { rotation: 0, anchor: { set() {} } }) as never,
+    requestRender: () => {},
   });
   const frame = (scene: ReplayScene, time: number, reducedMotion = false): BroadcastFrameState => ({
     scene, time, ownerTeamId: 'a', reducedMotion, interactive: false,

@@ -71,6 +71,7 @@ const ctx = {
   mode: 'interactive',
   createText: (style: { fill?: string }) => { const text = fakeText(); text.style = { fill: style.fill }; return text; },
   classIconSprite: fakeSprite,
+  requestRender: vi.fn(),
 } as unknown as StageContext;
 
 const owner = sampleScene.ships[0];
@@ -212,6 +213,7 @@ describe('roster layer', () => {
   });
 
   it('draws a 2 px gold ring while the accessibility overlay focuses a row, and hides it on blur', () => {
+    vi.mocked(ctx.requestRender).mockClear();
     const layer = createRosterLayer(ctx, scene);
     layer.update(frameOf(scene, 0, owner.id, true));
     const [first, second] = rows(layer).ally as unknown as (FakeNode & { emit(t: string, ...a: unknown[]): void })[];
@@ -221,6 +223,8 @@ describe('roster layer', () => {
     // Pixi's overlay: focus is a `mouseover` without a native event, blur a `mouseout`.
     first.emit('mouseover', {});
     expect(ring(first).visible).toBe(true);
+    // The stage does not tick while paused: each focus change asks for a redraw.
+    expect(ctx.requestRender).toHaveBeenCalledTimes(1);
     // Tab to the next row: the old ring goes, the new one shows.
     first.emit('mouseout');
     second.emit('mouseover', {});
@@ -228,6 +232,7 @@ describe('roster layer', () => {
     expect(ring(second).visible).toBe(true);
     second.emit('mouseout');
     expect(ring(second).visible).toBe(false);
+    expect(ctx.requestRender).toHaveBeenCalledTimes(4);
     // A real mouse hover has a native event and draws nothing.
     first.emit('mouseover', { nativeEvent: {} });
     expect(ring(first).visible).toBe(false);

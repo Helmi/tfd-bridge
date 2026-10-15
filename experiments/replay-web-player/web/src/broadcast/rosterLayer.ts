@@ -166,16 +166,20 @@ export const createRosterLayer: LayerFactory = (ctx) => {
   let focused: RowView | undefined;
   // Pixi removes the overlay on real mouse movement, and the focused button then goes without a blur.
   const onMouseMove = (event: MouseEvent) => { if (event.movementX !== 0 || event.movementY !== 0) clearFocus(); };
-  function clearFocus(): void {
-    if (focused) focused.outline.visible = false;
+  // The stage only renders on player ticks; a focus change while paused needs its own redraw.
+  function clearFocus(redraw = true): void {
+    const had = focused;
+    if (had) had.outline.visible = false;
     focused = undefined;
     globalThis.document?.removeEventListener('mousemove', onMouseMove, true);
+    if (had && redraw) ctx.requestRender();
   }
   function showFocus(row: RowView): void {
-    clearFocus();
+    clearFocus(false);
     focused = row;
     row.outline.visible = true;
     globalThis.document?.addEventListener('mousemove', onMouseMove, true);
+    ctx.requestRender();
   }
 
   const setInteractive = (row: RowView, on: boolean) => {
@@ -195,7 +199,7 @@ export const createRosterLayer: LayerFactory = (ctx) => {
       container.off('click', row.onSelect);
       container.off('mouseover', row.onFocusIn);
       container.off('mouseout', row.onFocusOut);
-      if (focused === row) clearFocus();
+      if (focused === row) clearFocus(false);
       container.eventMode = 'passive';
       container.cursor = 'default';
       container.accessible = false;
@@ -260,6 +264,6 @@ export const createRosterLayer: LayerFactory = (ctx) => {
         }
       }
     },
-    destroy() { clearFocus(); root.destroy({ children: true }); },
+    destroy() { clearFocus(false); root.destroy({ children: true }); },
   } satisfies BroadcastLayer;
 };

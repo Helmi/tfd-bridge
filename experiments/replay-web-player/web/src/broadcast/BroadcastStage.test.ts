@@ -8,6 +8,7 @@ const fake = vi.hoisted(() => ({
   layers: [] as { layer: unknown; z: number }[],
   order: [] as string[],
   a11yLoaded: 0,
+  a11y: { isActive: false, setAccessibilityEnabled: undefined as unknown as (enabled: boolean) => void },
 }));
 
 vi.mock('pixi.js/accessibility', () => { fake.a11yLoaded += 1; return {}; });
@@ -15,7 +16,7 @@ vi.mock('pixi.js/accessibility', () => { fake.a11yLoaded += 1; return {}; });
 vi.mock('pixi.js', () => ({
   Application: class {
     stage = { children: [] as { zIndex: number }[], addChild(child: { zIndex: number }) { this.children.push(child); } };
-    renderer = { resolution: 1, resize: vi.fn((_w: number, _h: number, resolution: number) => { this.renderer.resolution = resolution; }) };
+    renderer = { resolution: 1, accessibility: fake.a11y, resize: vi.fn((_w: number, _h: number, resolution: number) => { this.renderer.resolution = resolution; }) };
     canvas = { width: 0, height: 0, getBoundingClientRect: () => ({ left: 0, top: 0, width: 960, height: 540 }) };
     init = vi.fn(async (options: { resolution: number }) => { this.renderer.resolution = options.resolution; });
     render = vi.fn(() => { fake.order.push('render'); });
@@ -29,6 +30,7 @@ vi.mock('./icons', () => ({ loadClassIcons: vi.fn(async () => ({})), createClass
 vi.mock('./createLayers', () => ({ createLayers: vi.fn(() => fake.layers) }));
 
 import { BroadcastStage } from './BroadcastStage';
+import { createLayers } from './createLayers';
 
 const layer = (label: string, overrides: Partial<BroadcastLayer> = {}): BroadcastLayer => ({
   container: { label, zIndex: 0 } as never,
@@ -37,8 +39,12 @@ const layer = (label: string, overrides: Partial<BroadcastLayer> = {}): Broadcas
   ...overrides,
 });
 
-beforeEach(() => { fake.apps.length = 0; fake.layers.length = 0; fake.order.length = 0; });
-afterEach(() => { vi.useRealTimers(); });
+beforeEach(() => {
+  fake.apps.length = 0; fake.layers.length = 0; fake.order.length = 0;
+  fake.a11y.isActive = false;
+  fake.a11y.setAccessibilityEnabled = vi.fn((enabled: boolean) => { fake.a11y.isActive = enabled; fake.order.push('a11y'); });
+});
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('BroadcastStage.create', () => {
   it('registers the Pixi accessibility extension (roster rows need the tabindex overlay)', () => {
@@ -88,6 +94,52 @@ describe('BroadcastStage.create', () => {
   it('falls back to the z index when a layer has no label', async () => {
     fake.layers.push({ layer: layer('', { ready: () => Promise.reject(new Error('x')) }), z: 30 });
     await expect(BroadcastStage.create(sampleScene, { mode: 'export' })).rejects.toThrow(/layer@z30/);
+  });
+});
+
+describe('BroadcastStage keyboard overlay', () => {
+  const listeners = new Map<string, { fn: (event: unknown) => void; capture: unknown }>();
+  beforeEach(() => {
+    listeners.clear();
+    vi.stubGlobal('addEventListener', (type: string, fn: (event: unknown) => void, capture: unknown) => listeners.set(type, { fn, capture }));
+    vi.stubGlobal('removeEventListener', (type: string) => listeners.delete(type));
+  });
+
+  it('on Tab with an inactive overlay: activates it, then renders so the buttons get their positions', async () => {
+    await BroadcastStage.create(sampleScene, { mode: 'interactive' });
+    expect(listeners.get('keydown')?.capture).toBe(true);
+    listeners.get('keydown')!.fn({ key: 'Tab' });
+    expect(fake.order).toEqual(['a11y', 'render']);
+    expect(fake.a11y.setAccessibilityEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it('does nothing for other keys or while the overlay is already active', async () => {
+    await BroadcastStage.create(sampleScene, { mode: 'interactive' });
+    listeners.get('keydown')!.fn({ key: 'Enter' });
+    fake.a11y.isActive = true;
+    listeners.get('keydown')!.fn({ key: 'Tab' });
+    expect(fake.order).toEqual([]);
+  });
+
+  it('adds no listener in export, and removes it on destroy', async () => {
+    await BroadcastStage.create(sampleScene, { mode: 'export' });
+    expect(listeners.has('keydown')).toBe(false);
+    const stage = await BroadcastStage.create(sampleScene, { mode: 'interactive' });
+    stage.destroy();
+    expect(listeners.has('keydown')).toBe(false);
+  });
+
+  it('gives layers requestRender(): a render in interactive mode, nothing in export or after destroy', async () => {
+    const stage = await BroadcastStage.create(sampleScene, { mode: 'interactive' });
+    const ctx = vi.mocked(createLayers).mock.calls.at(-1)![0];
+    ctx.requestRender();
+    expect(fake.apps[0].render).toHaveBeenCalledTimes(1);
+    stage.destroy();
+    ctx.requestRender();
+    expect(fake.apps[0].render).toHaveBeenCalledTimes(1);
+    await BroadcastStage.create(sampleScene, { mode: 'export' });
+    vi.mocked(createLayers).mock.calls.at(-1)![0].requestRender();
+    expect(fake.apps[1].render).not.toHaveBeenCalled();
   });
 });
 
