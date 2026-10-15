@@ -33,7 +33,7 @@ export async function runRenderWorker(jobId: string, token: string): Promise<voi
   try {
     root.textContent = 'Preparing replay video…';
     const request = await post('claim') as {replay_name:string;arena_unique_id?:string;max_bytes?:number;
-      video_options?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling'> | null};
+      video_options?: Pick<RenderOptions, 'resolution' | 'fps' | 'bitrate' | 'speed' | 'mapSupersampling' | 'codec'> | null};
     const sceneUrl = `/v1/replays/${encodeURIComponent(request.replay_name)}/scene`;
     const response = await fetch(sceneUrl, {signal:controller.signal});
     if (!response.ok) throw new Error('Replay unavailable');
@@ -43,8 +43,10 @@ export async function runRenderWorker(jobId: string, token: string): Promise<voi
     const streaming = request.max_bytes == null;
     let pendingChunks = 0;
     let uploads = Promise.resolve();
+    let drainWaiters: (() => void)[] = [];
     const sink: VideoSink | undefined = streaming ? {
       pending: () => pendingChunks,
+      nextDrain: () => new Promise<void>(resolve => {drainWaiters.push(resolve);}),
       write: (data, position) => {
         const copy = data.slice();
         pendingChunks++;
@@ -53,7 +55,7 @@ export async function runRenderWorker(jobId: string, token: string): Promise<voi
             headers:{'Content-Type':'application/octet-stream','X-TFD-Render-Worker':token,'X-TFD-Chunk-Position':String(position)},
             body:copy as BodyInit});
           if (!response.ok) throw new Error('Saving replay video failed');
-        }).catch(error => {controller.abort(error); throw error;}).finally(() => {pendingChunks--;});
+        }).catch(error => {controller.abort(error); throw error;}).finally(() => {pendingChunks--; const waiters = drainWaiters; drainWaiters = []; waiters.forEach(resolve => resolve());});
         uploads.catch(() => undefined);
       },
     } : undefined;
@@ -64,7 +66,11 @@ export async function runRenderWorker(jobId: string, token: string): Promise<voi
       }});
     await progress;
     controller.signal.throwIfAborted();
-    await post('metadata', {duration_s:video.frames/video.fps,width:video.width,height:video.height});
+    const {encode} = video;
+    console.info('Replay video encoded', encode);
+    await post('metadata', {duration_s:video.frames/video.fps,width:video.width,height:video.height,
+      codec:encode?.codec,hardware:encode?.hardware,render_ms_per_frame:encode?.renderMsPerFrame,
+      wait_ms_per_frame:encode?.waitMsPerFrame,fps:encode?.fps});
     if (streaming) {
       await uploads;
       controller.signal.throwIfAborted();

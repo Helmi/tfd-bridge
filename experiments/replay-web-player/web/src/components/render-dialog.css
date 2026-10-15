@@ -37,3 +37,4 @@
 .video-length-sizes span{color:#e4efe8;font:12px 'JetBrains Mono',monospace}
 .render-dialog .video-suggestion button{min-height:28px;padding:0 10px;font-size:12px}
 .render-dialog .video-suggestion button[aria-pressed="true"]{background:#284b36;border-color:#8dd6a3}
+.video-codec-hint{margin:10px 0 0;font-size:12px;color:#91aa9d}.video-codec-hint strong{color:#e8c46a}

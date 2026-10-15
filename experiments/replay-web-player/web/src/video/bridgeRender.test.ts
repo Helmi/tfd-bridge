@@ -21,3 +21,13 @@ it('keeps settings absent for callers using the renderer defaults', async () => 
   expect(await renderInBridge('battle.wowsreplay', undefined, vi.fn(), new AbortController().signal)).toBeUndefined();
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({replay_name:'battle.wowsreplay'});
 });
+
+it('returns the encoder report from the job status video', async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({id:'job'})))
+    .mockResolvedValueOnce(new Response(JSON.stringify({state:'rendered',frame:48,total:48,attempt:1,bytes:400_000,
+      video:{codec:'av1',hardware:true,render_ms_per_frame:12,wait_ms_per_frame:3,fps:41}})));
+  vi.stubGlobal('fetch', fetchMock);
+  const result = await renderInBridge('battle.wowsreplay', undefined, vi.fn(), new AbortController().signal, {codec:'av1'});
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).video_options).toEqual({codec:'av1'});
+  expect(result?.encode).toEqual({codec:'av1',hardware:true,renderMsPerFrame:12,waitMsPerFrame:3,fps:41});
+});
