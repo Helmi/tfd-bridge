@@ -94,4 +94,27 @@ describe('scoreboard model', () => {
     const invaded = (time: number) => model(time, { ...baseScene, captureZones: zones }).caps[0].invader;
     expect([invaded(10), invaded(55), invaded(65)]).toEqual([null, 'enemy', 'friendly']);
   });
+
+  it('keeps both strips in class, tier and name order (enemy mirrored) through selection and sinking', () => {
+    const shuffled = [
+      { shipName: 'Zulu DD', shipClass: 'destroyer', tier: 10 }, { shipName: 'Alpha BB', shipClass: 'battleship', tier: 8 },
+      { shipName: 'Submarine', shipClass: 'submarine', tier: 10 }, { shipName: 'Unknown BB', shipClass: 'battleship' },
+      { shipName: 'Zulu BB', shipClass: 'battleship', tier: 10 }, { shipName: 'Cruiser', shipClass: 'cruiser', tier: 9 },
+      { shipName: 'Carrier', shipClass: 'carrier', tier: 8 }, { shipName: 'Bravo BB', shipClass: 'battleship', tier: 10 },
+      { shipName: 'Super BB', shipClass: 'battleship', tier: 11 },
+    ] as const;
+    const ordered: ReplayScene = { ...baseScene, ships: ['allies', 'enemies'].flatMap(teamId =>
+      shuffled.map((ship, i) => ({ ...ownerShip, ...ship, teamId, id: `${teamId}-${i}`, divisionLabel: undefined, divisionId: undefined,
+        playerName: `Player ${i}`, health: [{ t: 0, value: 100 }, { t: 20, value: 0 }] }))), replay: { ...baseScene.replay, perspectiveEntityId: 'allies-0' } };
+    const expected = ['Carrier', 'Super BB', 'Bravo BB', 'Zulu BB', 'Alpha BB', 'Unknown BB', 'Cruiser', 'Zulu DD', 'Submarine'];
+    const inputOrder = ordered.ships.map(s => s.id);
+    for (const time of [0, 30]) for (const selectedId of ['allies-0', 'enemies-4']) {
+      const base = input(ordered, time, selectedId);
+      const m = buildScoreboardModel({ ...base, ownerTeamId: 'allies' }, COLORS);
+      expect(m.friendlyShips.map(s => s.shipName)).toEqual(expected);
+      expect(m.enemyShips.map(s => s.shipName)).toEqual([...expected].reverse());
+      expect([...m.friendlyShips, ...m.enemyShips].every(s => s.dead)).toBe(time === 30);
+    }
+    expect(ordered.ships.map(s => s.id)).toEqual(inputOrder);
+  });
 });

@@ -4,7 +4,7 @@ import { clock } from '../time';
 import type { ShipDefinition } from '../types';
 import {
   buildFeedEvents, ENTRANCE_SECONDS, feedEntranceRemaining, ROW_GAP, VIEWPORT_ROWS, type FeedEvent,
-} from '../components/BattleFeed';
+} from './feedModel';
 import { layoutInline, type InlineLayout, type InlineToken } from './inlineLayout';
 import { BOX, COLORS, FEED_WINDOW_HEIGHT, FONT_MONO, FONT_SANS } from './layout';
 import { setTextIfChanged, type MeasureText } from './text';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { BattleFeed, buildFeedEvents, feedEntranceRemaining } from './BattleFeed';
+import { BattleFeed } from './BattleFeed';
+import { buildFeedEvents, feedEntranceRemaining } from '../broadcast/feedModel';
 import { sampleScene } from '../data/sampleScene';
 import type { ReplayScene } from '../types';
 
