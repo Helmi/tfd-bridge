@@ -67,6 +67,7 @@ describe('VideoSettingsDialog', () => {
     expect(markup).toContain('Plays everywhere: Discord, phones, editors. Largest files.');
     expect(markup).toContain('<option value="av1"');
     expect(markup).not.toContain('<option value="hevc"');
-    for (const s of battleLengthSizes(settings)) expect(markup).toContain(`${s.minutes} min · ${s.label}`);
+    for (const s of battleLengthSizes(settings)) expect(markup).toContain(`<span>${s.minutes} min · ${s.label}</span>`);
+    expect(markup.match(/<span>\d+ min · /g)).toHaveLength(3);
   });
 });

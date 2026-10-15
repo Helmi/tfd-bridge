@@ -13,7 +13,12 @@ export const CODEC_HINTS: Record<VideoCodec, string> = {
   av1: 'Same quality with files about a third smaller. Plays in Discord, YouTube, Chrome, Edge, Firefox and VLC; may not play on older iPhones, some TVs or older video editors.',
   hevc: 'Small files and good on Apple devices. On Windows it may need the HEVC extension and often does not play in Discord or browsers.',
 };
-export const CPU_ONLY_HINT = 'No GPU encoder for these settings — rendering will be much slower.';
+const CPU_HINT_BASE = 'No GPU encoder for these settings — the CPU encodes instead, which is';
+export const CPU_ONLY_HINT: Record<VideoCodec, string> = {
+  h264: `${CPU_HINT_BASE} usually slower.`,
+  hevc: `${CPU_HINT_BASE} usually slower.`,
+  av1: `${CPU_HINT_BASE} much slower.`,
+};
 
 /** Output size of each resolution (the renderer lays out 16:9 at 1080p virtual). */
 export const RESOLUTION_SIZE: Record<Resolution, [number, number]> = {

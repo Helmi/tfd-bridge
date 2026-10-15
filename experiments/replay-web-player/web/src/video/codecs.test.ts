@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { av1CodecString, detectCodecSupport, hevcCodecString } from './codecs';
+import { CPU_ONLY_HINT, av1CodecString, detectCodecSupport, hevcCodecString } from './codecs';
+
+describe('CPU-only hint', () => {
+  it('says usually slower for H.264/HEVC and much slower for AV1', () => {
+    const base = 'No GPU encoder for these settings — the CPU encodes instead, which is';
+    expect(CPU_ONLY_HINT.h264).toBe(`${base} usually slower.`);
+    expect(CPU_ONLY_HINT.hevc).toBe(`${base} usually slower.`);
+    expect(CPU_ONLY_HINT.av1).toBe(`${base} much slower.`);
+  });
+});
 
 afterEach(() => vi.unstubAllGlobals());
 

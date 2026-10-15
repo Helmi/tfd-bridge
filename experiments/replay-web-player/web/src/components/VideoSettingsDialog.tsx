@@ -47,7 +47,7 @@ export function VideoSettingsDialog({batchCount, duration, initial, native, comp
         <option key={c} value={c} disabled={support?.[c] === 'unavailable'}>{CODEC_LABELS[c]}{support && support[c] !== 'unavailable' ? ` · ${support[c] === 'gpu' ? 'GPU' : 'CPU only'}` : ''}</option>)}</select></label>
       <label>Battle speed<select value={settings.speed} onChange={e => setSettings({...settings, speed:Number(e.target.value) as LocalVideoSettings['speed']})}>{[5,10,20].map(n => <option key={n} value={n}>{n}×</option>)}</select></label>
     </div>
-    <p className="video-codec-hint">{CODEC_HINTS[codec]}{support?.[codec] === 'cpu' && <> <strong>{CPU_ONLY_HINT}</strong></>}</p>
+    <p className="video-codec-hint">{CODEC_HINTS[codec]}{support?.[codec] === 'cpu' && <> <strong>{CPU_ONLY_HINT[codec]}</strong></>}</p>
     <div className="video-suggestion">Suggested for {resolutionLabel} · {settings.fps} fps: {([['Good', suggestion.good], ['Artifact-free', suggestion.artifactFree]] as const).map(([name, mbps]) =>
       <button key={name} aria-pressed={settings.bitrate === mbps * 1_000_000} onClick={() => setSettings({...settings, bitrate:mbps * 1_000_000})}>{name} {mbps} Mbps</button>)}</div>
     <div className="video-length-sizes">Expected size: {battleLengthSizes(settings).map(s => <span key={s.minutes}>{s.minutes} min · {s.label}</span>)}</div>
