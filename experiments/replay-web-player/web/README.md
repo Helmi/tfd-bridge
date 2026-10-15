@@ -53,7 +53,7 @@ can retry at lower bitrate, checking actual MP4 length before accepting output.
 
 Local Save video opens a settings dialog. All presets use H.264 MP4, 1080p and
 10× battle speed: Compact (30 fps / 2 Mbps), Balanced (30 fps / 4 Mbps, default),
-Sharper (30 fps / 6 Mbps), and Smooth (60 fps / 6 Mbps). Resolution (1080p/1440p),
+Sharper (30 fps / 6 Mbps), and Smooth (60 fps / 6 Mbps). Resolution (1080p/1440p/4K),
 frame rate (24/30/60), bitrate (1–12 Mbps) and speed (5×/10×/20×) are adjustable.
 The duration/size estimate is approximate; encoder output is variable. Native
 saves go to the user's Videos/TFD Bridge Renders directory. Rendering shows a

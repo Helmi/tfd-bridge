@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {estimateLocalVideo, LOCAL_VIDEO_PRESETS, type LocalVideoSettings} from '../video/renderSettings';
+import {battleLengthSizes, BITRATE_OPTIONS_MBPS, estimateLocalVideo, LOCAL_VIDEO_PRESETS, suggestedBitrates, type LocalVideoSettings} from '../video/renderSettings';
 import './render-dialog.css';
 
 export function VideoSettingsDialog({batchCount, duration, initial, native, comparisons = [], onClose, onRender}: {
@@ -13,6 +13,8 @@ export function VideoSettingsDialog({batchCount, duration, initial, native, comp
   const [settings, setSettings] = useState(initial);
   const estimate = estimateLocalVideo(duration, settings);
   const displaySeconds = Math.ceil(estimate.seconds);
+  const suggestion = suggestedBitrates(settings.resolution, settings.fps);
+  const resolutionLabel = settings.resolution === '2160' ? '4K' : `${settings.resolution}p`;
   const active = LOCAL_VIDEO_PRESETS.find(p => Object.entries(p.settings).every(([key, value]) => settings[key as keyof LocalVideoSettings] === value))?.id;
   useEffect(() => {const element = dialog.current!; element.showModal(); return () => element.close();}, []);
   return <dialog ref={dialog} className="render-dialog video-settings-dialog" aria-labelledby="video-settings-title" onCancel={onClose}>
@@ -25,11 +27,14 @@ export function VideoSettingsDialog({batchCount, duration, initial, native, comp
       </button>)}
     </div>
     <div className="video-setting-fields">
-      <label>Resolution<select value={settings.resolution} onChange={e => setSettings({...settings, resolution:e.target.value as LocalVideoSettings['resolution']})}><option value="1080">1920 × 1080</option><option value="1440">2560 × 1440</option></select></label>
+      <label>Resolution<select value={settings.resolution} onChange={e => setSettings({...settings, resolution:e.target.value as LocalVideoSettings['resolution']})}><option value="1080">1920 × 1080</option><option value="1440">2560 × 1440</option><option value="2160">3840 × 2160</option></select></label>
       <label>Frame rate<select value={settings.fps} onChange={e => setSettings({...settings, fps:Number(e.target.value) as LocalVideoSettings['fps']})}>{[24,30,60].map(n => <option key={n} value={n}>{n} fps</option>)}</select></label>
-      <label>Bitrate<select value={settings.bitrate} onChange={e => setSettings({...settings, bitrate:Number(e.target.value)})}>{[1,2,3,4,5,6,8,10,12].map(n => <option key={n} value={n * 1_000_000}>{n} Mbps</option>)}</select></label>
+      <label>Bitrate<select value={settings.bitrate} onChange={e => setSettings({...settings, bitrate:Number(e.target.value)})}>{BITRATE_OPTIONS_MBPS.map(n => <option key={n} value={n * 1_000_000}>{n} Mbps</option>)}</select></label>
       <label>Battle speed<select value={settings.speed} onChange={e => setSettings({...settings, speed:Number(e.target.value) as LocalVideoSettings['speed']})}>{[5,10,20].map(n => <option key={n} value={n}>{n}×</option>)}</select></label>
     </div>
+    <div className="video-suggestion">Suggested for {resolutionLabel} · {settings.fps} fps: {([['Good', suggestion.good], ['Artifact-free', suggestion.artifactFree]] as const).map(([name, mbps]) =>
+      <button key={name} aria-pressed={settings.bitrate === mbps * 1_000_000} onClick={() => setSettings({...settings, bitrate:mbps * 1_000_000})}>{name} {mbps} Mbps</button>)}</div>
+    <div className="video-length-sizes">Expected size: {battleLengthSizes(settings).map(s => <span key={s.minutes}>{s.minutes} min · {s.label}</span>)}</div>
     <label className="video-antialiasing"><input type="checkbox" checked={settings.mapSupersampling ?? false} onChange={e => setSettings({...settings,mapSupersampling:e.target.checked})}/> Smoother map edges · 2× anti-aliasing</label>
     <p>Renders the map at twice the width and height, then downsamples it. May reduce icon shimmer; uses more rendering time and memory. Output resolution and bitrate stay the same.</p>
     {!batchCount && <div className="video-estimate"><strong>{Math.floor(displaySeconds / 60)}:{(displaySeconds % 60).toString().padStart(2,'0')} video</strong><span>About {Math.round(estimate.megabytes)} MB · actual size varies</span></div>}
