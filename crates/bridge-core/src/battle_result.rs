@@ -45,6 +45,10 @@ pub struct BattleMeta {
     pub schema_version: String,
     pub arena_unique_id: i64,
     pub map_name: String,
+    /// Schema 1.10: official English map name from the installed client's
+    /// catalog (e.g. "Land of Fire"); omitted when unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_display_name: Option<String>,
     pub game_version: String,
     pub game_version_short: Option<String>,
     pub match_group: Option<String>,
@@ -116,6 +120,10 @@ pub struct BattlePlayer {
     pub clan_tag: Option<String>,
     pub ship_id: Option<i64>,
     pub ship_name: Option<String>,
+    /// Schema 1.10: official short ship name from the client catalog (e.g.
+    /// "Bismarck\u{a0}'41"); omitted when unknown. `ship_name` stays the code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ship_display_name: Option<String>,
     pub ship_tier: Option<i64>,
     pub ship_class: Option<ShipClass>,
     pub team_id: Option<i64>,
@@ -766,6 +774,9 @@ pub struct Tables {
     /// `ship_exp`, `credits`, `crew_exp`, `acc_level`) — schema 1.9.
     pub subtotal_economics: Vec<String>,
     pub ships: HashMap<String, ShipInfo>,
+    /// ship index (e.g. "PGSB708") → GameParams id (= WG API `ship_id`), built
+    /// once from `ships`.
+    pub ship_ids_by_index: HashMap<String, i64>,
     /// achievement_id (as string) → WG name, from `achievement_index.json`.
     /// Flat map — unlike `ships`, achievements carry no tier/class enrichment.
     pub achievements: HashMap<String, String>,
@@ -1035,6 +1046,7 @@ impl Tables {
             }
         }
 
+        let ship_ids_by_index = ship_ids_by_index(&ships);
         Ok(Tables {
             public_indices,
             common_results,
@@ -1046,11 +1058,24 @@ impl Tables {
             common_economics_indices,
             subtotal_economics,
             ships,
+            ship_ids_by_index,
             achievements,
             bonus_index,
             skill_costs,
         })
     }
+}
+
+/// Invert `ship_index.json`: ship index → numeric GameParams id. Keys that are
+/// not numbers or have an empty index are skipped.
+pub fn ship_ids_by_index(ships: &HashMap<String, ShipInfo>) -> HashMap<String, i64> {
+    let mut map = HashMap::new();
+    for (id, info) in ships {
+        if let (Ok(id), false) = (id.parse::<i64>(), info.index.is_empty()) {
+            map.entry(info.index.clone()).or_insert(id);
+        }
+    }
+    map
 }
 
 // ── Error ──────────────────────────────────────────────────────────────────────
@@ -1123,14 +1148,22 @@ pub fn decode_battle_result(
         HashMap::new()
     });
 
-    build_battle_data(
+    let mut data = build_battle_data(
         Some(meta_value),
         br,
         source_file_hash,
         replay_path,
         tables,
         &builds,
-    )
+    )?;
+    data.meta.map_display_name = scene_export::map_display_name(&game_dir, &data.meta.map_name);
+    for player in &mut data.players {
+        player.ship_display_name = player
+            .ship_name
+            .as_deref()
+            .and_then(|code| scene_export::ship_display_name(&game_dir, code));
+    }
+    Ok(data)
 }
 
 /// Parse a replay's bytes in-process and return `(meta JSON, BattleResults JSON)`.
@@ -1966,8 +1999,9 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.9".into(),
+            schema_version: "1.10".into(),
             arena_unique_id,
+            map_display_name: None,
             map_name,
             game_version,
             game_version_short,
@@ -2466,6 +2500,7 @@ pub(crate) fn resolve_player(
         clan_tag,
         ship_id,
         ship_name,
+        ship_display_name: None,
         ship_tier,
         ship_class,
         team_id,
@@ -3168,6 +3203,7 @@ mod tests {
             clan_tag: Some("y".into()),
             ship_id: Some(3),
             ship_name: Some("z".into()),
+            ship_display_name: Some("Z".into()),
             ship_tier: Some(9),
             ship_class: Some(ShipClass::Destroyer),
             team_id: Some(0),
@@ -3237,6 +3273,7 @@ mod tests {
             "clan_tag",
             "ship_id",
             "ship_name",
+            "ship_display_name",
             "ship_tier",
             "ship_class",
             "team_id",
@@ -4008,7 +4045,19 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.9");
+        assert_eq!(data.meta.schema_version, "1.10");
+    }
+
+    #[test]
+    fn ship_ids_invert_the_index() {
+        let mut ships = HashMap::new();
+        let info = |index: &str| ShipInfo { index: index.into(), level: 9, species: "Battleship".into() };
+        ships.insert("3551475536".to_string(), info("PFSB709"));
+        ships.insert("bad".to_string(), info("PXXX001"));
+        ships.insert("1".to_string(), info(""));
+        let map = ship_ids_by_index(&ships);
+        assert_eq!(map.get("PFSB709"), Some(&3551475536));
+        assert_eq!(map.len(), 1);
     }
 
     // ── Meta fields and warnings system ──────────────────────────────────────

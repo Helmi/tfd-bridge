@@ -284,7 +284,7 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
     setPlaying(false);
     setRenderProgress({ frame: 0, total: 1, attempt: 1 });
     const base = (scene.replay.title || perspectiveShip?.shipName || 'replay')
-      .replace(/[^\w.-]+/g, '_').slice(0, 60) + '_' + readableName(scene.map.name).replace(/[^\w.-]+/g, '_');
+      .replace(/[^\w.-]+/g, '_').slice(0, 60) + '_' + (scene.map.displayName || readableName(scene.map.name)).replace(/[^\w.-]+/g, '_');
     try {
       const native = isBridge && localReplayName
         ? await renderInBridge(localReplayName,scene.replay.arenaUniqueId,setRenderProgress,renderAbort.current.signal,settings)

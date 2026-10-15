@@ -20,6 +20,8 @@ export interface BridgeReplayEntry {
   /** False when the recording ended before the battle did (early exit). */
   complete?: boolean;
   mapName?: string;
+  /** Official in-game map name (e.g. "Land of Fire"). */
+  mapDisplayName?: string;
   playerVehicle?: string;
   shipName?: string;
   damage?: number;
@@ -79,7 +81,7 @@ export function replayEntryToSummary(entry: BridgeReplayEntry): LocalReplaySumma
     filename,
     shipName: entry.shipName?.trim() || titleCase(match?.[4] ?? filename.replace(/\.wowsreplay$/i, '')),
     shipClass,
-    mapName: titleCase((entry.mapName?.replace(/^spaces\//i, '').replace(/^[A-Z]?\d+_/i, '') || match?.[6] || 'Unknown map').replace(/^(?:NE|OC)_/i, '')),
+    mapName: entry.mapDisplayName?.trim() || titleCase((entry.mapName?.replace(/^spaces\//i, '').replace(/^[A-Z]?\d+_/i, '') || match?.[6] || 'Unknown map').replace(/^(?:NE|OC)_/i, '')),
     playedAt,
     modifiedAt: modified.toISOString(),
     size: entry.size,
