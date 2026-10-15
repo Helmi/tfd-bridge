@@ -4,3 +4,4 @@ CLAUDE.md
 private-sync/
 /target
 .DS_Store
+__pycache__/
