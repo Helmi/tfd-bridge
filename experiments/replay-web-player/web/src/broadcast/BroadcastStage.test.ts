@@ -49,14 +49,14 @@ describe('BroadcastStage.create', () => {
     const stage = await BroadcastStage.create(sampleScene, { mode: 'interactive', scale: 1.5 });
     const options = (fake.apps[0].init as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[0][0];
     expect(options).toMatchObject({ width: 1920, height: 1080, resolution: 1.5, autoStart: false, autoDensity: true });
-    expect(options.accessibilityOptions).toEqual({ activateOnTab: true });
+    expect(options.accessibilityOptions).toEqual({ activateOnTab: true, enabledByDefault: true });
     expect(stage.resolution).toBe(1.5);
   });
 
   it('turns accessibility off in export mode', async () => {
     await BroadcastStage.create(sampleScene, { mode: 'export', scale: 2 });
     const options = (fake.apps[0].init as { mock: { calls: [Record<string, unknown>][] } }).mock.calls[0][0];
-    expect(options.accessibilityOptions).toEqual({ activateOnTab: false });
+    expect(options.accessibilityOptions).toEqual({ activateOnTab: false, enabledByDefault: false });
   });
 
   it('adds layers with their z index and awaits every ready()', async () => {
