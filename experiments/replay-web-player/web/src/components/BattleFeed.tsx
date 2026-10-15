@@ -4,10 +4,10 @@ import { shipClassIconUrl } from '../shipClassIcons';
 import { clock } from '../time';
 import type { ReplayScene, ShipDefinition } from '../types';
 
-const ENTRANCE_SECONDS = 3.2;
-const ROW_GAP = 2;
+export const ENTRANCE_SECONDS = 3.2;
+export const ROW_GAP = 2;
 // Seven minimum-height rows cover the 156px viewport, including a clipped oldest row.
-const VIEWPORT_ROWS = 7;
+export const VIEWPORT_ROWS = 7;
 
 export type FeedEvent = {
   key: string; t: number; kind: 'kill' | 'chat';

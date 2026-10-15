@@ -1,4 +1,5 @@
 import { Container, Graphics } from 'pixi.js';
+import { createFeedLayer } from './feedLayer';
 import { COLORS, FRAME, Z } from './layout';
 import { createScoreboardLayer } from './scoreboardLayer';
 import { createRosterLayer } from './rosterLayer';
@@ -20,5 +21,6 @@ export function createLayers(ctx: StageContext, scene: ReplayScene): LayerEntry[
   stage.addLayer(createBackgroundLayer(ctx, scene), Z.BACKGROUND);
   stage.addLayer(createScoreboardLayer(ctx, scene), Z.SCOREBOARD);
   stage.addLayer(createRosterLayer(ctx, scene), Z.PANEL);
+  stage.addLayer(createFeedLayer(ctx, scene), Z.PANEL);
   return entries;
 }
