@@ -19,7 +19,7 @@ The [landaire/wows-toolkit](https://github.com/landaire/wows-toolkit)
 
 `vehicle_id → { index, name, level, species, nation, group }`, distilled from the
 game's `GameParams` via `wowsunpack game-params --full` (see
-`private-sync/notes/xp-analysis/build_indexes.py`). Used for ship name / tier /
+`scripts/build_indexes.py`). Used for ship name / tier /
 class enrichment. Unknown ids (ships added in a newer patch) degrade gracefully to
 `null` tier/class.
 
@@ -27,7 +27,7 @@ class enrichment. Unknown ids (ships added in a newer patch) degrade gracefully 
 
 `achievement_id → WG name` (flat map, e.g. `"4281525168": "PCH012_Arsonist"`),
 distilled from the game's `GameParams` (`typeinfo.type == "Achievement"` entries)
-via `private-sync/notes/xp-analysis/build_indexes.py`. Resolves the
+via `scripts/build_indexes.py`. Resolves the
 per-player `achievements` public field (a list of `[id, count]` pairs) to a
 name for schema 1.4. `name` is the entry's own dict key / `name` field — WG's
 closest thing to a stable, human-decipherable achievement identifier (there is
@@ -41,24 +41,21 @@ a newer patch) fall back to the stringified integer id — nothing is lost.
 boosters (`kind: "booster"`, GameParams species `Camoboost`, `PCEA*`) and
 permanent ship/commander bonuses (`kind: "permanent"`, species `Multiboost`,
 `PCEU*`), distilled from the game's `GameParams` via
-`private-sync/notes/xp-analysis/build_indexes.py` (booster rules in `build_bonus_index.py`). Resolves the numeric ids
+`scripts/build_indexes.py` (booster rules in `scripts/build_bonus_index.py`). Resolves the numeric ids
 in the owner's private `subtotal_economics` chains (`economic_bonuses`,
 `economic_breakdown`). An id missing here still appears in
 `economic_breakdown` as `kind: "unknown"` with its applied factor.
 
 ## Refreshing for a new game patch
 
-1. Dump the patch's GameParams (wows-toolkit `wowsunpack`; note the build folder under `bin/`):
-   ```sh
-   wowsunpack -p <game>/res_packages -i <game>/bin/<build>/idx game-params --full --ugly GameParams.json
-   ```
-2. Regenerate `ship_index.json`, `achievement_index.json` and `bonus_index.json` in one streaming pass
-   (safe on the ~3 GB file; existing ship order is kept, new ships are appended):
-   ```sh
-   python private-sync/notes/xp-analysis/build_indexes.py GameParams.json src-tauri/resources
-   ```
-3. Replace `constants.json` with the build's upstream copy:
-   `https://raw.githubusercontent.com/landaire/wows-replay-data/main/<version>_<build>/constants.json`
+Run one command (dumps GameParams, rebuilds the three indexes, fetches `constants.json`, prints a summary):
+
+```sh
+uv run --with ijson --with httpx python scripts/update-game-data.py
+```
+
+See `docs/game-update-cycle.md` for options and the manual follow-ups. The builder lives in
+`scripts/build_indexes.py` (booster rules in `scripts/build_bonus_index.py`).
 
 When bumping the `wows_replays` parser dependency for a new game version, update
 the pinned `rev` in `crates/bridge-core/Cargo.toml` and `crates/scene-export/Cargo.toml`
