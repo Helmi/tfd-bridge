@@ -235,7 +235,12 @@ pub(super) fn post(
                     .parent()
                     .and_then(|game_dir| scene_export::ship_display_name(game_dir, &m.player_vehicle))
             });
-            let filename = render_file_name(meta.as_ref(), ship.as_deref(), id);
+            let map = meta.as_ref().and_then(|m| {
+                replays_dir
+                    .parent()
+                    .and_then(|game_dir| scene_export::map_display_name(game_dir, &m.map_name))
+            });
+            let filename = render_file_name(meta.as_ref(), ship.as_deref(), map.as_deref(), id);
             let output = match persist_render(&dir, &filename, &bytes) {
                 Ok(p) => p,
                 Err(_) => return error("save_failed", 500),
@@ -302,7 +307,12 @@ pub(super) fn post(
                     .parent()
                     .and_then(|game_dir| scene_export::ship_display_name(game_dir, &m.player_vehicle))
             });
-            let filename = render_file_name(meta.as_ref(), ship.as_deref(), id);
+            let map = meta.as_ref().and_then(|m| {
+                replays_dir
+                    .parent()
+                    .and_then(|game_dir| scene_export::map_display_name(game_dir, &m.map_name))
+            });
+            let filename = render_file_name(meta.as_ref(), ship.as_deref(), map.as_deref(), id);
             let (output, size) = match finish_partial(&partial, &render_output_dir(), &filename) {
                 Ok(v) => v,
                 Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
@@ -421,8 +431,8 @@ fn date_name_part(date_time: &str) -> Option<String> {
     Some(format!("{}-{}-{}_{}-{}", d[2], d[1], d[0], t[0], t[1]))
 }
 
-/// Readable `<date>_<Ship>_<Map>.mp4`; any missing part falls back to `replay-<id>.mp4`.
-fn render_file_name(meta: Option<&scene_export::ReplayMeta>, ship: Option<&str>, id: &str) -> String {
+/// Readable `<date>_<Ship>_<Map>.mp4` (official names when known); any missing part falls back to `replay-<id>.mp4`.
+fn render_file_name(meta: Option<&scene_export::ReplayMeta>, ship: Option<&str>, map: Option<&str>, id: &str) -> String {
     let fallback = || format!("replay-{id}.mp4");
     let Some(meta) = meta else { return fallback() };
     let Some(date) = date_name_part(&meta.date_time) else { return fallback() };
@@ -431,7 +441,10 @@ fn render_file_name(meta: Option<&scene_export::ReplayMeta>, ship: Option<&str>,
         .or_else(|| meta.player_vehicle.split_once('-').map(|(_, n)| n.to_string()))
         .map(|s| sanitize_name_part(&s))
         .unwrap_or_default();
-    let map = readable_map_name(&meta.map_name);
+    let map = map
+        .map(sanitize_name_part)
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| readable_map_name(&meta.map_name));
     if ship.is_empty() || map.is_empty() {
         return fallback();
     }
@@ -509,13 +522,20 @@ mod name_tests {
     #[test]
     fn normal() {
         let m = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "PVSB010-Libertad");
-        assert_eq!(render_file_name(Some(&m), Some("Libertad"), "j"), "2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4");
+        assert_eq!(render_file_name(Some(&m), Some("Libertad"), None, "j"), "2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4");
+    }
+
+    #[test]
+    fn official_map_name_is_used() {
+        let m = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "PVSB010-Libertad");
+        assert_eq!(render_file_name(Some(&m), Some("Libertad"), Some("Land of Fire"), "j"), "2026-10-10_19-59_Libertad_Land-of-Fire.mp4");
+        assert_eq!(render_file_name(Some(&m), Some("Libertad"), Some("  "), "j"), "2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4");
     }
 
     #[test]
     fn ship_falls_back_to_vehicle_suffix() {
         let m = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "PVSB010-Libertad");
-        assert_eq!(render_file_name(Some(&m), None, "j"), "2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4");
+        assert_eq!(render_file_name(Some(&m), None, None, "j"), "2026-10-10_19-59_Libertad_Tierra-del-Fuego.mp4");
     }
 
     #[test]
@@ -528,25 +548,25 @@ mod name_tests {
     #[test]
     fn ship_names_are_sanitized() {
         let m = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "X-Y");
-        assert!(render_file_name(Some(&m), Some("Fusō"), "j").contains("_Fusō_"));
-        assert!(render_file_name(Some(&m), Some("Orion\u{a0}'44"), "j").contains("_Orion-44_"));
+        assert!(render_file_name(Some(&m), Some("Fusō"), None, "j").contains("_Fusō_"));
+        assert!(render_file_name(Some(&m), Some("Orion\u{a0}'44"), None, "j").contains("_Orion-44_"));
     }
 
     #[test]
     fn missing_or_bad_data_falls_back() {
         let ok = meta("10.10.2026 19:59:03", "spaces/22_tierra_del_fuego", "A-B");
-        assert_eq!(render_file_name(None, Some("B"), "j"), "replay-j.mp4");
+        assert_eq!(render_file_name(None, Some("B"), None, "j"), "replay-j.mp4");
         for bad in ["", "2026-10-10 19:59:03", "10.10.2026", "1.10.2026 19:59:03", "10.10.2026 19:59", "aa.bb.cccc dd:ee:ff"] {
             let mut m = ok.clone();
             m.date_time = bad.into();
-            assert_eq!(render_file_name(Some(&m), Some("B"), "j"), "replay-j.mp4", "{bad}");
+            assert_eq!(render_file_name(Some(&m), Some("B"), None, "j"), "replay-j.mp4", "{bad}");
         }
     }
 
     #[test]
     fn long_parts_are_capped() {
         let m = meta("10.10.2026 19:59:03", &format!("spaces/1_{}", "a".repeat(200)), "A-B");
-        let name = render_file_name(Some(&m), Some(&"s".repeat(200)), "j");
+        let name = render_file_name(Some(&m), Some(&"s".repeat(200)), None, "j");
         assert!(name.len() < 120, "{name}");
     }
 }

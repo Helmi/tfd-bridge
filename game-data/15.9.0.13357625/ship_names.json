@@ -1,0 +1,6157 @@
+{
+  "game_version": "15.9.0.13357625",
+  "generated_at": "2026-10-15T12:31:47Z",
+  "schema_version": "1.0",
+  "ships": {
+    "3246831056": {
+      "full": "Test Sub 1",
+      "index": "PRSS999",
+      "short": "Test Sub 1"
+    },
+    "3247355344": {
+      "full": "Test Ship",
+      "index": "PRSC999",
+      "short": "Test Ship"
+    },
+    "3247387984": {
+      "full": "Cordillera",
+      "index": "PVSB999",
+      "short": "Cordillera"
+    },
+    "3247388368": {
+      "full": "Satsuma (< 22.09.2021)",
+      "index": "PJSB999",
+      "short": "Satsuma (old)"
+    },
+    "3247388464": {
+      "full": "Hannover (< 22.09.2021)",
+      "index": "PGSB999",
+      "short": "Hannover (old)"
+    },
+    "3248404240": {
+      "full": "Statenland",
+      "index": "PHSC998",
+      "short": "Statenland"
+    },
+    "3248404464": {
+      "full": "[Cleveland]",
+      "index": "PASC998",
+      "short": "[Cleveland]"
+    },
+    "3248437200": {
+      "full": "St. Lawrence",
+      "index": "PBSB998",
+      "short": "St. Lawrence"
+    },
+    "3248437232": {
+      "full": "North Carolina 2",
+      "index": "PASB998",
+      "short": "N. Carolina 2"
+    },
+    "3249452400": {
+      "full": "River Gambra",
+      "index": "PUSC997",
+      "short": "River Gambra"
+    },
+    "3249485808": {
+      "full": "Colorado 2",
+      "index": "PASB997",
+      "short": "Colorado 2"
+    },
+    "3250501424": {
+      "full": "Admiral Reinhard",
+      "index": "PGSC996",
+      "short": "Reinhard"
+    },
+    "3256759600": {
+      "full": "Södermanland",
+      "index": "PWSD990",
+      "short": "Södermanland"
+    },
+    "3256760112": {
+      "full": "Lübeck",
+      "index": "PGSD990",
+      "short": "Lübeck"
+    },
+    "3256792528": {
+      "full": "Petrozavodsk",
+      "index": "PRSC990",
+      "short": "Petrozavodsk"
+    },
+    "3256792816": {
+      "full": "Ravenna",
+      "index": "PISC990",
+      "short": "Ravenna"
+    },
+    "3256792848": {
+      "full": "Vrijheid",
+      "index": "PHSC990",
+      "short": "Vrijheid"
+    },
+    "3256825168": {
+      "full": "Comodoro",
+      "index": "PVSB990",
+      "short": "Comodoro"
+    },
+    "3256825584": {
+      "full": "Amerigo Vespucci",
+      "index": "PISB990",
+      "short": "A. Vespucci"
+    },
+    "3256825840": {
+      "full": "Utah",
+      "index": "PASB990",
+      "short": "Utah"
+    },
+    "3256858064": {
+      "full": "Admiral Orlov",
+      "index": "PRSA990",
+      "short": "Orlov"
+    },
+    "3256858416": {
+      "full": "Otto Lilienthal",
+      "index": "PGSA990",
+      "short": "O. Lilienthal"
+    },
+    "3257874224": {
+      "full": "Prinz Sigismund",
+      "index": "PGSB989",
+      "short": "P. Sigismund"
+    },
+    "3258890000": {
+      "full": "Admiraal",
+      "index": "PHSC988",
+      "short": "Admiraal"
+    },
+    "3267278288": {
+      "full": "Vladimir Monomakh",
+      "index": "PRSC980",
+      "short": "V. Monomakh"
+    },
+    "3309254640": {
+      "full": "Wisconsin Golden",
+      "index": "PASB940",
+      "short": "Wisconsin G"
+    },
+    "3315513040": {
+      "full": "[Zaō]",
+      "index": "PJSC934",
+      "short": "[Zaō]"
+    },
+    "3319740208": {
+      "full": "Von Zuckerhoff",
+      "index": "PGSB930",
+      "short": "Von Zuckerhoff"
+    },
+    "3319740400": {
+      "full": "Rhode Island B",
+      "index": "PASB930",
+      "short": "Rhode Island B"
+    },
+    "3320755920": {
+      "full": "Chikuma Shō-Gō",
+      "index": "PJSC929",
+      "short": "Chikuma Shō-Gō"
+    },
+    "3321837360": {
+      "full": "Eiserner Kanzler",
+      "index": "PGSB928",
+      "short": "Eiserner Kanzler"
+    },
+    "3330159920": {
+      "full": "Oväsen",
+      "index": "PWSD920",
+      "short": "Oväsen"
+    },
+    "3330192848": {
+      "full": "PTRPVLSK",
+      "index": "PRSC920",
+      "short": "PTRPVLSK"
+    },
+    "3330193200": {
+      "full": "Bremen Golden",
+      "index": "PGSC920",
+      "short": "Bremen G"
+    },
+    "3330193360": {
+      "full": "Fearmaw",
+      "index": "PBSC920",
+      "short": "Fearmaw"
+    },
+    "3330193392": {
+      "full": "Hawaii Golden",
+      "index": "PASC920",
+      "short": "Hawaii G"
+    },
+    "3330225872": {
+      "full": "Aki Golden",
+      "index": "PJSB920",
+      "short": "Aki G"
+    },
+    "3330225968": {
+      "full": "Schlieffen",
+      "index": "PGSB920",
+      "short": "Schlieffen"
+    },
+    "3330226128": {
+      "full": "Conqueror CLR",
+      "index": "PBSB920",
+      "short": "Conqueror CLR"
+    },
+    "3330226160": {
+      "full": "Montana 2",
+      "index": "PASB920",
+      "short": "Montana 2"
+    },
+    "3330258640": {
+      "full": "AL Shinano",
+      "index": "PJSA920",
+      "short": "AL Shinano"
+    },
+    "3330258928": {
+      "full": "Piñatapolis",
+      "index": "PASA920",
+      "short": "Piñatapolis"
+    },
+    "3331208656": {
+      "full": "AL Tashkent",
+      "index": "PRSD919",
+      "short": "AL Tashkent"
+    },
+    "3331241680": {
+      "full": "Tone 3",
+      "index": "PJSC919",
+      "short": "Tone 3"
+    },
+    "3331274160": {
+      "full": "Victoria B",
+      "index": "PSSB919",
+      "short": "Victoria B"
+    },
+    "3331274736": {
+      "full": "Iowa 2",
+      "index": "PASB919",
+      "short": "Iowa 2"
+    },
+    "3332289744": {
+      "full": "AL Harbin",
+      "index": "PZSC918",
+      "short": "AL Harbin"
+    },
+    "3332290256": {
+      "full": "Tone 2",
+      "index": "PJSC918",
+      "short": "Tone 2"
+    },
+    "3332323024": {
+      "full": "[Yamato]",
+      "index": "PJSB918",
+      "short": "[Yamato]"
+    },
+    "3332323120": {
+      "full": "Sea Howl",
+      "index": "PGSB918",
+      "short": "Sea Howl"
+    },
+    "3332323152": {
+      "full": "Flandre B",
+      "index": "PFSB918",
+      "short": "Flandre B"
+    },
+    "3332323312": {
+      "full": "AL Massachusetts",
+      "index": "PASB918",
+      "short": "AL Massachusetts"
+    },
+    "3332356080": {
+      "full": "Hornet B",
+      "index": "PASA918",
+      "short": "Hornet B"
+    },
+    "3333371888": {
+      "full": "[Montana]",
+      "index": "PASB917",
+      "short": "[Montana]"
+    },
+    "3333404368": {
+      "full": "[Hakuryū]",
+      "index": "PJSA917",
+      "short": "[Hakuryū]"
+    },
+    "3334420176": {
+      "full": "Ise 3",
+      "index": "PJSB916",
+      "short": "Ise 3"
+    },
+    "3335501808": {
+      "full": "[Midway]",
+      "index": "PASA915",
+      "short": "[Midway]"
+    },
+    "3337500656": {
+      "full": "[Gearing]",
+      "index": "PASD913",
+      "short": "[Gearing]"
+    },
+    "3338548944": {
+      "full": "[Shimakaze]",
+      "index": "PJSD912",
+      "short": "[Shimakaze]"
+    },
+    "3340154832": {
+      "full": "Selkie",
+      "index": "PBSS910",
+      "short": "Selkie"
+    },
+    "3340154864": {
+      "full": "Balao 2",
+      "index": "PASS910",
+      "short": "Balao 2"
+    },
+    "3340645584": {
+      "full": "Lüshun B",
+      "index": "PZSD910",
+      "short": "Lüshun B"
+    },
+    "3340645680": {
+      "full": "Lappland",
+      "index": "PWSD910",
+      "short": "Lappland"
+    },
+    "3340645840": {
+      "full": "[Grozovoi]",
+      "index": "PRSD910",
+      "short": "[Grozovoi]"
+    },
+    "3340646192": {
+      "full": "Sharqi",
+      "index": "PGSD910",
+      "short": "Sharqi"
+    },
+    "3340678352": {
+      "full": "Incheon B",
+      "index": "PZSC910",
+      "short": "Incheon B"
+    },
+    "3340678608": {
+      "full": "[Moskva]",
+      "index": "PRSC910",
+      "short": "[Moskva]"
+    },
+    "3340678960": {
+      "full": "[Hindenburg]",
+      "index": "PGSC910",
+      "short": "[Hindenburg]"
+    },
+    "3340679120": {
+      "full": "Cyclops",
+      "index": "PBSC910",
+      "short": "Cyclops"
+    },
+    "3340679152": {
+      "full": "Puerto Rico B",
+      "index": "PASC910",
+      "short": "Puerto Rico B"
+    },
+    "3340711728": {
+      "full": "[Grosser Kurfürst]",
+      "index": "PGSB910",
+      "short": "[G. Kurfürst]"
+    },
+    "3340711888": {
+      "full": "[Conqueror]",
+      "index": "PBSB910",
+      "short": "[Conqueror]"
+    },
+    "3340711920": {
+      "full": "Connecticut",
+      "index": "PASB910",
+      "short": "Connecticut"
+    },
+    "3340744400": {
+      "full": "Taihō",
+      "index": "PJSA910",
+      "short": "Taihō"
+    },
+    "3340744496": {
+      "full": "Süsshofen",
+      "index": "PGSA910",
+      "short": "Süsshofen"
+    },
+    "3340744656": {
+      "full": "[Audacious]",
+      "index": "PBSA910",
+      "short": "[Audacious]"
+    },
+    "3340744688": {
+      "full": "Essex",
+      "index": "PASA910",
+      "short": "Essex"
+    },
+    "3341694416": {
+      "full": "Neustrashimy B",
+      "index": "PRSD909",
+      "short": "Neustrashimy B"
+    },
+    "3341727696": {
+      "full": "Cursed Fang",
+      "index": "PBSC909",
+      "short": "Cursed Fang"
+    },
+    "3341727728": {
+      "full": "Fort Worth Golden",
+      "index": "PASC909",
+      "short": "Fort Worth G"
+    },
+    "3341759696": {
+      "full": "Xuan Ming",
+      "index": "PZSB909",
+      "short": "Xuan Ming"
+    },
+    "3341759792": {
+      "full": "Karl XIV Johan B",
+      "index": "PWSB909",
+      "short": "Karl XIV Johan B"
+    },
+    "3341759952": {
+      "full": "Mahtaga",
+      "index": "PRSB909",
+      "short": "Mahtaga"
+    },
+    "3341760240": {
+      "full": "AL Marco Polo",
+      "index": "PISB909",
+      "short": "AL Marco Polo"
+    },
+    "3341760336": {
+      "full": "Dark Corsair",
+      "index": "PFSB909",
+      "short": "Dark Corsair"
+    },
+    "3341760464": {
+      "full": "Marlborough B",
+      "index": "PBSB909",
+      "short": "Marlborough B"
+    },
+    "3341760496": {
+      "full": "Bird Cry",
+      "index": "PASB909",
+      "short": "Bird Cry"
+    },
+    "3342775504": {
+      "full": "Piñatian",
+      "index": "PZSC908",
+      "short": "Piñatian"
+    },
+    "3342776048": {
+      "full": "Mirage",
+      "index": "PISC908",
+      "short": "Mirage"
+    },
+    "3342776112": {
+      "full": "Schill B",
+      "index": "PGSC908",
+      "short": "Schill B"
+    },
+    "3342808816": {
+      "full": "Roma Aeterna",
+      "index": "PISB908",
+      "short": "Roma Aeterna"
+    },
+    "3342808880": {
+      "full": "Wahnsinn",
+      "index": "PGSB908",
+      "short": "Wahnsinn"
+    },
+    "3342808912": {
+      "full": "AL Richelieu",
+      "index": "PFSB908",
+      "short": "AL Richelieu"
+    },
+    "3342809072": {
+      "full": "Kheper",
+      "index": "PASB908",
+      "short": "Kheper"
+    },
+    "3342841552": {
+      "full": "Kikaku",
+      "index": "PJSA908",
+      "short": "Kikaku"
+    },
+    "3342841840": {
+      "full": "Concord Bridge",
+      "index": "PASA908",
+      "short": "Concord Bridge"
+    },
+    "3343791408": {
+      "full": "Scarlet Storm",
+      "index": "PWSD907",
+      "short": "Scarlet Storm"
+    },
+    "3344905936": {
+      "full": "Ise 2",
+      "index": "PJSB906",
+      "short": "Ise 2"
+    },
+    "3345921744": {
+      "full": "Desert Falcon",
+      "index": "PJSC905",
+      "short": "Desert Falcon"
+    },
+    "3346282480": {
+      "full": "Cimarron Test",
+      "index": "PASX904",
+      "short": "Cimarron Test"
+    },
+    "3352180720": {
+      "full": "Frank Friday",
+      "index": "PASD899",
+      "short": "Frank Friday"
+    },
+    "3352213296": {
+      "full": "AL Ägir",
+      "index": "PGSC899",
+      "short": "AL Ägir"
+    },
+    "3352246256": {
+      "full": "Volunteer State",
+      "index": "PASB899",
+      "short": "Volunteer State"
+    },
+    "3353294640": {
+      "full": "AL Bismarck",
+      "index": "PGSB898",
+      "short": "AL Bismarck"
+    },
+    "3353294672": {
+      "full": "[Richelieu]",
+      "index": "PFSB898",
+      "short": "[Richelieu]"
+    },
+    "3353327600": {
+      "full": "AL Hornet",
+      "index": "PASA898",
+      "short": "AL Hornet"
+    },
+    "3354310384": {
+      "full": "AL Gorizia",
+      "index": "PISC897",
+      "short": "AL Gorizia"
+    },
+    "3355359056": {
+      "full": "[La Galissonnière]",
+      "index": "PFSC896",
+      "short": "[La Galissonnière]"
+    },
+    "3356374864": {
+      "full": "Vent",
+      "index": "PFSD895",
+      "short": "Vent"
+    },
+    "3360569040": {
+      "full": "Yamagiri +",
+      "index": "PJSD891",
+      "short": "Yamagiri +"
+    },
+    "3360569328": {
+      "full": "Joshua Humphreys +",
+      "index": "PASD891",
+      "short": "J. Humphreys +"
+    },
+    "3360601904": {
+      "full": "Clausewitz +",
+      "index": "PGSC891",
+      "short": "Clausewitz +"
+    },
+    "3360602096": {
+      "full": "Jacksonville +",
+      "index": "PASC891",
+      "short": "Jacksonville +"
+    },
+    "3360634576": {
+      "full": "Satsuma +",
+      "index": "PJSB891",
+      "short": "Satsuma +"
+    },
+    "3360634864": {
+      "full": "Maine +",
+      "index": "PASB891",
+      "short": "Maine +"
+    },
+    "3361617616": {
+      "full": "AL Shimakaze",
+      "index": "PJSD890",
+      "short": "AL Shimakaze"
+    },
+    "3361650384": {
+      "full": "Zaō CLR",
+      "index": "PJSC890",
+      "short": "Zaō CLR"
+    },
+    "3361650480": {
+      "full": "AL Hindenburg",
+      "index": "PGSC890",
+      "short": "AL Hindenburg"
+    },
+    "3362666192": {
+      "full": "STAR Kitakaze",
+      "index": "PJSD889",
+      "short": "STAR Kitakaze"
+    },
+    "3362732016": {
+      "full": "AL Kearsarge",
+      "index": "PASB889",
+      "short": "AL Kearsarge"
+    },
+    "3363747792": {
+      "full": "STAR Edinburgh",
+      "index": "PBSC888",
+      "short": "STAR Edinburgh"
+    },
+    "3363780304": {
+      "full": "Ragnarok",
+      "index": "PJSB888",
+      "short": "Ragnarok"
+    },
+    "3374266064": {
+      "full": "Ignis Purgatio",
+      "index": "PJSB878",
+      "short": "Ignis Purgatio"
+    },
+    "3425613520": {
+      "full": "Azuma B",
+      "index": "PJSC829",
+      "short": "Azuma B"
+    },
+    "3426694960": {
+      "full": "Odin TE",
+      "index": "PGSB828",
+      "short": "Odin TE"
+    },
+    "3434526416": {
+      "full": "BA Arona's Whale",
+      "index": "PJSS820",
+      "short": "BA Arona's Whale"
+    },
+    "3435018064": {
+      "full": "Kléber TE",
+      "index": "PFSD820",
+      "short": "Kléber TE"
+    },
+    "3435083760": {
+      "full": "BA Montana",
+      "index": "PASB820",
+      "short": "BA Montana"
+    },
+    "3436066800": {
+      "full": "GQ Johnny",
+      "index": "PASD819",
+      "short": "GQ Johnny"
+    },
+    "3436099280": {
+      "full": "BA Takahashi",
+      "index": "PJSC819",
+      "short": "BA Takahashi"
+    },
+    "3436099408": {
+      "full": "BA Utnapishtim's Ship",
+      "index": "PFSC819",
+      "short": "BA Utnapishtim..."
+    },
+    "3436131792": {
+      "full": "BA Hovercraft",
+      "index": "PRSB819",
+      "short": "BA Hovercraft"
+    },
+    "3437147600": {
+      "full": "Kiberpankov",
+      "index": "PRSC818",
+      "short": "Kiberpankov"
+    },
+    "3437180368": {
+      "full": "Borodino TE",
+      "index": "PRSB818",
+      "short": "Borodino TE"
+    },
+    "3437180656": {
+      "full": "BA Binah",
+      "index": "PISB818",
+      "short": "BA Binah"
+    },
+    "3437180720": {
+      "full": "BA Tirpitz",
+      "index": "PGSB818",
+      "short": "BA Tirpitz"
+    },
+    "3437180912": {
+      "full": "Alabama B",
+      "index": "PASB818",
+      "short": "Alabama B"
+    },
+    "3438196528": {
+      "full": "München B",
+      "index": "PGSC817",
+      "short": "München B"
+    },
+    "3439605008": {
+      "full": "Bogue",
+      "index": "PXSX815",
+      "short": "Bogue"
+    },
+    "3445503440": {
+      "full": "DD R-10",
+      "index": "PRSD810",
+      "short": "DD R-10"
+    },
+    "3445503824": {
+      "full": "Kléber CLR",
+      "index": "PFSD810",
+      "short": "Kléber CLR"
+    },
+    "3445503984": {
+      "full": "Gearing P",
+      "index": "PASD810",
+      "short": "Gearing P"
+    },
+    "3445536112": {
+      "full": "Brisbane B",
+      "index": "PUSC810",
+      "short": "Brisbane B"
+    },
+    "3445536208": {
+      "full": "Komissar",
+      "index": "PRSC810",
+      "short": "Komissar"
+    },
+    "3445536464": {
+      "full": "Zaō P",
+      "index": "PJSC810",
+      "short": "Zaō P"
+    },
+    "3445536592": {
+      "full": "Brennus",
+      "index": "PFSC810",
+      "short": "Brennus"
+    },
+    "3445536720": {
+      "full": "Defence",
+      "index": "PBSC810",
+      "short": "Defence"
+    },
+    "3445536752": {
+      "full": "Austin",
+      "index": "PASC810",
+      "short": "Austin"
+    },
+    "3445569264": {
+      "full": "Tempesta Nera",
+      "index": "PISB810",
+      "short": "Tempesta Nera"
+    },
+    "3445569488": {
+      "full": "Cumberland",
+      "index": "PBSB810",
+      "short": "Cumberland"
+    },
+    "3445569520": {
+      "full": "Montana P",
+      "index": "PASB810",
+      "short": "Montana P"
+    },
+    "3446585136": {
+      "full": "Roon CLR",
+      "index": "PGSC809",
+      "short": "Roon CLR"
+    },
+    "3447600976": {
+      "full": "L'Effronté",
+      "index": "PFSD808",
+      "short": "L'Effronté"
+    },
+    "3447666672": {
+      "full": "North Carolina CLR",
+      "index": "PASB808",
+      "short": "N. Carolina CLR"
+    },
+    "3448747280": {
+      "full": "Ranger",
+      "index": "PXSA807",
+      "short": "Ranger"
+    },
+    "3450812144": {
+      "full": "Giunio Bruto",
+      "index": "PISB805",
+      "short": "Giunio Bruto"
+    },
+    "3457103568": {
+      "full": "ARP Kirishima",
+      "index": "PJSB799",
+      "short": "ARP Kirishima"
+    },
+    "3488528080": {
+      "full": "Ōta",
+      "index": "PJSC769",
+      "short": "Ōta"
+    },
+    "3499013840": {
+      "full": "Suzuya VL",
+      "index": "PJSC759",
+      "short": "Suzuya VL"
+    },
+    "3509499600": {
+      "full": "Suzuya Golden",
+      "index": "PJSC749",
+      "short": "Suzuya G"
+    },
+    "3511629776": {
+      "full": "Danu",
+      "index": "PBSB747",
+      "short": "Danu"
+    },
+    "3515102480": {
+      "full": "Intania Queen",
+      "index": "PXSX743",
+      "short": "Intania Queen"
+    },
+    "3518969840": {
+      "full": "New Jersey",
+      "index": "PASB740",
+      "short": "New Jersey"
+    },
+    "3519985360": {
+      "full": "Suzuya",
+      "index": "PJSC739",
+      "short": "Suzuya"
+    },
+    "3519985392": {
+      "full": "La Spezia",
+      "index": "PISC739",
+      "short": "La Spezia"
+    },
+    "3520017872": {
+      "full": "Sovetskaya Rossiya",
+      "index": "PRSB739",
+      "short": "Sov. Rossiya"
+    },
+    "3522049840": {
+      "full": "Z-38",
+      "index": "PGSD737",
+      "short": "Z-38"
+    },
+    "3522082512": {
+      "full": "ARP Nachi",
+      "index": "PJSC737",
+      "short": "ARP Nachi"
+    },
+    "3522115536": {
+      "full": "Royal Sovereign",
+      "index": "PBSB737",
+      "short": "Royal Sovereign"
+    },
+    "3529422032": {
+      "full": "Taejong",
+      "index": "PZSC730",
+      "short": "Taejong"
+    },
+    "3529422608": {
+      "full": "Unie",
+      "index": "PHSC730",
+      "short": "Unie"
+    },
+    "3529422672": {
+      "full": "Amiral Lartigue",
+      "index": "PFSC730",
+      "short": "Amiral Lartigue"
+    },
+    "3529455312": {
+      "full": "Tōgasa",
+      "index": "PJSB730",
+      "short": "Tōgasa"
+    },
+    "3529455600": {
+      "full": "Wisconsin",
+      "index": "PASB730",
+      "short": "Wisconsin"
+    },
+    "3530437840": {
+      "full": "Red Hare",
+      "index": "PZSD729",
+      "short": "Red Hare"
+    },
+    "3530470608": {
+      "full": "Baotou",
+      "index": "PZSC729",
+      "short": "Baotou"
+    },
+    "3530470832": {
+      "full": "Aragón",
+      "index": "PSSC729",
+      "short": "Aragón"
+    },
+    "3530471120": {
+      "full": "Chikuma II Golden",
+      "index": "PJSC729",
+      "short": "Chikuma II G"
+    },
+    "3530471152": {
+      "full": "Messina",
+      "index": "PISC729",
+      "short": "Messina"
+    },
+    "3530471216": {
+      "full": "Blücher",
+      "index": "PGSC729",
+      "short": "Blücher"
+    },
+    "3530471408": {
+      "full": "Fort Worth",
+      "index": "PASC729",
+      "short": "Fort Worth"
+    },
+    "3530503632": {
+      "full": "Respublika",
+      "index": "PRSB729",
+      "short": "Respublika"
+    },
+    "3530504176": {
+      "full": "Georgia",
+      "index": "PASB729",
+      "short": "Georgia"
+    },
+    "3531486416": {
+      "full": "Datong",
+      "index": "PZSD728",
+      "short": "Datong"
+    },
+    "3531486928": {
+      "full": "Shigure",
+      "index": "PJSD728",
+      "short": "Shigure"
+    },
+    "3531519792": {
+      "full": "Wiesbaden",
+      "index": "PGSC728",
+      "short": "Wiesbaden"
+    },
+    "3531519984": {
+      "full": "Protector",
+      "index": "PASC728",
+      "short": "Protector"
+    },
+    "3532535600": {
+      "full": "Z-34",
+      "index": "PGSD727",
+      "short": "Z-34"
+    },
+    "3532568272": {
+      "full": "Eastern Dragon",
+      "index": "PJSC727",
+      "short": "E. Dragon"
+    },
+    "3532601296": {
+      "full": "Duke of Bronte",
+      "index": "PBSB727",
+      "short": "Duke of Bronte"
+    },
+    "3539384016": {
+      "full": "I-56 '44",
+      "index": "PJSS720",
+      "short": "I-56 '44"
+    },
+    "3539875632": {
+      "full": "Georg Hoffmann Golden",
+      "index": "PGSD720",
+      "short": "G. Hoffmann G"
+    },
+    "3539875824": {
+      "full": "Hull",
+      "index": "PASD720",
+      "short": "Hull"
+    },
+    "3539907792": {
+      "full": "Zhuge Liang",
+      "index": "PZSC720",
+      "short": "Zhuge Liang"
+    },
+    "3539908304": {
+      "full": "Kushiro",
+      "index": "PJSC720",
+      "short": "Kushiro"
+    },
+    "3539908368": {
+      "full": "Prins van Oranje Golden",
+      "index": "PHSC720",
+      "short": "Pr. van Oranje G"
+    },
+    "3539908400": {
+      "full": "Bremen",
+      "index": "PGSC720",
+      "short": "Bremen"
+    },
+    "3539908432": {
+      "full": "Latouche-Tréville",
+      "index": "PFSC720",
+      "short": "Latouche-Tréville"
+    },
+    "3539908592": {
+      "full": "Hawaii",
+      "index": "PASC720",
+      "short": "Hawaii"
+    },
+    "3539940688": {
+      "full": "Almirante Pérez Gacitúa",
+      "index": "PVSB720",
+      "short": "Pérez Gacitúa"
+    },
+    "3539940816": {
+      "full": "Rodina",
+      "index": "PRSB720",
+      "short": "Rodina"
+    },
+    "3539941072": {
+      "full": "Aki",
+      "index": "PJSB720",
+      "short": "Aki"
+    },
+    "3539941104": {
+      "full": "Conte Verde",
+      "index": "PISB720",
+      "short": "Conte Verde"
+    },
+    "3539941360": {
+      "full": "Rhode Island",
+      "index": "PASB720",
+      "short": "Rhode Island"
+    },
+    "3540923600": {
+      "full": "Nanning",
+      "index": "PZSD719",
+      "short": "Nanning"
+    },
+    "3540923696": {
+      "full": "Błyskawica '52",
+      "index": "PWSD719",
+      "short": "Błyskawica '52"
+    },
+    "3540924112": {
+      "full": "Minegumo",
+      "index": "PJSD719",
+      "short": "Minegumo"
+    },
+    "3540924208": {
+      "full": "ZH-1",
+      "index": "PGSD719",
+      "short": "ZH-1"
+    },
+    "3540924368": {
+      "full": "Barfleur",
+      "index": "PBSD719",
+      "short": "Barfleur"
+    },
+    "3540924400": {
+      "full": "Johnston",
+      "index": "PASD719",
+      "short": "Johnston"
+    },
+    "3540956368": {
+      "full": "Tianjin",
+      "index": "PZSC719",
+      "short": "Tianjin"
+    },
+    "3540956592": {
+      "full": "Almirante Oquendo",
+      "index": "PSSC719",
+      "short": "Almte. Oquendo"
+    },
+    "3540956624": {
+      "full": "Kozma Minin",
+      "index": "PRSC719",
+      "short": "Kozma Minin"
+    },
+    "3540956880": {
+      "full": "Chikuma II",
+      "index": "PJSC719",
+      "short": "Chikuma II"
+    },
+    "3540956912": {
+      "full": "Ferrante Gonzaga",
+      "index": "PISC719",
+      "short": "F. Gonzaga"
+    },
+    "3540957008": {
+      "full": "Le Havre",
+      "index": "PFSC719",
+      "short": "Le Havre"
+    },
+    "3540957136": {
+      "full": "Aberdeen",
+      "index": "PBSC719",
+      "short": "Aberdeen"
+    },
+    "3540957168": {
+      "full": "Cambridge",
+      "index": "PASC719",
+      "short": "Cambridge"
+    },
+    "3540989136": {
+      "full": "Yimeng",
+      "index": "PZSB719",
+      "short": "Yimeng"
+    },
+    "3540989232": {
+      "full": "Niord",
+      "index": "PWSB719",
+      "short": "Niord"
+    },
+    "3540989264": {
+      "full": "Valparaíso",
+      "index": "PVSB719",
+      "short": "Valparaíso"
+    },
+    "3540989360": {
+      "full": "Victoria",
+      "index": "PSSB719",
+      "short": "Victoria"
+    },
+    "3540989392": {
+      "full": "Zarya Svobody",
+      "index": "PRSB719",
+      "short": "Zarya S."
+    },
+    "3540989648": {
+      "full": "Hotaka",
+      "index": "PJSB719",
+      "short": "Hotaka"
+    },
+    "3540989680": {
+      "full": "Pilus Posterior",
+      "index": "PISB719",
+      "short": "Pilus Posterior"
+    },
+    "3540989744": {
+      "full": "Friedrich Carl",
+      "index": "PGSB719",
+      "short": "Friedrich Carl"
+    },
+    "3540989936": {
+      "full": "Indiana",
+      "index": "PASB719",
+      "short": "Indiana"
+    },
+    "3541972176": {
+      "full": "Ship Smasha",
+      "index": "PZSD718",
+      "short": "Ship Smasha"
+    },
+    "3541972432": {
+      "full": "Provorny",
+      "index": "PRSD718",
+      "short": "Provorny"
+    },
+    "3541972688": {
+      "full": "AL Yukikaze",
+      "index": "PJSD718",
+      "short": "AL Yukikaze"
+    },
+    "3541972816": {
+      "full": "Hoche",
+      "index": "PFSD718",
+      "short": "Hoche"
+    },
+    "3541972944": {
+      "full": "Eskimo",
+      "index": "PBSD718",
+      "short": "Eskimo"
+    },
+    "3542004944": {
+      "full": "Narai",
+      "index": "PZSC718",
+      "short": "Narai"
+    },
+    "3542005040": {
+      "full": "Regele Carol I",
+      "index": "PWSC718",
+      "short": "Regele Carol I"
+    },
+    "3542005456": {
+      "full": "ARP Maya",
+      "index": "PJSC718",
+      "short": "ARP Maya"
+    },
+    "3542005552": {
+      "full": "Cross of Dorn",
+      "index": "PGSC718",
+      "short": "Cross of Dorn"
+    },
+    "3542005712": {
+      "full": "Érne",
+      "index": "PBSC718",
+      "short": "Érne"
+    },
+    "3542005744": {
+      "full": "AL Montpelier",
+      "index": "PASC718",
+      "short": "AL Montpelier"
+    },
+    "3542037808": {
+      "full": "Turgut Reis",
+      "index": "PWSB718",
+      "short": "Turgut Reis"
+    },
+    "3542038256": {
+      "full": "Marcantonio Colonna",
+      "index": "PISB718",
+      "short": "M. Colonna"
+    },
+    "3542038512": {
+      "full": "Tennessee",
+      "index": "PASB718",
+      "short": "Tennessee"
+    },
+    "3542070992": {
+      "full": "Akagi",
+      "index": "PJSA718",
+      "short": "Akagi"
+    },
+    "3542071248": {
+      "full": "Theseus",
+      "index": "PBSA718",
+      "short": "Theseus"
+    },
+    "3543020848": {
+      "full": "Stord '43",
+      "index": "PWSD717",
+      "short": "Stord '43"
+    },
+    "3543021360": {
+      "full": "Z-33",
+      "index": "PGSD717",
+      "short": "Z-33"
+    },
+    "3543021520": {
+      "full": "Jupiter '42",
+      "index": "PBSD717",
+      "short": "Jupiter '42"
+    },
+    "3543053520": {
+      "full": "Lanzhou",
+      "index": "PZSC717",
+      "short": "Lanzhou"
+    },
+    "3543053680": {
+      "full": "Gambia",
+      "index": "PUSC717",
+      "short": "Gambia"
+    },
+    "3543054032": {
+      "full": "Southern Dragon",
+      "index": "PJSC717",
+      "short": "S. Dragon"
+    },
+    "3543054064": {
+      "full": "Fiume",
+      "index": "PISC717",
+      "short": "Fiume"
+    },
+    "3543054128": {
+      "full": "Nürnberg '44",
+      "index": "PGSC717",
+      "short": "Nürnberg '44"
+    },
+    "3543054320": {
+      "full": "Honolulu",
+      "index": "PASC717",
+      "short": "Honolulu"
+    },
+    "3543086544": {
+      "full": "Arkhangelsk",
+      "index": "PRSB717",
+      "short": "Arkhangelsk"
+    },
+    "3543086896": {
+      "full": "Scharnhorst '43",
+      "index": "PGSB717",
+      "short": "Scharnhorst '43"
+    },
+    "3543087056": {
+      "full": "Rodney",
+      "index": "PBSB717",
+      "short": "Rodney"
+    },
+    "3543577808": {
+      "full": "Xin Zhong Guo 14",
+      "index": "PZSS716",
+      "short": "Xin Zhong Guo 14"
+    },
+    "3544102736": {
+      "full": "Montcalm",
+      "index": "PFSC716",
+      "short": "Montcalm"
+    },
+    "3544102864": {
+      "full": "Orion '44",
+      "index": "PBSC716",
+      "short": "Orion '44"
+    },
+    "3545183952": {
+      "full": "HSF Hiei",
+      "index": "PJSB715",
+      "short": "HSF Hiei"
+    },
+    "3549869360": {
+      "full": "Orzeł",
+      "index": "PWSS710",
+      "short": "Orzeł"
+    },
+    "3549869840": {
+      "full": "Tonijn",
+      "index": "PHSS710",
+      "short": "Tonijn"
+    },
+    "3549869904": {
+      "full": "Surcouf",
+      "index": "PFSS710",
+      "short": "Surcouf"
+    },
+    "3549870032": {
+      "full": "Seal",
+      "index": "PBSS710",
+      "short": "Seal"
+    },
+    "3549870064": {
+      "full": "Archerfish",
+      "index": "PASS710",
+      "short": "Archerfish"
+    },
+    "3550360880": {
+      "full": "Ragnar",
+      "index": "PWSD710",
+      "short": "Ragnar"
+    },
+    "3550360912": {
+      "full": "La Pampa",
+      "index": "PVSD710",
+      "short": "La Pampa"
+    },
+    "3550361040": {
+      "full": "Peredovoy",
+      "index": "PRSD710",
+      "short": "Peredovoy"
+    },
+    "3550361296": {
+      "full": "Fuyutsuki",
+      "index": "PJSD710",
+      "short": "Fuyutsuki"
+    },
+    "3550361328": {
+      "full": "Alberico da Barbiano",
+      "index": "PISD710",
+      "short": "A. da Barbiano"
+    },
+    "3550361392": {
+      "full": "Georg Hoffmann",
+      "index": "PGSD710",
+      "short": "G. Hoffmann"
+    },
+    "3550361424": {
+      "full": "Châteaurenault",
+      "index": "PFSD710",
+      "short": "Châteaurenault"
+    },
+    "3550361584": {
+      "full": "Laffey",
+      "index": "PASD710",
+      "short": "Laffey"
+    },
+    "3550393552": {
+      "full": "Incheon",
+      "index": "PZSC710",
+      "short": "Incheon"
+    },
+    "3550393648": {
+      "full": "Svea",
+      "index": "PWSC710",
+      "short": "Svea"
+    },
+    "3550393680": {
+      "full": "Almirante Irízar",
+      "index": "PVSC710",
+      "short": "Almte. Irízar"
+    },
+    "3550393712": {
+      "full": "Pioneer",
+      "index": "PUSC710",
+      "short": "Pioneer"
+    },
+    "3550393808": {
+      "full": "Sevastopol",
+      "index": "PRSC710",
+      "short": "Sevastopol"
+    },
+    "3550394064": {
+      "full": "Yari",
+      "index": "PJSC710",
+      "short": "Yari"
+    },
+    "3550394096": {
+      "full": "Varese",
+      "index": "PISC710",
+      "short": "Varese"
+    },
+    "3550394128": {
+      "full": "Prins van Oranje",
+      "index": "PHSC710",
+      "short": "Prins van Oranje"
+    },
+    "3550394160": {
+      "full": "Hildebrand",
+      "index": "PGSC710",
+      "short": "Hildebrand"
+    },
+    "3550394192": {
+      "full": "Brennus",
+      "index": "PFSC710",
+      "short": "Brennus"
+    },
+    "3550394352": {
+      "full": "Salem",
+      "index": "PASC710",
+      "short": "Salem"
+    },
+    "3550426448": {
+      "full": "Sete de Setembro",
+      "index": "PVSB710",
+      "short": "Sete de Setembro"
+    },
+    "3550426480": {
+      "full": "Irresistible",
+      "index": "PUSB710",
+      "short": "Irresistible"
+    },
+    "3550426576": {
+      "full": "Sibir",
+      "index": "PRSB710",
+      "short": "Sibir"
+    },
+    "3550426832": {
+      "full": "Yamato Kai",
+      "index": "PJSB710",
+      "short": "Yamato Kai"
+    },
+    "3550426864": {
+      "full": "Sicilia",
+      "index": "PISB710",
+      "short": "Sicilia"
+    },
+    "3550426896": {
+      "full": "Willem de Eerste",
+      "index": "PHSB710",
+      "short": "Willem de Eerste"
+    },
+    "3550427120": {
+      "full": "Oregon",
+      "index": "PASB710",
+      "short": "Oregon"
+    },
+    "3550459216": {
+      "full": "Independencia",
+      "index": "PVSA710",
+      "short": "Independencia"
+    },
+    "3550459600": {
+      "full": "Shinano",
+      "index": "PJSA710",
+      "short": "Shinano"
+    },
+    "3550459856": {
+      "full": "Ocean",
+      "index": "PBSA710",
+      "short": "Ocean"
+    },
+    "3551409520": {
+      "full": "Cayuga",
+      "index": "PUSD709",
+      "short": "Cayuga"
+    },
+    "3551409616": {
+      "full": "Neustrashimy",
+      "index": "PRSD709",
+      "short": "Neustrashimy"
+    },
+    "3551409968": {
+      "full": "ZF-6 Golden",
+      "index": "PGSD709",
+      "short": "ZF-6 G"
+    },
+    "3551410160": {
+      "full": "Black",
+      "index": "PASD709",
+      "short": "Black"
+    },
+    "3551442384": {
+      "full": "Vyazma",
+      "index": "PRSC709",
+      "short": "Vyazma"
+    },
+    "3551442640": {
+      "full": "ARP Haguro",
+      "index": "PJSC709",
+      "short": "ARP Haguro"
+    },
+    "3551474896": {
+      "full": "Taihang",
+      "index": "PZSB709",
+      "short": "Taihang"
+    },
+    "3551475120": {
+      "full": "Triunfante",
+      "index": "PSSB709",
+      "short": "Triunfante"
+    },
+    "3551475152": {
+      "full": "AL Sov. Rossiya",
+      "index": "PRSB709",
+      "short": "AL Sov. Rossiya"
+    },
+    "3551475440": {
+      "full": "Pilus Prior",
+      "index": "PISB709",
+      "short": "Pilus Prior"
+    },
+    "3551475536": {
+      "full": "Roussillon",
+      "index": "PFSB709",
+      "short": "Roussillon"
+    },
+    "3552457936": {
+      "full": "Zhu Que",
+      "index": "PZSD708",
+      "short": "Zhu Que"
+    },
+    "3552458032": {
+      "full": "Błyskawica '44",
+      "index": "PWSD708",
+      "short": "Błyskawica '44"
+    },
+    "3552458448": {
+      "full": "HSF Harekaze",
+      "index": "PJSD708",
+      "short": "HSF Harekaze"
+    },
+    "3552458512": {
+      "full": "Philips van Almonde",
+      "index": "PHSD708",
+      "short": "Ph. van Almonde"
+    },
+    "3552490832": {
+      "full": "Comandante Aguirre",
+      "index": "PVSC708",
+      "short": "C. Aguirre"
+    },
+    "3552491216": {
+      "full": "ARP Takao",
+      "index": "PJSC708",
+      "short": "ARP Takao"
+    },
+    "3552491280": {
+      "full": "Vrijheid",
+      "index": "PHSC708",
+      "short": "Vrijheid"
+    },
+    "3552491344": {
+      "full": "Metz",
+      "index": "PFSC708",
+      "short": "Metz"
+    },
+    "3552491472": {
+      "full": "Sinann",
+      "index": "PBSC708",
+      "short": "Sinann"
+    },
+    "3552491504": {
+      "full": "Bridgeport",
+      "index": "PASC708",
+      "short": "Bridgeport"
+    },
+    "3552523472": {
+      "full": "Xuan Wu",
+      "index": "PZSB708",
+      "short": "Xuan Wu"
+    },
+    "3552523984": {
+      "full": "ARP Hiei",
+      "index": "PJSB708",
+      "short": "ARP Hiei"
+    },
+    "3552524016": {
+      "full": "AL Littorio",
+      "index": "PISB708",
+      "short": "AL Littorio"
+    },
+    "3552524080": {
+      "full": "Bismarck '41",
+      "index": "PGSB708",
+      "short": "Bismarck '41"
+    },
+    "3552524240": {
+      "full": "Prince of Wales",
+      "index": "PBSB708",
+      "short": "Prince of Wales"
+    },
+    "3552524272": {
+      "full": "Alabama ST",
+      "index": "PASB708",
+      "short": "Alabama ST"
+    },
+    "3553507120": {
+      "full": "Z-32",
+      "index": "PGSD707",
+      "short": "Z-32"
+    },
+    "3553539792": {
+      "full": "ARP Ashigara",
+      "index": "PJSC707",
+      "short": "ARP Ashigara"
+    },
+    "3553539824": {
+      "full": "Optio",
+      "index": "PISC707",
+      "short": "Optio"
+    },
+    "3553540048": {
+      "full": "Bóinn",
+      "index": "PBSC707",
+      "short": "Bóinn"
+    },
+    "3553540080": {
+      "full": "Flint",
+      "index": "PASC707",
+      "short": "Flint"
+    },
+    "3553572048": {
+      "full": "Teng She",
+      "index": "PZSB707",
+      "short": "Teng She"
+    },
+    "3553572144": {
+      "full": "Lugdunum",
+      "index": "PWSB707",
+      "short": "Lugdunum"
+    },
+    "3553572560": {
+      "full": "ARP Haruna",
+      "index": "PJSB707",
+      "short": "ARP Haruna"
+    },
+    "3553572848": {
+      "full": "California",
+      "index": "PASB707",
+      "short": "California"
+    },
+    "3554555600": {
+      "full": "Shinonome",
+      "index": "PJSD706",
+      "short": "Shinonome"
+    },
+    "3554588464": {
+      "full": "HSF Admiral Graf Spee",
+      "index": "PGSC706",
+      "short": "HSF Graf Spee"
+    },
+    "3554621136": {
+      "full": "ARP Kirishima",
+      "index": "PJSB706",
+      "short": "ARP Kirishima"
+    },
+    "3555603760": {
+      "full": "Kalmar",
+      "index": "PWSD705",
+      "short": "Kalmar"
+    },
+    "3555636944": {
+      "full": "ARP Myōkō",
+      "index": "PJSC705",
+      "short": "ARP Myōkō"
+    },
+    "3555669712": {
+      "full": "ARP Kongō",
+      "index": "PJSB705",
+      "short": "ARP Kongō"
+    },
+    "3555670000": {
+      "full": "Texas",
+      "index": "PASB705",
+      "short": "Texas"
+    },
+    "3556653040": {
+      "full": "DD 214",
+      "index": "PASD704",
+      "short": "DD 214"
+    },
+    "3558094544": {
+      "full": "ARP I-401",
+      "index": "PJSX702",
+      "short": "ARP I-401"
+    },
+    "3559143120": {
+      "full": "ARP I-401",
+      "index": "PJSX701",
+      "short": "ARP I-401"
+    },
+    "3560912592": {
+      "full": "ARP Yamato",
+      "index": "PJSB700",
+      "short": "ARP Yamato"
+    },
+    "3655218480": {
+      "full": "Småland",
+      "index": "PWSD610",
+      "short": "Småland"
+    },
+    "3655218960": {
+      "full": "Tromp",
+      "index": "PHSD610",
+      "short": "Tromp"
+    },
+    "3655218992": {
+      "full": "Z-42",
+      "index": "PGSD610",
+      "short": "Z-42"
+    },
+    "3655219184": {
+      "full": "Forrest Sherman",
+      "index": "PASD610",
+      "short": "F. Sherman"
+    },
+    "3655251408": {
+      "full": "Smolensk",
+      "index": "PRSC610",
+      "short": "Smolensk"
+    },
+    "3655251664": {
+      "full": "Kitakami",
+      "index": "PJSC610",
+      "short": "Kitakami"
+    },
+    "3655251920": {
+      "full": "Gibraltar",
+      "index": "PBSC610",
+      "short": "Gibraltar"
+    },
+    "3655251952": {
+      "full": "Puerto Rico",
+      "index": "PASC610",
+      "short": "Puerto Rico"
+    },
+    "3655284528": {
+      "full": "Mecklenburg",
+      "index": "PGSB610",
+      "short": "Mecklenburg"
+    },
+    "3655284688": {
+      "full": "Incomparable",
+      "index": "PBSB610",
+      "short": "Incomparable"
+    },
+    "3655317296": {
+      "full": "Max Immelmann",
+      "index": "PGSA610",
+      "short": "M. Immelmann"
+    },
+    "3656333264": {
+      "full": "Scarlet Thunder",
+      "index": "PBSB609",
+      "short": "S. Thunder"
+    },
+    "3658397424": {
+      "full": "Gorizia",
+      "index": "PISC607",
+      "short": "Gorizia"
+    },
+    "3659445712": {
+      "full": "Admiral Makarov",
+      "index": "PRSC606",
+      "short": "Makarov"
+    },
+    "3660461904": {
+      "full": "Cyclone",
+      "index": "PFSD605",
+      "short": "Cyclone"
+    },
+    "3660462032": {
+      "full": "Anthony",
+      "index": "PBSD605",
+      "short": "Anthony"
+    },
+    "3666786288": {
+      "full": "Alaska B",
+      "index": "PASC599",
+      "short": "Alaska B"
+    },
+    "3666818864": {
+      "full": "Pommern B",
+      "index": "PGSB599",
+      "short": "Pommern B"
+    },
+    "3666818896": {
+      "full": "Jean Bart B",
+      "index": "PFSB599",
+      "short": "Jean Bart B"
+    },
+    "3666819056": {
+      "full": "Kearsarge B",
+      "index": "PASB599",
+      "short": "Kearsarge B"
+    },
+    "3667801296": {
+      "full": "Loyang B",
+      "index": "PZSD598",
+      "short": "Loyang B"
+    },
+    "3667801808": {
+      "full": "Asashio B",
+      "index": "PJSD598",
+      "short": "Asashio B"
+    },
+    "3667802064": {
+      "full": "Cossack B",
+      "index": "PBSD598",
+      "short": "Cossack B"
+    },
+    "3667834576": {
+      "full": "Atago B",
+      "index": "PJSC598",
+      "short": "Atago B"
+    },
+    "3667834672": {
+      "full": "Mainz B",
+      "index": "PGSC598",
+      "short": "Mainz B"
+    },
+    "3667867440": {
+      "full": "Tirpitz B",
+      "index": "PGSB598",
+      "short": "Tirpitz B"
+    },
+    "3667867632": {
+      "full": "Massachusetts B",
+      "index": "PASB598",
+      "short": "Massachusetts B"
+    },
+    "3667899856": {
+      "full": "Chkalov B",
+      "index": "PRSA598",
+      "short": "Chkalov B"
+    },
+    "3667900112": {
+      "full": "Kaga B",
+      "index": "PJSA598",
+      "short": "Kaga B"
+    },
+    "3667900208": {
+      "full": "Graf Zeppelin B",
+      "index": "PGSA598",
+      "short": "Graf Zeppelin B"
+    },
+    "3667900400": {
+      "full": "Saipan B",
+      "index": "PASA598",
+      "short": "Saipan B"
+    },
+    "3668850672": {
+      "full": "Sims B",
+      "index": "PASD597",
+      "short": "Sims B"
+    },
+    "3668883440": {
+      "full": "Boise",
+      "index": "PASC597",
+      "short": "Boise"
+    },
+    "3668916016": {
+      "full": "Scharnhorst B",
+      "index": "PGSB597",
+      "short": "Scharnhorst B"
+    },
+    "3669898960": {
+      "full": "Shinonome B",
+      "index": "PJSD596",
+      "short": "Shinonome B"
+    },
+    "3669964624": {
+      "full": "Dunkerque B",
+      "index": "PFSB596",
+      "short": "Dunkerque B"
+    },
+    "3676223184": {
+      "full": "Yoshino B",
+      "index": "PJSC590",
+      "short": "Yoshino B"
+    },
+    "3676223216": {
+      "full": "Napoli B",
+      "index": "PISC590",
+      "short": "Napoli B"
+    },
+    "3679369200": {
+      "full": "Atlanta B",
+      "index": "PASC587",
+      "short": "Atlanta B"
+    },
+    "3699291600": {
+      "full": "Lazo B",
+      "index": "PRSC568",
+      "short": "Lazo B"
+    },
+    "3708761808": {
+      "full": "Iwami B",
+      "index": "PJSB559",
+      "short": "Iwami B"
+    },
+    "3709777360": {
+      "full": "Dmitry Pozharsky",
+      "index": "PRSC558",
+      "short": "D. Pozharsky"
+    },
+    "3709777872": {
+      "full": "AL Cheshire",
+      "index": "PBSC558",
+      "short": "AL Cheshire"
+    },
+    "3719247568": {
+      "full": "Tsurugi",
+      "index": "PJSB549",
+      "short": "Tsurugi"
+    },
+    "3720263120": {
+      "full": "Bagration",
+      "index": "PRSC548",
+      "short": "Bagration"
+    },
+    "3720263632": {
+      "full": "Nottingham",
+      "index": "PBSC548",
+      "short": "Nottingham"
+    },
+    "3720263664": {
+      "full": "San Diego",
+      "index": "PASC548",
+      "short": "San Diego"
+    },
+    "3720296272": {
+      "full": "Picardie",
+      "index": "PFSB548",
+      "short": "Picardie"
+    },
+    "3721344976": {
+      "full": "Renown '44",
+      "index": "PBSB547",
+      "short": "Renown '44"
+    },
+    "3729732816": {
+      "full": "Louchuan",
+      "index": "PZSB539",
+      "short": "Louchuan"
+    },
+    "3729733328": {
+      "full": "Daisen",
+      "index": "PJSB539",
+      "short": "Daisen"
+    },
+    "3729733616": {
+      "full": "Illinois",
+      "index": "PASB539",
+      "short": "Illinois"
+    },
+    "3730748880": {
+      "full": "Pyotr Bagration",
+      "index": "PRSC538",
+      "short": "P. Bagration"
+    },
+    "3730749392": {
+      "full": "Hampshire",
+      "index": "PBSC538",
+      "short": "Hampshire"
+    },
+    "3730749424": {
+      "full": "Rochester",
+      "index": "PASC538",
+      "short": "Rochester"
+    },
+    "3730781648": {
+      "full": "V. I. Lenin",
+      "index": "PRSB538",
+      "short": "V. I. Lenin"
+    },
+    "3730782000": {
+      "full": "Brandenburg B",
+      "index": "PGSB538",
+      "short": "Brandenburg B"
+    },
+    "3730782032": {
+      "full": "Flandre",
+      "index": "PFSB538",
+      "short": "Flandre"
+    },
+    "3730782192": {
+      "full": "Constellation",
+      "index": "PASB538",
+      "short": "Constellation"
+    },
+    "3730814960": {
+      "full": "Hornet",
+      "index": "PASA538",
+      "short": "Hornet"
+    },
+    "3731830736": {
+      "full": "Collingwood",
+      "index": "PBSB537",
+      "short": "Collingwood"
+    },
+    "3732879312": {
+      "full": "Repulse B",
+      "index": "PBSB536",
+      "short": "Repulse B"
+    },
+    "3739137488": {
+      "full": "Smolensk B",
+      "index": "PRSC530",
+      "short": "Smolensk B"
+    },
+    "3740153648": {
+      "full": "ZF-6",
+      "index": "PGSD529",
+      "short": "ZF-6"
+    },
+    "3740153840": {
+      "full": "Black B",
+      "index": "PASD529",
+      "short": "Black B"
+    },
+    "3740185808": {
+      "full": "Mengchong",
+      "index": "PZSC529",
+      "short": "Mengchong"
+    },
+    "3740186416": {
+      "full": "Admiral Schröder",
+      "index": "PGSC529",
+      "short": "Schröder"
+    },
+    "3740218576": {
+      "full": "Sun Yat-Sen",
+      "index": "PZSB529",
+      "short": "Sun Yat-Sen"
+    },
+    "3740219088": {
+      "full": "Iwami",
+      "index": "PJSB529",
+      "short": "Iwami"
+    },
+    "3741202128": {
+      "full": "HSF Harekaze II",
+      "index": "PJSD528",
+      "short": "HSF Harekaze II"
+    },
+    "3741234640": {
+      "full": "Ochakov",
+      "index": "PRSC528",
+      "short": "Ochakov"
+    },
+    "3741234992": {
+      "full": "Schill",
+      "index": "PGSC528",
+      "short": "Schill"
+    },
+    "3741235152": {
+      "full": "Belfast '43",
+      "index": "PBSC528",
+      "short": "Belfast '43"
+    },
+    "3741235184": {
+      "full": "Congress",
+      "index": "PASC528",
+      "short": "Congress"
+    },
+    "3741267408": {
+      "full": "Borodino",
+      "index": "PRSB528",
+      "short": "Borodino"
+    },
+    "3741267760": {
+      "full": "Anhalt",
+      "index": "PGSB528",
+      "short": "Anhalt"
+    },
+    "3741267792": {
+      "full": "Champagne",
+      "index": "PFSB528",
+      "short": "Champagne"
+    },
+    "3741267952": {
+      "full": "Alabama VL",
+      "index": "PASB528",
+      "short": "Alabama VL"
+    },
+    "3741300688": {
+      "full": "Colossus",
+      "index": "PBSA528",
+      "short": "Colossus"
+    },
+    "3741300720": {
+      "full": "Saipan",
+      "index": "PASA528",
+      "short": "Saipan"
+    },
+    "3742316496": {
+      "full": "Duke of York",
+      "index": "PBSB527",
+      "short": "Duke of York"
+    },
+    "3742316528": {
+      "full": "West Virginia '44",
+      "index": "PASB527",
+      "short": "W. Virginia '44"
+    },
+    "3743332304": {
+      "full": "Dido",
+      "index": "PBSC526",
+      "short": "Dido"
+    },
+    "3743364816": {
+      "full": "Ise",
+      "index": "PJSB526",
+      "short": "Ise"
+    },
+    "3743365072": {
+      "full": "Repulse",
+      "index": "PBSB526",
+      "short": "Repulse"
+    },
+    "3744380368": {
+      "full": "Kirov",
+      "index": "PRSC525",
+      "short": "Kirov"
+    },
+    "3746477520": {
+      "full": "AL Avrora",
+      "index": "PRSC523",
+      "short": "AL Avrora"
+    },
+    "3749623248": {
+      "full": "STALINGRAD #2",
+      "index": "PRSC520",
+      "short": "STALINGRAD #2"
+    },
+    "3749623504": {
+      "full": "Yoshino",
+      "index": "PJSC520",
+      "short": "Yoshino"
+    },
+    "3750638896": {
+      "full": "Jäger",
+      "index": "PWSD519",
+      "short": "Jäger"
+    },
+    "3750639408": {
+      "full": "Z-44",
+      "index": "PGSD519",
+      "short": "Z-44"
+    },
+    "3750639568": {
+      "full": "Somme",
+      "index": "PBSD519",
+      "short": "Somme"
+    },
+    "3750639600": {
+      "full": "Halford",
+      "index": "PASD519",
+      "short": "Halford"
+    },
+    "3750672080": {
+      "full": "AL Azuma",
+      "index": "PJSC519",
+      "short": "AL Azuma"
+    },
+    "3750672112": {
+      "full": "Michelangelo",
+      "index": "PISC519",
+      "short": "Michelangelo"
+    },
+    "3750672176": {
+      "full": "Ägir",
+      "index": "PGSC519",
+      "short": "Ägir"
+    },
+    "3750672368": {
+      "full": "Tulsa",
+      "index": "PASC519",
+      "short": "Tulsa"
+    },
+    "3750704336": {
+      "full": "Wujing",
+      "index": "PZSB519",
+      "short": "Wujing"
+    },
+    "3750704848": {
+      "full": "Hizen",
+      "index": "PJSB519",
+      "short": "Hizen"
+    },
+    "3750704880": {
+      "full": "Giuseppe Verdi",
+      "index": "PISB519",
+      "short": "Giuseppe Verdi"
+    },
+    "3750705136": {
+      "full": "Kearsarge",
+      "index": "PASB519",
+      "short": "Kearsarge"
+    },
+    "3751196368": {
+      "full": "I-56",
+      "index": "PJSS518",
+      "short": "I-56"
+    },
+    "3751687376": {
+      "full": "Fenyang",
+      "index": "PZSD518",
+      "short": "Fenyang"
+    },
+    "3751687888": {
+      "full": "Asashio",
+      "index": "PJSD518",
+      "short": "Asashio"
+    },
+    "3751687984": {
+      "full": "Z-35",
+      "index": "PGSD518",
+      "short": "Z-35"
+    },
+    "3751720144": {
+      "full": "Wukong",
+      "index": "PZSC518",
+      "short": "Wukong"
+    },
+    "3751720400": {
+      "full": "Lazo",
+      "index": "PRSC518",
+      "short": "Lazo"
+    },
+    "3751720752": {
+      "full": "Mainz",
+      "index": "PGSC518",
+      "short": "Mainz"
+    },
+    "3751720912": {
+      "full": "Tiger '59",
+      "index": "PBSC518",
+      "short": "Tiger '59"
+    },
+    "3751720944": {
+      "full": "Anchorage",
+      "index": "PASC518",
+      "short": "Anchorage"
+    },
+    "3751753168": {
+      "full": "Lenin",
+      "index": "PRSB518",
+      "short": "Lenin"
+    },
+    "3751753520": {
+      "full": "Brandenburg",
+      "index": "PGSB518",
+      "short": "Brandenburg"
+    },
+    "3751753552": {
+      "full": "Jean Bart",
+      "index": "PFSB518",
+      "short": "Jean Bart"
+    },
+    "3751753712": {
+      "full": "Massachusetts",
+      "index": "PASB518",
+      "short": "Massachusetts"
+    },
+    "3751786192": {
+      "full": "Kaga",
+      "index": "PJSA518",
+      "short": "Kaga"
+    },
+    "3751786288": {
+      "full": "Graf Zeppelin",
+      "index": "PGSA518",
+      "short": "Graf Zeppelin"
+    },
+    "3751786448": {
+      "full": "Ark Royal",
+      "index": "PBSA518",
+      "short": "Ark Royal"
+    },
+    "3751786480": {
+      "full": "Enterprise",
+      "index": "PASA518",
+      "short": "Enterprise"
+    },
+    "3752736112": {
+      "full": "Huron",
+      "index": "PUSD517",
+      "short": "Huron"
+    },
+    "3752736208": {
+      "full": "Tashkent '39",
+      "index": "PRSD517",
+      "short": "Tashkent '39"
+    },
+    "3752736720": {
+      "full": "Cossack",
+      "index": "PBSD517",
+      "short": "Cossack"
+    },
+    "3752769232": {
+      "full": "Maya",
+      "index": "PJSC517",
+      "short": "Maya"
+    },
+    "3752769264": {
+      "full": "Francesco Ferruccio",
+      "index": "PISC517",
+      "short": "F. Ferruccio"
+    },
+    "3752769328": {
+      "full": "Weimar",
+      "index": "PGSC517",
+      "short": "Weimar"
+    },
+    "3752802000": {
+      "full": "Hyūga",
+      "index": "PJSB517",
+      "short": "Hyūga"
+    },
+    "3752802096": {
+      "full": "AL Prinz Heinrich",
+      "index": "PGSB517",
+      "short": "AL P. Heinrich"
+    },
+    "3752802256": {
+      "full": "Nelson",
+      "index": "PBSB517",
+      "short": "Nelson"
+    },
+    "3752802288": {
+      "full": "Florida",
+      "index": "PASB517",
+      "short": "Florida"
+    },
+    "3753785136": {
+      "full": "Karl von Schönberg",
+      "index": "PGSD516",
+      "short": "K. Schönberg"
+    },
+    "3753817456": {
+      "full": "Mysore",
+      "index": "PUSC516",
+      "short": "Mysore"
+    },
+    "3753817904": {
+      "full": "Leipzig",
+      "index": "PGSC516",
+      "short": "Leipzig"
+    },
+    "3753817936": {
+      "full": "Dupleix",
+      "index": "PFSC516",
+      "short": "Dupleix"
+    },
+    "3753818064": {
+      "full": "London",
+      "index": "PBSC516",
+      "short": "London"
+    },
+    "3753850320": {
+      "full": "Novorossiysk",
+      "index": "PRSB516",
+      "short": "Novorossiysk"
+    },
+    "3754866128": {
+      "full": "Mikoyan",
+      "index": "PRSC515",
+      "short": "Mikoyan"
+    },
+    "3756963280": {
+      "full": "Varyag",
+      "index": "PRSC513",
+      "short": "Varyag"
+    },
+    "3759585072": {
+      "full": "U-4501",
+      "index": "PGSS510",
+      "short": "U-4501"
+    },
+    "3759585264": {
+      "full": "Gato",
+      "index": "PASS510",
+      "short": "Gato"
+    },
+    "3760075984": {
+      "full": "Lüshun",
+      "index": "PZSD510",
+      "short": "Lüshun"
+    },
+    "3760076080": {
+      "full": "Friesland",
+      "index": "PWSD510",
+      "short": "Friesland"
+    },
+    "3760076144": {
+      "full": "Vampire II",
+      "index": "PUSD510",
+      "short": "Vampire II"
+    },
+    "3760076208": {
+      "full": "Álvaro de Bazán",
+      "index": "PSSD510",
+      "short": "Álvaro de Bazán"
+    },
+    "3760076496": {
+      "full": "Hayate",
+      "index": "PJSD510",
+      "short": "Hayate"
+    },
+    "3760076752": {
+      "full": "Druid",
+      "index": "PBSD510",
+      "short": "Druid"
+    },
+    "3760076784": {
+      "full": "Somers",
+      "index": "PASD510",
+      "short": "Somers"
+    },
+    "3760108912": {
+      "full": "Brisbane",
+      "index": "PUSC510",
+      "short": "Brisbane"
+    },
+    "3760109008": {
+      "full": "Stalingrad",
+      "index": "PRSC510",
+      "short": "Stalingrad"
+    },
+    "3760109264": {
+      "full": "Azuma",
+      "index": "PJSC510",
+      "short": "Azuma"
+    },
+    "3760109296": {
+      "full": "Napoli",
+      "index": "PISC510",
+      "short": "Napoli"
+    },
+    "3760109392": {
+      "full": "Colbert",
+      "index": "PFSC510",
+      "short": "Colbert"
+    },
+    "3760109520": {
+      "full": "Plymouth",
+      "index": "PBSC510",
+      "short": "Plymouth"
+    },
+    "3760109552": {
+      "full": "Alaska",
+      "index": "PASC510",
+      "short": "Alaska"
+    },
+    "3760141776": {
+      "full": "Slava",
+      "index": "PRSB510",
+      "short": "Slava"
+    },
+    "3760142032": {
+      "full": "Shikishima",
+      "index": "PJSB510",
+      "short": "Shikishima"
+    },
+    "3760142064": {
+      "full": "Ruggiero di Lauria",
+      "index": "PISB510",
+      "short": "R. Lauria"
+    },
+    "3760142160": {
+      "full": "Bourgogne",
+      "index": "PFSB510",
+      "short": "Bourgogne"
+    },
+    "3760142288": {
+      "full": "Thunderer",
+      "index": "PBSB510",
+      "short": "Thunderer"
+    },
+    "3760142320": {
+      "full": "Ohio",
+      "index": "PASB510",
+      "short": "Ohio"
+    },
+    "3760174896": {
+      "full": "Werner Voss",
+      "index": "PGSA510",
+      "short": "W. Voss"
+    },
+    "3760175056": {
+      "full": "Malta",
+      "index": "PBSA510",
+      "short": "Malta"
+    },
+    "3760175088": {
+      "full": "Franklin D. Roosevelt",
+      "index": "PASA510",
+      "short": "F. D. Roosevelt"
+    },
+    "3761124656": {
+      "full": "Velos",
+      "index": "PWSD509",
+      "short": "Velos"
+    },
+    "3761125104": {
+      "full": "Paolo Emilio",
+      "index": "PISD509",
+      "short": "Paolo Emilio"
+    },
+    "3761125136": {
+      "full": "Groningen",
+      "index": "PHSD509",
+      "short": "Groningen"
+    },
+    "3761125360": {
+      "full": "Benham",
+      "index": "PASD509",
+      "short": "Benham"
+    },
+    "3761157328": {
+      "full": "Dalian",
+      "index": "PZSC509",
+      "short": "Dalian"
+    },
+    "3761157488": {
+      "full": "Hector",
+      "index": "PUSC509",
+      "short": "Hector"
+    },
+    "3761157584": {
+      "full": "Kronshtadt",
+      "index": "PRSC509",
+      "short": "Kronshtadt"
+    },
+    "3761157904": {
+      "full": "Van Speijk",
+      "index": "PHSC509",
+      "short": "Van Speijk"
+    },
+    "3761157936": {
+      "full": "Siegfried",
+      "index": "PGSC509",
+      "short": "Siegfried"
+    },
+    "3761157968": {
+      "full": "Carnot",
+      "index": "PFSC509",
+      "short": "Carnot"
+    },
+    "3761158128": {
+      "full": "Vallejo",
+      "index": "PASC509",
+      "short": "Vallejo"
+    },
+    "3761190096": {
+      "full": "Bajie",
+      "index": "PZSB509",
+      "short": "Bajie"
+    },
+    "3761190192": {
+      "full": "Karl XIV Johan",
+      "index": "PWSB509",
+      "short": "Karl XIV Johan"
+    },
+    "3761190352": {
+      "full": "Navarin",
+      "index": "PRSB509",
+      "short": "Navarin"
+    },
+    "3761190608": {
+      "full": "Musashi",
+      "index": "PJSB509",
+      "short": "Musashi"
+    },
+    "3761190640": {
+      "full": "Marco Polo",
+      "index": "PISB509",
+      "short": "Marco Polo"
+    },
+    "3761190704": {
+      "full": "Pommern",
+      "index": "PGSB509",
+      "short": "Pommern"
+    },
+    "3761190864": {
+      "full": "Marlborough",
+      "index": "PBSB509",
+      "short": "Marlborough"
+    },
+    "3761190896": {
+      "full": "Missouri",
+      "index": "PASB509",
+      "short": "Missouri"
+    },
+    "3761681872": {
+      "full": "S-189",
+      "index": "PRSS508",
+      "short": "S-189"
+    },
+    "3761682128": {
+      "full": "I-58",
+      "index": "PJSS508",
+      "short": "I-58"
+    },
+    "3761682384": {
+      "full": "Alliance",
+      "index": "PBSS508",
+      "short": "Alliance"
+    },
+    "3762173136": {
+      "full": "Loyang",
+      "index": "PZSD508",
+      "short": "Loyang"
+    },
+    "3762173232": {
+      "full": "Orkan",
+      "index": "PWSD508",
+      "short": "Orkan"
+    },
+    "3762173744": {
+      "full": "Z-39",
+      "index": "PGSD508",
+      "short": "Z-39"
+    },
+    "3762173776": {
+      "full": "Le Terrible",
+      "index": "PFSD508",
+      "short": "Le Terrible"
+    },
+    "3762173936": {
+      "full": "Kidd",
+      "index": "PASD508",
+      "short": "Kidd"
+    },
+    "3762205904": {
+      "full": "Irian",
+      "index": "PZSC508",
+      "short": "Irian"
+    },
+    "3762206032": {
+      "full": "Almirante Grau",
+      "index": "PVSC508",
+      "short": "Almte. Grau"
+    },
+    "3762206128": {
+      "full": "Numancia",
+      "index": "PSSC508",
+      "short": "Numancia"
+    },
+    "3762206160": {
+      "full": "Mikhail Kutuzov",
+      "index": "PRSC508",
+      "short": "Kutuzov"
+    },
+    "3762206480": {
+      "full": "De Zeven Provinciën",
+      "index": "PHSC508",
+      "short": "De 7 Provinciën"
+    },
+    "3762206512": {
+      "full": "Prinz Eugen",
+      "index": "PGSC508",
+      "short": "Prinz Eugen"
+    },
+    "3762206544": {
+      "full": "Bayard",
+      "index": "PFSC508",
+      "short": "Bayard"
+    },
+    "3762206672": {
+      "full": "Cheshire",
+      "index": "PBSC508",
+      "short": "Cheshire"
+    },
+    "3762206704": {
+      "full": "Wichita",
+      "index": "PASC508",
+      "short": "Wichita"
+    },
+    "3762238800": {
+      "full": "Atlântico",
+      "index": "PVSB508",
+      "short": "Atlântico"
+    },
+    "3762238928": {
+      "full": "Poltava",
+      "index": "PRSB508",
+      "short": "Poltava"
+    },
+    "3762239184": {
+      "full": "Kii",
+      "index": "PJSB508",
+      "short": "Kii"
+    },
+    "3762239216": {
+      "full": "Roma",
+      "index": "PISB508",
+      "short": "Roma"
+    },
+    "3762239280": {
+      "full": "Odin",
+      "index": "PGSB508",
+      "short": "Odin"
+    },
+    "3762239312": {
+      "full": "Gascogne",
+      "index": "PFSB508",
+      "short": "Gascogne"
+    },
+    "3762239440": {
+      "full": "Vanguard",
+      "index": "PBSB508",
+      "short": "Vanguard"
+    },
+    "3762239472": {
+      "full": "Alabama",
+      "index": "PASB508",
+      "short": "Alabama"
+    },
+    "3762271440": {
+      "full": "Sanzang",
+      "index": "PZSA508",
+      "short": "Sanzang"
+    },
+    "3762271696": {
+      "full": "Chkalov",
+      "index": "PRSA508",
+      "short": "Chkalov"
+    },
+    "3762271984": {
+      "full": "Aquila",
+      "index": "PISA508",
+      "short": "Aquila"
+    },
+    "3762272048": {
+      "full": "Graf Zeppelin (< 23.01.2019)",
+      "index": "PGSA508",
+      "short": "Graf Zeppelin (old)"
+    },
+    "3762272208": {
+      "full": "Indomitable",
+      "index": "PBSA508",
+      "short": "Indomitable"
+    },
+    "3762272240": {
+      "full": "Enterprise (< 23.01.2019)",
+      "index": "PASA508",
+      "short": "Enterprise (old)"
+    },
+    "3762730256": {
+      "full": "Killer Whale",
+      "index": "PXSS507",
+      "short": "Killer Whale"
+    },
+    "3763221872": {
+      "full": "Haida",
+      "index": "PUSD507",
+      "short": "Haida"
+    },
+    "3763221968": {
+      "full": "Leningrad",
+      "index": "PRSD507",
+      "short": "Leningrad"
+    },
+    "3763222224": {
+      "full": "Yūdachi",
+      "index": "PJSD507",
+      "short": "Yūdachi"
+    },
+    "3763222256": {
+      "full": "FR25",
+      "index": "PISD507",
+      "short": "FR25"
+    },
+    "3763254608": {
+      "full": "Nueve de Julio",
+      "index": "PVSC507",
+      "short": "Nueve de Julio"
+    },
+    "3763254992": {
+      "full": "Tokachi",
+      "index": "PJSC507",
+      "short": "Tokachi"
+    },
+    "3763255024": {
+      "full": "Duca degli Abruzzi",
+      "index": "PISC507",
+      "short": "Abruzzi"
+    },
+    "3763255088": {
+      "full": "München",
+      "index": "PGSC507",
+      "short": "München"
+    },
+    "3763255120": {
+      "full": "Toulon",
+      "index": "PFSC507",
+      "short": "Toulon"
+    },
+    "3763255248": {
+      "full": "Belfast",
+      "index": "PBSC507",
+      "short": "Belfast"
+    },
+    "3763255280": {
+      "full": "Indianapolis",
+      "index": "PASC507",
+      "short": "Indianapolis"
+    },
+    "3763287408": {
+      "full": "Yukon",
+      "index": "PUSB507",
+      "short": "Yukon"
+    },
+    "3763287760": {
+      "full": "Ashitaka",
+      "index": "PJSB507",
+      "short": "Ashitaka"
+    },
+    "3763287856": {
+      "full": "Scharnhorst",
+      "index": "PGSB507",
+      "short": "Scharnhorst"
+    },
+    "3763287888": {
+      "full": "Strasbourg",
+      "index": "PFSB507",
+      "short": "Strasbourg"
+    },
+    "3763288016": {
+      "full": "Hood",
+      "index": "PBSB507",
+      "short": "Hood"
+    },
+    "3763288048": {
+      "full": "W. Virginia '41",
+      "index": "PASB507",
+      "short": "W. Virginia '41"
+    },
+    "3763320528": {
+      "full": "Kaga (< 23.01.2019)",
+      "index": "PJSA507",
+      "short": "Kaga (old)"
+    },
+    "3763320816": {
+      "full": "Saipan (< 23.01.2019)",
+      "index": "PASA507",
+      "short": "Saipan (old)"
+    },
+    "3764270288": {
+      "full": "Anshan",
+      "index": "PZSD506",
+      "short": "Anshan"
+    },
+    "3764270416": {
+      "full": "Juruá",
+      "index": "PVSD506",
+      "short": "Juruá"
+    },
+    "3764270832": {
+      "full": "Leone",
+      "index": "PISD506",
+      "short": "Leone"
+    },
+    "3764270896": {
+      "full": "T-61",
+      "index": "PGSD506",
+      "short": "T-61"
+    },
+    "3764270928": {
+      "full": "Aigle",
+      "index": "PFSD506",
+      "short": "Aigle"
+    },
+    "3764271056": {
+      "full": "Gallant",
+      "index": "PBSD506",
+      "short": "Gallant"
+    },
+    "3764271088": {
+      "full": "Monaghan",
+      "index": "PASD506",
+      "short": "Monaghan"
+    },
+    "3764303056": {
+      "full": "Huanghe",
+      "index": "PZSC506",
+      "short": "Huanghe"
+    },
+    "3764303152": {
+      "full": "Elli",
+      "index": "PWSC506",
+      "short": "Elli"
+    },
+    "3764303216": {
+      "full": "Perth",
+      "index": "PUSC506",
+      "short": "Perth"
+    },
+    "3764303280": {
+      "full": "Canarias",
+      "index": "PSSC506",
+      "short": "Canarias"
+    },
+    "3764303312": {
+      "full": "Molotov",
+      "index": "PRSC506",
+      "short": "Molotov"
+    },
+    "3764303600": {
+      "full": "Duca d'Aosta",
+      "index": "PISC506",
+      "short": "Duca d'Aosta"
+    },
+    "3764303664": {
+      "full": "Admiral Graf Spee",
+      "index": "PGSC506",
+      "short": "Graf Spee"
+    },
+    "3764303696": {
+      "full": "De Grasse",
+      "index": "PFSC506",
+      "short": "De Grasse"
+    },
+    "3764335888": {
+      "full": "D.U.C.K.",
+      "index": "PXSB506",
+      "short": "D.U.C.K."
+    },
+    "3764336336": {
+      "full": "Mutsu",
+      "index": "PJSB506",
+      "short": "Mutsu"
+    },
+    "3764336432": {
+      "full": "Prinz Eitel Friedrich",
+      "index": "PGSB506",
+      "short": "P. E. Friedrich"
+    },
+    "3764336464": {
+      "full": "Dunkerque",
+      "index": "PFSB506",
+      "short": "Dunkerque"
+    },
+    "3764336624": {
+      "full": "Arizona",
+      "index": "PASB506",
+      "short": "Arizona"
+    },
+    "3764369200": {
+      "full": "Erich Loewenhardt",
+      "index": "PGSA506",
+      "short": "E. Loewenhardt"
+    },
+    "3764369232": {
+      "full": "Béarn",
+      "index": "PFSA506",
+      "short": "Béarn"
+    },
+    "3765319120": {
+      "full": "Okhotnik",
+      "index": "PRSD505",
+      "short": "Okhotnik"
+    },
+    "3765319664": {
+      "full": "Hill",
+      "index": "PASD505",
+      "short": "Hill"
+    },
+    "3765351888": {
+      "full": "Krasny Krym",
+      "index": "PRSC505",
+      "short": "Krasny Krym"
+    },
+    "3765352144": {
+      "full": "Yahagi",
+      "index": "PJSC505",
+      "short": "Yahagi"
+    },
+    "3765352176": {
+      "full": "Genova",
+      "index": "PISC505",
+      "short": "Genova"
+    },
+    "3765352400": {
+      "full": "Exeter",
+      "index": "PBSC505",
+      "short": "Exeter"
+    },
+    "3765352432": {
+      "full": "Rattlehead",
+      "index": "PASC505",
+      "short": "Rattlehead"
+    },
+    "3765384528": {
+      "full": "Rio de Janeiro",
+      "index": "PVSB505",
+      "short": "Rio de Janeiro"
+    },
+    "3765384656": {
+      "full": "Oktyabrskaya Revolutsiya",
+      "index": "PRSB505",
+      "short": "Okt. Revolutsiya"
+    },
+    "3765384944": {
+      "full": "Giulio Cesare",
+      "index": "PISB505",
+      "short": "Giulio Cesare"
+    },
+    "3765385168": {
+      "full": "Agincourt",
+      "index": "PBSB505",
+      "short": "Agincourt"
+    },
+    "3765385200": {
+      "full": "Oklahoma",
+      "index": "PASB505",
+      "short": "Oklahoma"
+    },
+    "3766368080": {
+      "full": "Siroco",
+      "index": "PFSD504",
+      "short": "Siroco"
+    },
+    "3766433040": {
+      "full": "Quackaducko",
+      "index": "PXSB504",
+      "short": "Quackaducko"
+    },
+    "3766433072": {
+      "full": "Viribus Unitis",
+      "index": "PWSB504",
+      "short": "Viribus Unitis"
+    },
+    "3767416080": {
+      "full": "Duck Punchis",
+      "index": "PXSD503",
+      "short": "Duck Punchis"
+    },
+    "3767416176": {
+      "full": "Vampire",
+      "index": "PUSD503",
+      "short": "Vampire"
+    },
+    "3767416784": {
+      "full": "Campbeltown",
+      "index": "PBSD503",
+      "short": "Campbeltown"
+    },
+    "3767448784": {
+      "full": "Ning Hai",
+      "index": "PZSC503",
+      "short": "Ning Hai"
+    },
+    "3767448848": {
+      "full": "Ship",
+      "index": "PXSC503",
+      "short": "Ship"
+    },
+    "3767449040": {
+      "full": "Oleg",
+      "index": "PRSC503",
+      "short": "Oleg"
+    },
+    "3767449296": {
+      "full": "Katori",
+      "index": "PJSC503",
+      "short": "Katori"
+    },
+    "3767449584": {
+      "full": "Charleston",
+      "index": "PASC503",
+      "short": "Charleston"
+    },
+    "3767482160": {
+      "full": "König Albert",
+      "index": "PGSB503",
+      "short": "K. Albert"
+    },
+    "3767482320": {
+      "full": "Dreadnought",
+      "index": "PBSB503",
+      "short": "Dreadnought"
+    },
+    "3767809296": {
+      "full": "Liberty",
+      "index": "PXSX502",
+      "short": "Liberty"
+    },
+    "3768464656": {
+      "full": "Don de la DuQue",
+      "index": "PXSD502",
+      "short": "Don de la DuQue"
+    },
+    "3768465392": {
+      "full": "Smith",
+      "index": "PASD502",
+      "short": "Smith"
+    },
+    "3768497424": {
+      "full": "Furo",
+      "index": "PXSC502",
+      "short": "Furo"
+    },
+    "3768497488": {
+      "full": "Almirante Abreu",
+      "index": "PVSC502",
+      "short": "Alm. Abreu"
+    },
+    "3768497968": {
+      "full": "Emden",
+      "index": "PGSC502",
+      "short": "Emden"
+    },
+    "3768857872": {
+      "full": "Liberty",
+      "index": "PXSX501",
+      "short": "Liberty"
+    },
+    "3769513264": {
+      "full": "Błyskawica",
+      "index": "PWSD501",
+      "short": "Błyskawica"
+    },
+    "3769546000": {
+      "full": "Luigi McQuacci",
+      "index": "PXSC501",
+      "short": "L. McQuacci"
+    },
+    "3864933840": {
+      "full": "Delny",
+      "index": "PRSD410",
+      "short": "Delny"
+    },
+    "3865982416": {
+      "full": "Tashkent",
+      "index": "PRSD409",
+      "short": "Tashkent"
+    },
+    "3867587856": {
+      "full": "Barracuda",
+      "index": "PXSS407",
+      "short": "Barracuda"
+    },
+    "3969824208": {
+      "full": "Petropavlovsk",
+      "index": "PRSC310",
+      "short": "Petropavlovsk"
+    },
+    "3969857328": {
+      "full": "Preussen",
+      "index": "PGSB310",
+      "short": "Preussen"
+    },
+    "3971888592": {
+      "full": "Kiev",
+      "index": "PRSD308",
+      "short": "Kiev"
+    },
+    "3972445456": {
+      "full": "Gerfalcon",
+      "index": "PXSS307",
+      "short": "Gerfalcon"
+    },
+    "4065212112": {
+      "full": "Kitakaze",
+      "index": "PJSD219",
+      "short": "Kitakaze"
+    },
+    "4069438928": {
+      "full": "Kotovsky",
+      "index": "PRSC215",
+      "short": "Kotovsky"
+    },
+    "4074157872": {
+      "full": "U-2501",
+      "index": "PGSS210",
+      "short": "U-2501"
+    },
+    "4074158064": {
+      "full": "Balao",
+      "index": "PASS210",
+      "short": "Balao"
+    },
+    "4074648880": {
+      "full": "Gdańsk",
+      "index": "PWSD210",
+      "short": "Gdańsk"
+    },
+    "4074649040": {
+      "full": "Grozovoi",
+      "index": "PRSD210",
+      "short": "Grozovoi"
+    },
+    "4074649296": {
+      "full": "Harugumo",
+      "index": "PJSD210",
+      "short": "Harugumo"
+    },
+    "4074649392": {
+      "full": "Elbing",
+      "index": "PGSD210",
+      "short": "Elbing"
+    },
+    "4074649424": {
+      "full": "Marceau",
+      "index": "PFSD210",
+      "short": "Marceau"
+    },
+    "4074681808": {
+      "full": "Alexander Nevsky",
+      "index": "PRSC210",
+      "short": "A. Nevsky"
+    },
+    "4074682064": {
+      "full": "Yodo",
+      "index": "PJSC210",
+      "short": "Yodo"
+    },
+    "4074682192": {
+      "full": "Marseille",
+      "index": "PFSC210",
+      "short": "Marseille"
+    },
+    "4074682320": {
+      "full": "Goliath",
+      "index": "PBSC210",
+      "short": "Goliath"
+    },
+    "4074682352": {
+      "full": "Worcester",
+      "index": "PASC210",
+      "short": "Worcester"
+    },
+    "4074714832": {
+      "full": "Bungo",
+      "index": "PJSB210",
+      "short": "Bungo"
+    },
+    "4074714928": {
+      "full": "Schlieffen",
+      "index": "PGSB210",
+      "short": "Schlieffen"
+    },
+    "4074715088": {
+      "full": "St. Vincent",
+      "index": "PBSB210",
+      "short": "St. Vincent"
+    },
+    "4074715120": {
+      "full": "Louisiana",
+      "index": "PASB210",
+      "short": "Louisiana"
+    },
+    "4074747856": {
+      "full": "Audacious",
+      "index": "PBSA210",
+      "short": "Audacious"
+    },
+    "4075697456": {
+      "full": "Lambros Katsonis",
+      "index": "PWSD209",
+      "short": "L. Katsonis"
+    },
+    "4075697872": {
+      "full": "Yūgumo",
+      "index": "PJSD209",
+      "short": "Yūgumo"
+    },
+    "4075697968": {
+      "full": "Felix Schultz",
+      "index": "PGSD209",
+      "short": "F. Schultz"
+    },
+    "4075730384": {
+      "full": "Riga",
+      "index": "PRSC209",
+      "short": "Riga"
+    },
+    "4075730640": {
+      "full": "Takahashi",
+      "index": "PJSC209",
+      "short": "Takahashi"
+    },
+    "4075730768": {
+      "full": "Brest",
+      "index": "PFSC209",
+      "short": "Brest"
+    },
+    "4075730896": {
+      "full": "Drake",
+      "index": "PBSC209",
+      "short": "Drake"
+    },
+    "4075730928": {
+      "full": "Seattle",
+      "index": "PASC209",
+      "short": "Seattle"
+    },
+    "4075763408": {
+      "full": "Adatara",
+      "index": "PJSB209",
+      "short": "Adatara"
+    },
+    "4075763504": {
+      "full": "Prinz Rupprecht",
+      "index": "PGSB209",
+      "short": "P. Rupprecht"
+    },
+    "4075763664": {
+      "full": "Duncan",
+      "index": "PBSB209",
+      "short": "Duncan"
+    },
+    "4075763696": {
+      "full": "Delaware",
+      "index": "PASB209",
+      "short": "Delaware"
+    },
+    "4076255024": {
+      "full": "U-190",
+      "index": "PGSS208",
+      "short": "U-190"
+    },
+    "4076255216": {
+      "full": "Salmon",
+      "index": "PASS208",
+      "short": "Salmon"
+    },
+    "4076745936": {
+      "full": "Siliwangi",
+      "index": "PZSD208",
+      "short": "Siliwangi"
+    },
+    "4076746032": {
+      "full": "Split",
+      "index": "PWSD208",
+      "short": "Split"
+    },
+    "4076746192": {
+      "full": "Ognevoi",
+      "index": "PRSD208",
+      "short": "Ognevoi"
+    },
+    "4076746448": {
+      "full": "Kagerō",
+      "index": "PJSD208",
+      "short": "Kagerō"
+    },
+    "4076746544": {
+      "full": "Gustav-Julius Maerker",
+      "index": "PGSD208",
+      "short": "G. J. Maerker"
+    },
+    "4076778960": {
+      "full": "Tallinn",
+      "index": "PRSC208",
+      "short": "Tallinn"
+    },
+    "4076779216": {
+      "full": "Shimanto",
+      "index": "PJSC208",
+      "short": "Shimanto"
+    },
+    "4076779344": {
+      "full": "Cherbourg",
+      "index": "PFSC208",
+      "short": "Cherbourg"
+    },
+    "4076779472": {
+      "full": "Albemarle",
+      "index": "PBSC208",
+      "short": "Albemarle"
+    },
+    "4076779504": {
+      "full": "Cleveland",
+      "index": "PASC208",
+      "short": "Cleveland"
+    },
+    "4076811984": {
+      "full": "Yumihari",
+      "index": "PJSB208",
+      "short": "Yumihari"
+    },
+    "4076812080": {
+      "full": "Zieten",
+      "index": "PGSB208",
+      "short": "Zieten"
+    },
+    "4076812240": {
+      "full": "Hawke",
+      "index": "PBSB208",
+      "short": "Hawke"
+    },
+    "4076812272": {
+      "full": "Nebraska",
+      "index": "PASB208",
+      "short": "Nebraska"
+    },
+    "4077303056": {
+      "full": "Seelöwe",
+      "index": "PXSS207",
+      "short": "Seelöwe"
+    },
+    "4077794608": {
+      "full": "Grom",
+      "index": "PWSD207",
+      "short": "Grom"
+    },
+    "4077794768": {
+      "full": "Minsk",
+      "index": "PRSD207",
+      "short": "Minsk"
+    },
+    "4077795024": {
+      "full": "Shiratsuyu",
+      "index": "PJSD207",
+      "short": "Shiratsuyu"
+    },
+    "4077795120": {
+      "full": "Z-31",
+      "index": "PGSD207",
+      "short": "Z-31"
+    },
+    "4077827792": {
+      "full": "Omono",
+      "index": "PJSC207",
+      "short": "Omono"
+    },
+    "4077828048": {
+      "full": "Surrey",
+      "index": "PBSC207",
+      "short": "Surrey"
+    },
+    "4077828080": {
+      "full": "Helena",
+      "index": "PASC207",
+      "short": "Helena"
+    },
+    "4077860656": {
+      "full": "Prinz Heinrich",
+      "index": "PGSB207",
+      "short": "P. Heinrich"
+    },
+    "4077860816": {
+      "full": "Rooke",
+      "index": "PBSB207",
+      "short": "Rooke"
+    },
+    "4078352176": {
+      "full": "U-69",
+      "index": "PGSS206",
+      "short": "U-69"
+    },
+    "4078352368": {
+      "full": "Cachalot",
+      "index": "PASS206",
+      "short": "Cachalot"
+    },
+    "4078843184": {
+      "full": "Stord",
+      "index": "PWSD206",
+      "short": "Stord"
+    },
+    "4078843344": {
+      "full": "Gnevny",
+      "index": "PRSD206",
+      "short": "Gnevny"
+    },
+    "4078843600": {
+      "full": "Hatsuharu",
+      "index": "PJSD206",
+      "short": "Hatsuharu"
+    },
+    "4078876368": {
+      "full": "Gokase",
+      "index": "PJSC206",
+      "short": "Gokase"
+    },
+    "4078876624": {
+      "full": "Devonshire",
+      "index": "PBSC206",
+      "short": "Devonshire"
+    },
+    "4078876656": {
+      "full": "Dallas",
+      "index": "PASC206",
+      "short": "Dallas"
+    },
+    "4078909232": {
+      "full": "Mackensen",
+      "index": "PGSB206",
+      "short": "Mackensen"
+    },
+    "4078909392": {
+      "full": "Renown",
+      "index": "PBSB206",
+      "short": "Renown"
+    },
+    "4079891760": {
+      "full": "Muavenet",
+      "index": "PWSD205",
+      "short": "Muavenet"
+    },
+    "4079891920": {
+      "full": "Podvoisky",
+      "index": "PRSD205",
+      "short": "Podvoisky"
+    },
+    "4079924944": {
+      "full": "Agano",
+      "index": "PJSC205",
+      "short": "Agano"
+    },
+    "4079925200": {
+      "full": "Hawkins",
+      "index": "PBSC205",
+      "short": "Hawkins"
+    },
+    "4079957808": {
+      "full": "Derfflinger",
+      "index": "PGSB205",
+      "short": "Derfflinger"
+    },
+    "4079957968": {
+      "full": "Tiger",
+      "index": "PBSB205",
+      "short": "Tiger"
+    },
+    "4081006384": {
+      "full": "Moltke",
+      "index": "PGSB204",
+      "short": "Moltke"
+    },
+    "4081006544": {
+      "full": "Queen Mary",
+      "index": "PBSB204",
+      "short": "Queen Mary"
+    },
+    "4081039312": {
+      "full": "Hermes",
+      "index": "PBSA204",
+      "short": "Hermes"
+    },
+    "4082054960": {
+      "full": "Von der Tann",
+      "index": "PGSB203",
+      "short": "Von der Tann"
+    },
+    "4082055120": {
+      "full": "Indefatigable",
+      "index": "PBSB203",
+      "short": "Indefatigable"
+    },
+    "4165907728": {
+      "full": "Intrepid",
+      "index": "PXSC123",
+      "short": "Intrepid"
+    },
+    "4166956304": {
+      "full": "Disruptor-2",
+      "index": "PXSC122",
+      "short": "Disruptor-2"
+    },
+    "4168004880": {
+      "full": "Assimilator-2",
+      "index": "PXSC121",
+      "short": "Assimilator-2"
+    },
+    "4178457808": {
+      "full": "Kunming",
+      "index": "PZSD111",
+      "short": "Kunming"
+    },
+    "4178457904": {
+      "full": "Dalarna",
+      "index": "PWSD111",
+      "short": "Dalarna"
+    },
+    "4178458064": {
+      "full": "Zorkiy",
+      "index": "PRSD111",
+      "short": "Zorkiy"
+    },
+    "4178458320": {
+      "full": "Yamagiri",
+      "index": "PJSD111",
+      "short": "Yamagiri"
+    },
+    "4178458416": {
+      "full": "Z-57",
+      "index": "PGSD111",
+      "short": "Z-57"
+    },
+    "4178458608": {
+      "full": "Joshua Humphreys",
+      "index": "PASD111",
+      "short": "J. Humphreys"
+    },
+    "4178490832": {
+      "full": "Novosibirsk",
+      "index": "PRSC111",
+      "short": "Novosibirsk"
+    },
+    "4178491120": {
+      "full": "Piemonte",
+      "index": "PISC111",
+      "short": "Piemonte"
+    },
+    "4178491184": {
+      "full": "Clausewitz",
+      "index": "PGSC111",
+      "short": "Clausewitz"
+    },
+    "4178491216": {
+      "full": "Condé",
+      "index": "PFSC111",
+      "short": "Condé"
+    },
+    "4178491344": {
+      "full": "Edgar",
+      "index": "PBSC111",
+      "short": "Edgar"
+    },
+    "4178491376": {
+      "full": "Annapolis",
+      "index": "PASC111",
+      "short": "Annapolis"
+    },
+    "4178523600": {
+      "full": "Admiral Ushakov",
+      "index": "PRSB111",
+      "short": "Ushakov"
+    },
+    "4178523856": {
+      "full": "Satsuma",
+      "index": "PJSB111",
+      "short": "Satsuma"
+    },
+    "4178523952": {
+      "full": "Hannover",
+      "index": "PGSB111",
+      "short": "Hannover"
+    },
+    "4178523984": {
+      "full": "Patrie",
+      "index": "PFSB111",
+      "short": "Patrie"
+    },
+    "4178524112": {
+      "full": "Devastation",
+      "index": "PBSB111",
+      "short": "Devastation"
+    },
+    "4178524144": {
+      "full": "Maine",
+      "index": "PASB111",
+      "short": "Maine"
+    },
+    "4178556624": {
+      "full": "Sekiryu",
+      "index": "PJSA111",
+      "short": "Sekiryu"
+    },
+    "4178556880": {
+      "full": "Eagle",
+      "index": "PBSA111",
+      "short": "Eagle"
+    },
+    "4178556912": {
+      "full": "United States",
+      "index": "PASA111",
+      "short": "United States"
+    },
+    "4179015120": {
+      "full": "K-1",
+      "index": "PRSS110",
+      "short": "K-1"
+    },
+    "4179015408": {
+      "full": "Pietro Calvi",
+      "index": "PISS110",
+      "short": "Pietro Calvi"
+    },
+    "4179015472": {
+      "full": "U-2501 (< 04.10.2022)",
+      "index": "PGSS110",
+      "short": "U-2501 (old)"
+    },
+    "4179015632": {
+      "full": "Thrasher",
+      "index": "PBSS110",
+      "short": "Thrasher"
+    },
+    "4179015664": {
+      "full": "Balao (< 04.10.2022)",
+      "index": "PASS110",
+      "short": "Balao (old)"
+    },
+    "4179506384": {
+      "full": "Yueyang",
+      "index": "PZSD110",
+      "short": "Yueyang"
+    },
+    "4179506480": {
+      "full": "Halland",
+      "index": "PWSD110",
+      "short": "Halland"
+    },
+    "4179506640": {
+      "full": "Khabarovsk",
+      "index": "PRSD110",
+      "short": "Khabarovsk"
+    },
+    "4179506928": {
+      "full": "Attilio Regolo",
+      "index": "PISD110",
+      "short": "A. Regolo"
+    },
+    "4179506992": {
+      "full": "Z-52",
+      "index": "PGSD110",
+      "short": "Z-52"
+    },
+    "4179507024": {
+      "full": "Kléber",
+      "index": "PFSD110",
+      "short": "Kléber"
+    },
+    "4179507152": {
+      "full": "Daring",
+      "index": "PBSD110",
+      "short": "Daring"
+    },
+    "4179539152": {
+      "full": "Jinan",
+      "index": "PZSC110",
+      "short": "Jinan"
+    },
+    "4179539280": {
+      "full": "San Martín",
+      "index": "PVSC110",
+      "short": "San Martín"
+    },
+    "4179539376": {
+      "full": "Castilla",
+      "index": "PSSC110",
+      "short": "Castilla"
+    },
+    "4179539408": {
+      "full": "Moskva",
+      "index": "PRSC110",
+      "short": "Moskva"
+    },
+    "4179539696": {
+      "full": "Venezia",
+      "index": "PISC110",
+      "short": "Venezia"
+    },
+    "4179539728": {
+      "full": "Gouden Leeuw",
+      "index": "PHSC110",
+      "short": "Gouden Leeuw"
+    },
+    "4179539760": {
+      "full": "Hindenburg",
+      "index": "PGSC110",
+      "short": "Hindenburg"
+    },
+    "4179539792": {
+      "full": "Henri IV",
+      "index": "PFSC110",
+      "short": "Henri IV"
+    },
+    "4179539920": {
+      "full": "Minotaur",
+      "index": "PBSC110",
+      "short": "Minotaur"
+    },
+    "4179572176": {
+      "full": "Kremlin",
+      "index": "PRSB110",
+      "short": "Kremlin"
+    },
+    "4179572464": {
+      "full": "Cristoforo Colombo",
+      "index": "PISB110",
+      "short": "C. Colombo"
+    },
+    "4179572528": {
+      "full": "Grosser Kurfürst",
+      "index": "PGSB110",
+      "short": "G. Kurfürst"
+    },
+    "4179572560": {
+      "full": "République",
+      "index": "PFSB110",
+      "short": "République"
+    },
+    "4179572688": {
+      "full": "Conqueror",
+      "index": "PBSB110",
+      "short": "Conqueror"
+    },
+    "4179572720": {
+      "full": "Vermont",
+      "index": "PASB110",
+      "short": "Vermont"
+    },
+    "4179604944": {
+      "full": "Admiral Nakhimov",
+      "index": "PRSA110",
+      "short": "Nakhimov"
+    },
+    "4179605200": {
+      "full": "Hakuryū",
+      "index": "PJSA110",
+      "short": "Hakuryū"
+    },
+    "4179605296": {
+      "full": "Manfred von Richthofen",
+      "index": "PGSA110",
+      "short": "M. Richthofen"
+    },
+    "4179605488": {
+      "full": "Midway",
+      "index": "PASA110",
+      "short": "Midway"
+    },
+    "4180554960": {
+      "full": "Chung Mu",
+      "index": "PZSD109",
+      "short": "Chung Mu"
+    },
+    "4180555056": {
+      "full": "Östergötland",
+      "index": "PWSD109",
+      "short": "Östergötland"
+    },
+    "4180555216": {
+      "full": "Kiev (< 06.03.2017)",
+      "index": "PRSD109",
+      "short": "Kiev (OLD)"
+    },
+    "4180555504": {
+      "full": "Adriatico",
+      "index": "PISD109",
+      "short": "Adriatico"
+    },
+    "4180555568": {
+      "full": "Z-46",
+      "index": "PGSD109",
+      "short": "Z-46"
+    },
+    "4180555600": {
+      "full": "Mogador",
+      "index": "PFSD109",
+      "short": "Mogador"
+    },
+    "4180555728": {
+      "full": "Jutland",
+      "index": "PBSD109",
+      "short": "Jutland"
+    },
+    "4180587728": {
+      "full": "Sejong",
+      "index": "PZSC109",
+      "short": "Sejong"
+    },
+    "4180587856": {
+      "full": "Santander",
+      "index": "PVSC109",
+      "short": "Santander"
+    },
+    "4180587952": {
+      "full": "Andalucía",
+      "index": "PSSC109",
+      "short": "Andalucía"
+    },
+    "4180587984": {
+      "full": "Dmitri Donskoi",
+      "index": "PRSC109",
+      "short": "Dm. Donskoi"
+    },
+    "4180588272": {
+      "full": "Brindisi",
+      "index": "PISC109",
+      "short": "Brindisi"
+    },
+    "4180588304": {
+      "full": "Johan de Witt",
+      "index": "PHSC109",
+      "short": "Johan de Witt"
+    },
+    "4180588336": {
+      "full": "Roon",
+      "index": "PGSC109",
+      "short": "Roon"
+    },
+    "4180588368": {
+      "full": "Saint-Louis",
+      "index": "PFSC109",
+      "short": "Saint-Louis"
+    },
+    "4180588496": {
+      "full": "Neptune",
+      "index": "PBSC109",
+      "short": "Neptune"
+    },
+    "4180588528": {
+      "full": "Buffalo",
+      "index": "PASC109",
+      "short": "Buffalo"
+    },
+    "4180620752": {
+      "full": "Sovetsky Soyuz",
+      "index": "PRSB109",
+      "short": "Sov. Soyuz"
+    },
+    "4180621040": {
+      "full": "Lepanto",
+      "index": "PISB109",
+      "short": "Lepanto"
+    },
+    "4180621104": {
+      "full": "Friedrich der Grosse",
+      "index": "PGSB109",
+      "short": "F. der Grosse"
+    },
+    "4180621136": {
+      "full": "Alsace",
+      "index": "PFSB109",
+      "short": "Alsace"
+    },
+    "4180621264": {
+      "full": "Lion",
+      "index": "PBSB109",
+      "short": "Lion"
+    },
+    "4180621296": {
+      "full": "Minnesota",
+      "index": "PASB109",
+      "short": "Minnesota"
+    },
+    "4181112272": {
+      "full": "L-20",
+      "index": "PRSS108",
+      "short": "L-20"
+    },
+    "4181112560": {
+      "full": "Pietro Micca",
+      "index": "PISS108",
+      "short": "Pietro Micca"
+    },
+    "4181112624": {
+      "full": "U-190 (< 04.10.2022)",
+      "index": "PGSS108",
+      "short": "U-190 (old)"
+    },
+    "4181112784": {
+      "full": "Sturdy",
+      "index": "PBSS108",
+      "short": "Sturdy"
+    },
+    "4181112816": {
+      "full": "Salmon (< 04.10.2022)",
+      "index": "PASS108",
+      "short": "Salmon (old)"
+    },
+    "4181603536": {
+      "full": "Hsienyang",
+      "index": "PZSD108",
+      "short": "Hsienyang"
+    },
+    "4181603632": {
+      "full": "Öland",
+      "index": "PWSD108",
+      "short": "Öland"
+    },
+    "4181603792": {
+      "full": "Tashkent (< 06.03.2017)",
+      "index": "PRSD108",
+      "short": "Tashkent (OLD)"
+    },
+    "4181604048": {
+      "full": "Akizuki",
+      "index": "PJSD108",
+      "short": "Akizuki"
+    },
+    "4181604080": {
+      "full": "Vittorio Cuniberti",
+      "index": "PISD108",
+      "short": "V. Cuniberti"
+    },
+    "4181604144": {
+      "full": "Z-23",
+      "index": "PGSD108",
+      "short": "Z-23"
+    },
+    "4181604176": {
+      "full": "Le Fantasque",
+      "index": "PFSD108",
+      "short": "Le Fantasque"
+    },
+    "4181604304": {
+      "full": "Lightning",
+      "index": "PBSD108",
+      "short": "Lightning"
+    },
+    "4181636304": {
+      "full": "Harbin",
+      "index": "PZSC108",
+      "short": "Harbin"
+    },
+    "4181636432": {
+      "full": "Ignacio Allende",
+      "index": "PVSC108",
+      "short": "I. Allende"
+    },
+    "4181636528": {
+      "full": "Cataluña",
+      "index": "PSSC108",
+      "short": "Cataluña"
+    },
+    "4181636560": {
+      "full": "Chapayev",
+      "index": "PRSC108",
+      "short": "Chapayev"
+    },
+    "4181636848": {
+      "full": "Amalfi",
+      "index": "PISC108",
+      "short": "Amalfi"
+    },
+    "4181636880": {
+      "full": "Haarlem",
+      "index": "PHSC108",
+      "short": "Haarlem"
+    },
+    "4181636912": {
+      "full": "Admiral Hipper",
+      "index": "PGSC108",
+      "short": "Hipper"
+    },
+    "4181636944": {
+      "full": "Charles Martel",
+      "index": "PFSC108",
+      "short": "Charles Martel"
+    },
+    "4181637072": {
+      "full": "Edinburgh",
+      "index": "PBSC108",
+      "short": "Edinburgh"
+    },
+    "4181637104": {
+      "full": "Baltimore",
+      "index": "PASC108",
+      "short": "Baltimore"
+    },
+    "4181669328": {
+      "full": "Vladivostok",
+      "index": "PRSB108",
+      "short": "Vladivostok"
+    },
+    "4181669616": {
+      "full": "Vittorio Veneto",
+      "index": "PISB108",
+      "short": "V. Veneto"
+    },
+    "4181669680": {
+      "full": "Bismarck",
+      "index": "PGSB108",
+      "short": "Bismarck"
+    },
+    "4181669712": {
+      "full": "Richelieu",
+      "index": "PFSB108",
+      "short": "Richelieu"
+    },
+    "4181669840": {
+      "full": "Monarch",
+      "index": "PBSB108",
+      "short": "Monarch"
+    },
+    "4181669872": {
+      "full": "Kansas",
+      "index": "PASB108",
+      "short": "Kansas"
+    },
+    "4181702096": {
+      "full": "Pobeda",
+      "index": "PRSA108",
+      "short": "Pobeda"
+    },
+    "4181702352": {
+      "full": "Shōkaku",
+      "index": "PJSA108",
+      "short": "Shōkaku"
+    },
+    "4181702448": {
+      "full": "August von Parseval",
+      "index": "PGSA108",
+      "short": "A. Parseval"
+    },
+    "4181702608": {
+      "full": "Implacable",
+      "index": "PBSA108",
+      "short": "Implacable"
+    },
+    "4181702640": {
+      "full": "Lexington",
+      "index": "PASA108",
+      "short": "Lexington"
+    },
+    "4182160656": {
+      "full": "Zipper Sub",
+      "index": "PXSS107",
+      "short": "Zipper Sub"
+    },
+    "4182652112": {
+      "full": "Gadjah Mada",
+      "index": "PZSD107",
+      "short": "Gadjah Mada"
+    },
+    "4182652208": {
+      "full": "Skåne",
+      "index": "PWSD107",
+      "short": "Skåne"
+    },
+    "4182652368": {
+      "full": "Udaloi",
+      "index": "PRSD107",
+      "short": "Udaloi"
+    },
+    "4182652624": {
+      "full": "Akatsuki",
+      "index": "PJSD107",
+      "short": "Akatsuki"
+    },
+    "4182652656": {
+      "full": "Luca Tarigo",
+      "index": "PISD107",
+      "short": "L. Tarigo"
+    },
+    "4182652720": {
+      "full": "Leberecht Maass",
+      "index": "PGSD107",
+      "short": "Maass"
+    },
+    "4182652752": {
+      "full": "Vauquelin",
+      "index": "PFSD107",
+      "short": "Vauquelin"
+    },
+    "4182652880": {
+      "full": "Jervis",
+      "index": "PBSD107",
+      "short": "Jervis"
+    },
+    "4182684880": {
+      "full": "Chumphon",
+      "index": "PZSC107",
+      "short": "Chumphon"
+    },
+    "4182685008": {
+      "full": "Coronel Bolognesi",
+      "index": "PVSC107",
+      "short": "Cnel. Bolognesi"
+    },
+    "4182685104": {
+      "full": "Asturias",
+      "index": "PSSC107",
+      "short": "Asturias"
+    },
+    "4182685136": {
+      "full": "Shchors",
+      "index": "PRSC107",
+      "short": "Shchors"
+    },
+    "4182685424": {
+      "full": "Zara",
+      "index": "PISC107",
+      "short": "Zara"
+    },
+    "4182685456": {
+      "full": "Eendracht",
+      "index": "PHSC107",
+      "short": "Eendracht"
+    },
+    "4182685488": {
+      "full": "Yorck",
+      "index": "PGSC107",
+      "short": "Yorck"
+    },
+    "4182685520": {
+      "full": "Algérie",
+      "index": "PFSC107",
+      "short": "Algérie"
+    },
+    "4182685648": {
+      "full": "Fiji",
+      "index": "PBSC107",
+      "short": "Fiji"
+    },
+    "4182685680": {
+      "full": "New Orleans",
+      "index": "PASC107",
+      "short": "New Orleans"
+    },
+    "4182717904": {
+      "full": "Sinop",
+      "index": "PRSB107",
+      "short": "Sinop"
+    },
+    "4182718192": {
+      "full": "Francesco Caracciolo",
+      "index": "PISB107",
+      "short": "F. Caracciolo"
+    },
+    "4182718256": {
+      "full": "Gneisenau",
+      "index": "PGSB107",
+      "short": "Gneisenau"
+    },
+    "4182718288": {
+      "full": "Lyon",
+      "index": "PFSB107",
+      "short": "Lyon"
+    },
+    "4182718416": {
+      "full": "King George V",
+      "index": "PBSB107",
+      "short": "King George V"
+    },
+    "4183209424": {
+      "full": "S-1",
+      "index": "PRSS106",
+      "short": "S-1"
+    },
+    "4183209712": {
+      "full": "Foca",
+      "index": "PISS106",
+      "short": "Foca"
+    },
+    "4183209776": {
+      "full": "U-69 (< 04.10.2022)",
+      "index": "PGSS106",
+      "short": "U-69 (old)"
+    },
+    "4183209936": {
+      "full": "Undine",
+      "index": "PBSS106",
+      "short": "Undine"
+    },
+    "4183209968": {
+      "full": "Cachalot (< 04.10.2022)",
+      "index": "PASS106",
+      "short": "Cachalot (old)"
+    },
+    "4183700688": {
+      "full": "Fushun",
+      "index": "PZSD106",
+      "short": "Fushun"
+    },
+    "4183700784": {
+      "full": "Västerås",
+      "index": "PWSD106",
+      "short": "Västerås"
+    },
+    "4183700944": {
+      "full": "Ognevoi (< 06.03.2017)",
+      "index": "PRSD106",
+      "short": "Ognevoi (OLD)"
+    },
+    "4183701200": {
+      "full": "Fubuki",
+      "index": "PJSD106",
+      "short": "Fubuki"
+    },
+    "4183701232": {
+      "full": "Aviere",
+      "index": "PISD106",
+      "short": "Aviere"
+    },
+    "4183701296": {
+      "full": "Ernst Gaede",
+      "index": "PGSD106",
+      "short": "Gaede"
+    },
+    "4183701328": {
+      "full": "Guépard",
+      "index": "PFSD106",
+      "short": "Guépard"
+    },
+    "4183701456": {
+      "full": "Icarus",
+      "index": "PBSD106",
+      "short": "Icarus"
+    },
+    "4183733456": {
+      "full": "Rahmat",
+      "index": "PZSC106",
+      "short": "Rahmat"
+    },
+    "4183733584": {
+      "full": "Almirante Cochrane",
+      "index": "PVSC106",
+      "short": "Almte. Cochrane"
+    },
+    "4183733680": {
+      "full": "Baleares",
+      "index": "PSSC106",
+      "short": "Baleares"
+    },
+    "4183733712": {
+      "full": "Budyonny",
+      "index": "PRSC106",
+      "short": "Budyonny"
+    },
+    "4183734000": {
+      "full": "Trento",
+      "index": "PISC106",
+      "short": "Trento"
+    },
+    "4183734032": {
+      "full": "Kijkduin",
+      "index": "PHSC106",
+      "short": "Kijkduin"
+    },
+    "4183734064": {
+      "full": "Nürnberg",
+      "index": "PGSC106",
+      "short": "Nürnberg"
+    },
+    "4183734096": {
+      "full": "La Galissonnière",
+      "index": "PFSC106",
+      "short": "La Galissonnière"
+    },
+    "4183734224": {
+      "full": "Leander",
+      "index": "PBSC106",
+      "short": "Leander"
+    },
+    "4183734256": {
+      "full": "Pensacola",
+      "index": "PASC106",
+      "short": "Pensacola"
+    },
+    "4183766480": {
+      "full": "Izmail",
+      "index": "PRSB106",
+      "short": "Izmail"
+    },
+    "4183766768": {
+      "full": "Andrea Doria",
+      "index": "PISB106",
+      "short": "Andrea Doria"
+    },
+    "4183766832": {
+      "full": "Bayern",
+      "index": "PGSB106",
+      "short": "Bayern"
+    },
+    "4183766864": {
+      "full": "Normandie",
+      "index": "PFSB106",
+      "short": "Normandie"
+    },
+    "4183766992": {
+      "full": "Queen Elizabeth",
+      "index": "PBSB106",
+      "short": "Queen Elizabeth"
+    },
+    "4183799248": {
+      "full": "Serov",
+      "index": "PRSA106",
+      "short": "Serov"
+    },
+    "4183799504": {
+      "full": "Ryūjō",
+      "index": "PJSA106",
+      "short": "Ryūjō"
+    },
+    "4183799600": {
+      "full": "Weser",
+      "index": "PGSA106",
+      "short": "Weser"
+    },
+    "4183799760": {
+      "full": "Furious",
+      "index": "PBSA106",
+      "short": "Furious"
+    },
+    "4183799792": {
+      "full": "Ranger",
+      "index": "PASA106",
+      "short": "Ranger"
+    },
+    "4184749264": {
+      "full": "Jianwei",
+      "index": "PZSD105",
+      "short": "Jianwei"
+    },
+    "4184749360": {
+      "full": "Visby",
+      "index": "PWSD105",
+      "short": "Visby"
+    },
+    "4184749520": {
+      "full": "Gnevny (< 06.03.2017)",
+      "index": "PRSD105",
+      "short": "Gnevny (OLD)"
+    },
+    "4184749776": {
+      "full": "Mutsuki",
+      "index": "PJSD105",
+      "short": "Mutsuki"
+    },
+    "4184749808": {
+      "full": "Maestrale",
+      "index": "PISD105",
+      "short": "Maestrale"
+    },
+    "4184749872": {
+      "full": "T-22",
+      "index": "PGSD105",
+      "short": "T-22"
+    },
+    "4184749904": {
+      "full": "Jaguar",
+      "index": "PFSD105",
+      "short": "Jaguar"
+    },
+    "4184750032": {
+      "full": "Acasta",
+      "index": "PBSD105",
+      "short": "Acasta"
+    },
+    "4184782032": {
+      "full": "Chungking",
+      "index": "PZSC105",
+      "short": "Chungking"
+    },
+    "4184782160": {
+      "full": "La Argentina",
+      "index": "PVSC105",
+      "short": "La Argentina"
+    },
+    "4184782256": {
+      "full": "Galicia",
+      "index": "PSSC105",
+      "short": "Galicia"
+    },
+    "4184782288": {
+      "full": "Kirov (< 10.06.2020)",
+      "index": "PRSC105",
+      "short": "Kirov (OLD)"
+    },
+    "4184782576": {
+      "full": "Raimondo Montecuccoli",
+      "index": "PISC105",
+      "short": "Montecuccoli"
+    },
+    "4184782608": {
+      "full": "Celebes",
+      "index": "PHSC105",
+      "short": "Celebes"
+    },
+    "4184782640": {
+      "full": "Königsberg",
+      "index": "PGSC105",
+      "short": "Königsberg"
+    },
+    "4184782672": {
+      "full": "Émile Bertin",
+      "index": "PFSC105",
+      "short": "Émile Bertin"
+    },
+    "4184782800": {
+      "full": "Emerald",
+      "index": "PBSC105",
+      "short": "Emerald"
+    },
+    "4184815056": {
+      "full": "Pyotr Velikiy",
+      "index": "PRSB105",
+      "short": "Pyotr Velikiy"
+    },
+    "4184815344": {
+      "full": "Conte di Cavour",
+      "index": "PISB105",
+      "short": "Cavour"
+    },
+    "4184815408": {
+      "full": "König",
+      "index": "PGSB105",
+      "short": "König"
+    },
+    "4184815440": {
+      "full": "Bretagne",
+      "index": "PFSB105",
+      "short": "Bretagne"
+    },
+    "4184815568": {
+      "full": "Iron Duke",
+      "index": "PBSB105",
+      "short": "Iron Duke"
+    },
+    "4185797840": {
+      "full": "Shenyang",
+      "index": "PZSD104",
+      "short": "Shenyang"
+    },
+    "4185797936": {
+      "full": "Klas Horn",
+      "index": "PWSD104",
+      "short": "Klas Horn"
+    },
+    "4185798096": {
+      "full": "Izyaslav",
+      "index": "PRSD104",
+      "short": "Izyaslav"
+    },
+    "4185798384": {
+      "full": "Turbine",
+      "index": "PISD104",
+      "short": "Turbine"
+    },
+    "4185798448": {
+      "full": "V-170",
+      "index": "PGSD104",
+      "short": "V-170"
+    },
+    "4185798480": {
+      "full": "Bourrasque",
+      "index": "PFSD104",
+      "short": "Bourrasque"
+    },
+    "4185798608": {
+      "full": "Wakeful",
+      "index": "PBSD104",
+      "short": "Wakeful"
+    },
+    "4185830736": {
+      "full": "Córdoba",
+      "index": "PVSC104",
+      "short": "Córdoba"
+    },
+    "4185830832": {
+      "full": "Almirante Cervera",
+      "index": "PSSC104",
+      "short": "Almte. Cervera"
+    },
+    "4185830864": {
+      "full": "Svietlana",
+      "index": "PRSC104",
+      "short": "Svietlana"
+    },
+    "4185831152": {
+      "full": "Alberto di Giussano",
+      "index": "PISC104",
+      "short": "Giussano"
+    },
+    "4185831184": {
+      "full": "De Ruyter",
+      "index": "PHSC104",
+      "short": "De Ruyter"
+    },
+    "4185831216": {
+      "full": "Karlsruhe",
+      "index": "PGSC104",
+      "short": "Karlsruhe"
+    },
+    "4185831248": {
+      "full": "Duguay-Trouin",
+      "index": "PFSC104",
+      "short": "Duguay-Trouin"
+    },
+    "4185831376": {
+      "full": "Danae",
+      "index": "PBSC104",
+      "short": "Danae"
+    },
+    "4185863632": {
+      "full": "Gangut",
+      "index": "PRSB104",
+      "short": "Gangut"
+    },
+    "4185863920": {
+      "full": "Dante Alighieri",
+      "index": "PISB104",
+      "short": "D. Alighieri"
+    },
+    "4185863984": {
+      "full": "Kaiser",
+      "index": "PGSB104",
+      "short": "Kaiser"
+    },
+    "4185864016": {
+      "full": "Courbet",
+      "index": "PFSB104",
+      "short": "Courbet"
+    },
+    "4185864144": {
+      "full": "Orion",
+      "index": "PBSB104",
+      "short": "Orion"
+    },
+    "4185896400": {
+      "full": "Komsomolets",
+      "index": "PRSA104",
+      "short": "Komsomolets"
+    },
+    "4185896656": {
+      "full": "Hōshō",
+      "index": "PJSA104",
+      "short": "Hōshō"
+    },
+    "4185896752": {
+      "full": "Rhein",
+      "index": "PGSA104",
+      "short": "Rhein"
+    },
+    "4185896944": {
+      "full": "Langley",
+      "index": "PASA104",
+      "short": "Langley"
+    },
+    "4186846416": {
+      "full": "Phra Ruang",
+      "index": "PZSD103",
+      "short": "Phra Ruang"
+    },
+    "4186846480": {
+      "full": "Hector",
+      "index": "PXSD103",
+      "short": "Hector"
+    },
+    "4186846512": {
+      "full": "Romulus",
+      "index": "PWSD103",
+      "short": "Romulus"
+    },
+    "4186846672": {
+      "full": "Derzki",
+      "index": "PRSD103",
+      "short": "Derzki"
+    },
+    "4186846960": {
+      "full": "Nazario Sauro",
+      "index": "PISD103",
+      "short": "N. Sauro"
+    },
+    "4186847024": {
+      "full": "G-101",
+      "index": "PGSD103",
+      "short": "G-101"
+    },
+    "4186847056": {
+      "full": "Fusilier",
+      "index": "PFSD103",
+      "short": "Fusilier"
+    },
+    "4186847184": {
+      "full": "Valkyrie",
+      "index": "PBSD103",
+      "short": "Valkyrie"
+    },
+    "4186879312": {
+      "full": "Vicente Guerrero",
+      "index": "PVSC103",
+      "short": "V. Guerrero"
+    },
+    "4186879408": {
+      "full": "Navarra",
+      "index": "PSSC103",
+      "short": "Navarra"
+    },
+    "4186879440": {
+      "full": "Bogatyr",
+      "index": "PRSC103",
+      "short": "Bogatyr"
+    },
+    "4186879728": {
+      "full": "Taranto",
+      "index": "PISC103",
+      "short": "Taranto"
+    },
+    "4186879760": {
+      "full": "Java",
+      "index": "PHSC103",
+      "short": "Java"
+    },
+    "4186879792": {
+      "full": "Kolberg",
+      "index": "PGSC103",
+      "short": "Kolberg"
+    },
+    "4186879824": {
+      "full": "Friant",
+      "index": "PFSC103",
+      "short": "Friant"
+    },
+    "4186879952": {
+      "full": "Caledon",
+      "index": "PBSC103",
+      "short": "Caledon"
+    },
+    "4186912016": {
+      "full": "Heracles",
+      "index": "PXSB103",
+      "short": "Heracles"
+    },
+    "4186912208": {
+      "full": "Knyaz Suvorov",
+      "index": "PRSB103",
+      "short": "Knyaz Suvorov"
+    },
+    "4186912560": {
+      "full": "Nassau",
+      "index": "PGSB103",
+      "short": "Nassau"
+    },
+    "4186912592": {
+      "full": "Turenne",
+      "index": "PFSB103",
+      "short": "Turenne"
+    },
+    "4186912720": {
+      "full": "Bellerophon",
+      "index": "PBSB103",
+      "short": "Bellerophon"
+    },
+    "4187894992": {
+      "full": "Longjiang",
+      "index": "PZSD102",
+      "short": "Longjiang"
+    },
+    "4187895056": {
+      "full": "Whirlwind",
+      "index": "PXSD102",
+      "short": "Whirlwind"
+    },
+    "4187895088": {
+      "full": "Tátra",
+      "index": "PWSD102",
+      "short": "Tátra"
+    },
+    "4187895248": {
+      "full": "Storozhevoi",
+      "index": "PRSD102",
+      "short": "Storozhevoi"
+    },
+    "4187895536": {
+      "full": "Curtatone",
+      "index": "PISD102",
+      "short": "Curtatone"
+    },
+    "4187895600": {
+      "full": "V-25",
+      "index": "PGSD102",
+      "short": "V-25"
+    },
+    "4187895632": {
+      "full": "Enseigne Gabolde",
+      "index": "PFSD102",
+      "short": "En. Gabolde"
+    },
+    "4187895760": {
+      "full": "Medea",
+      "index": "PBSD102",
+      "short": "Medea"
+    },
+    "4187927824": {
+      "full": "Gale",
+      "index": "PXSC102",
+      "short": "Gale"
+    },
+    "4187927888": {
+      "full": "Almirante Barroso",
+      "index": "PVSC102",
+      "short": "Alm. Barroso"
+    },
+    "4187927984": {
+      "full": "Méndez Núñez",
+      "index": "PSSC102",
+      "short": "Méndez Núñez"
+    },
+    "4187928016": {
+      "full": "Novik",
+      "index": "PRSC102",
+      "short": "Novik"
+    },
+    "4187928304": {
+      "full": "Nino Bixio",
+      "index": "PISC102",
+      "short": "Nino Bixio"
+    },
+    "4187928336": {
+      "full": "Gelderland",
+      "index": "PHSC102",
+      "short": "Gelderland"
+    },
+    "4187928400": {
+      "full": "Jurien de la Gravière",
+      "index": "PFSC102",
+      "short": "Jurien"
+    },
+    "4187928528": {
+      "full": "Weymouth",
+      "index": "PBSC102",
+      "short": "Weymouth"
+    },
+    "4188976336": {
+      "full": "Chengan",
+      "index": "PZSC101",
+      "short": "Chengan"
+    },
+    "4188976400": {
+      "full": "Valkyrie",
+      "index": "PXSC101",
+      "short": "Valkyrie"
+    },
+    "4188976432": {
+      "full": "Gryf",
+      "index": "PWSC101",
+      "short": "Gryf"
+    },
+    "4188976464": {
+      "full": "Hércules",
+      "index": "PVSC101",
+      "short": "Hércules"
+    },
+    "4188976560": {
+      "full": "Júpiter",
+      "index": "PSSC101",
+      "short": "Júpiter"
+    },
+    "4188976592": {
+      "full": "Orlan",
+      "index": "PRSC101",
+      "short": "Orlan"
+    },
+    "4188976880": {
+      "full": "Eritrea",
+      "index": "PISC101",
+      "short": "Eritrea"
+    },
+    "4188976912": {
+      "full": "Van Kinsbergen",
+      "index": "PHSC101",
+      "short": "Van Kinsbergen"
+    },
+    "4188976976": {
+      "full": "Bougainville",
+      "index": "PFSC101",
+      "short": "Bougainville"
+    },
+    "4188977104": {
+      "full": "Black Swan",
+      "index": "PBSC101",
+      "short": "Black Swan"
+    },
+    "4189009168": {
+      "full": "Avenger",
+      "index": "PXSB101",
+      "short": "Avenger"
+    },
+    "4235113744": {
+      "full": "Condor",
+      "index": "PXSC057",
+      "short": "Condor"
+    },
+    "4236129552": {
+      "full": "Northwind",
+      "index": "PXSD056",
+      "short": "Northwind"
+    },
+    "4236195088": {
+      "full": "Futurismo",
+      "index": "PXSB056",
+      "short": "Futurismo"
+    },
+    "4237243664": {
+      "full": "Futurismo M",
+      "index": "PXSB055",
+      "short": "Futurismo M"
+    },
+    "4238292240": {
+      "full": "Shinsei",
+      "index": "PXSB054",
+      "short": "Shinsei"
+    },
+    "4239340816": {
+      "full": "Walküre",
+      "index": "PXSB053",
+      "short": "Walküre"
+    },
+    "4240356624": {
+      "full": "Condor M",
+      "index": "PXSC052",
+      "short": "Condor M"
+    },
+    "4241405200": {
+      "full": "Spectre",
+      "index": "PXSC051",
+      "short": "Spectre"
+    },
+    "4242453776": {
+      "full": "Chronos Carrier",
+      "index": "PXSC050",
+      "short": "Chronos Carrier"
+    },
+    "4244911376": {
+      "full": "Golo civil",
+      "index": "PXSX047",
+      "short": "Golo civil"
+    },
+    "4247008528": {
+      "full": "Liberty civil",
+      "index": "PXSX045",
+      "short": "Liberty civil"
+    },
+    "4247697392": {
+      "full": "Marblehead Lima",
+      "index": "PASC045",
+      "short": "Marblehead L"
+    },
+    "4248057104": {
+      "full": "Cimarron civil",
+      "index": "PXSX044",
+      "short": "Cimarron civil"
+    },
+    "4248745968": {
+      "full": "Marblehead",
+      "index": "PASC044",
+      "short": "Marblehead"
+    },
+    "4249105680": {
+      "full": "Medway Queen",
+      "index": "PXSX043",
+      "short": "Medway Queen"
+    },
+    "4249761040": {
+      "full": "Northwind M",
+      "index": "PXSD043",
+      "short": "Northwind M"
+    },
+    "4250809616": {
+      "full": "Stalnoy",
+      "index": "PXSD042",
+      "short": "Stalnoy"
+    },
+    "4251858192": {
+      "full": "Lutèce",
+      "index": "PXSD041",
+      "short": "Lutèce"
+    },
+    "4252251408": {
+      "full": "Escort 8",
+      "index": "PXSX040",
+      "short": "Escort 8"
+    },
+    "4252907504": {
+      "full": "Burrows",
+      "index": "PASD040",
+      "short": "Burrows"
+    },
+    "4253299984": {
+      "full": "LST 325",
+      "index": "PXSX039",
+      "short": "LST 325"
+    },
+    "4253956080": {
+      "full": "Christopher",
+      "index": "PASD039",
+      "short": "Christopher"
+    },
+    "4255004656": {
+      "full": "Osborne",
+      "index": "PASD038",
+      "short": "Osborne"
+    },
+    "4255037136": {
+      "full": "Atago",
+      "index": "PJSC038",
+      "short": "Atago"
+    },
+    "4255397136": {
+      "full": "Daihatsu",
+      "index": "PXSX037",
+      "short": "Daihatsu"
+    },
+    "4256053232": {
+      "full": "Hughes",
+      "index": "PASD037",
+      "short": "Hughes"
+    },
+    "4256085712": {
+      "full": "Hashidate",
+      "index": "PJSC037",
+      "short": "Hashidate"
+    },
+    "4257494288": {
+      "full": "Landing Ship 1",
+      "index": "PXSX035",
+      "short": "Landing Ship 1"
+    },
+    "4258182864": {
+      "full": "Chikuma",
+      "index": "PJSC035",
+      "short": "Chikuma"
+    },
+    "4258542864": {
+      "full": "John Cattling",
+      "index": "PXSX034",
+      "short": "John Cattling"
+    },
+    "4259231440": {
+      "full": "Zaō",
+      "index": "PJSC034",
+      "short": "Zaō"
+    },
+    "4259264496": {
+      "full": "New Mexico",
+      "index": "PASB034",
+      "short": "New Mexico"
+    },
+    "4259591440": {
+      "full": "Minelayer",
+      "index": "PXSX033",
+      "short": "Minelayer"
+    },
+    "4261295376": {
+      "full": "Disruptor-3",
+      "index": "PXSD032",
+      "short": "Disruptor-3"
+    },
+    "4262343952": {
+      "full": "Assimilator-3",
+      "index": "PXSD031",
+      "short": "Assimilator-3"
+    },
+    "4263458064": {
+      "full": "Annihilator",
+      "index": "PXSB030",
+      "short": "Annihilator"
+    },
+    "4264441840": {
+      "full": "Sims",
+      "index": "PASD029",
+      "short": "Sims"
+    },
+    "4265588720": {
+      "full": "Yorktown",
+      "index": "PASA028",
+      "short": "Yorktown"
+    },
+    "4266538256": {
+      "full": "D'DERIDEX",
+      "index": "PXSD027",
+      "short": "D'DERIDEX"
+    },
+    "4266538992": {
+      "full": "Wickes",
+      "index": "PASD027",
+      "short": "Wickes"
+    },
+    "4266571024": {
+      "full": "TOQDUJ",
+      "index": "PXSC027",
+      "short": "TOQDUJ"
+    },
+    "4266603792": {
+      "full": "T'PAU",
+      "index": "PXSB027",
+      "short": "T'PAU"
+    },
+    "4266931472": {
+      "full": "Canterbury",
+      "index": "PXSX026",
+      "short": "Canterbury"
+    },
+    "4267587280": {
+      "full": "Kamikaze R",
+      "index": "PJSD026",
+      "short": "Kamikaze R"
+    },
+    "4267620048": {
+      "full": "Iwaki Alpha",
+      "index": "PJSC026",
+      "short": "Iwaki A"
+    },
+    "4267685872": {
+      "full": "Independence",
+      "index": "PASA026",
+      "short": "Independence"
+    },
+    "4267980048": {
+      "full": "Medway Queen",
+      "index": "PXSX025",
+      "short": "Medway Queen"
+    },
+    "4268635408": {
+      "full": "Fangblade",
+      "index": "PXSD025",
+      "short": "Fangblade"
+    },
+    "4268635856": {
+      "full": "Kamikaze",
+      "index": "PJSD025",
+      "short": "Kamikaze"
+    },
+    "4269028624": {
+      "full": "Aronia",
+      "index": "PXSX024",
+      "short": "Aronia"
+    },
+    "4269683984": {
+      "full": "Mutantovsk",
+      "index": "PXSD024",
+      "short": "Mutantovsk"
+    },
+    "4269684432": {
+      "full": "Wakatake",
+      "index": "PJSD024",
+      "short": "Wakatake"
+    },
+    "4269717488": {
+      "full": "Phoenix",
+      "index": "PASC024",
+      "short": "Phoenix"
+    },
+    "4270077200": {
+      "full": "Lorina",
+      "index": "PXSX023",
+      "short": "Lorina"
+    },
+    "4270732560": {
+      "full": "Steel Lancet",
+      "index": "PXSD023",
+      "short": "Steel Lancet"
+    },
+    "4271781136": {
+      "full": "Angler",
+      "index": "PXSD022",
+      "short": "Angler"
+    },
+    "4272829712": {
+      "full": "Rumble",
+      "index": "PXSD021",
+      "short": "Rumble"
+    },
+    "4272830448": {
+      "full": "Fletcher",
+      "index": "PASD021",
+      "short": "Fletcher"
+    },
+    "4272862928": {
+      "full": "Kurama",
+      "index": "PJSC021",
+      "short": "Kurama"
+    },
+    "4272895696": {
+      "full": "Izumo",
+      "index": "PJSB021",
+      "short": "Izumo"
+    },
+    "4273878288": {
+      "full": "Seascythe",
+      "index": "PXSD020",
+      "short": "Seascythe"
+    },
+    "4273911760": {
+      "full": "Monmouth",
+      "index": "PBSC020",
+      "short": "Monmouth"
+    },
+    "4273911792": {
+      "full": "Des Moines",
+      "index": "PASC020",
+      "short": "Des Moines"
+    },
+    "4273977328": {
+      "full": "Essex",
+      "index": "PASA020",
+      "short": "Essex"
+    },
+    "4274926864": {
+      "full": "Stealthedo",
+      "index": "PXSD019",
+      "short": "Stealthedo"
+    },
+    "4274926928": {
+      "full": "Nueva Esparta",
+      "index": "PVSD019",
+      "short": "Nueva Esparta"
+    },
+    "4274927440": {
+      "full": "Orage",
+      "index": "PFSD019",
+      "short": "Orage"
+    },
+    "4274927600": {
+      "full": "Clemson",
+      "index": "PASD019",
+      "short": "Clemson"
+    },
+    "4274959664": {
+      "full": "Tirfing",
+      "index": "PWSC019",
+      "short": "Tirfing"
+    },
+    "4274959728": {
+      "full": "Encounter",
+      "index": "PUSC019",
+      "short": "Encounter"
+    },
+    "4274960144": {
+      "full": "Menno van Coehoorn",
+      "index": "PHSC019",
+      "short": "M. van Coehoorn"
+    },
+    "4274960176": {
+      "full": "Manteuffel",
+      "index": "PGSC019",
+      "short": "Manteuffel"
+    },
+    "4274960368": {
+      "full": "Buffalo",
+      "index": "PASC019",
+      "short": "Buffalo"
+    },
+    "4274992432": {
+      "full": "Gustav den Store",
+      "index": "PWSB019",
+      "short": "Gustav den Store"
+    },
+    "4274992464": {
+      "full": "Los Andes",
+      "index": "PVSB019",
+      "short": "Los Andes"
+    },
+    "4275975440": {
+      "full": "Mizu-Jet",
+      "index": "PXSD018",
+      "short": "Mizu-Jet"
+    },
+    "4275975504": {
+      "full": "Cuauhtémoc",
+      "index": "PVSD018",
+      "short": "Cuauhtémoc"
+    },
+    "4275976016": {
+      "full": "L'Aventurier",
+      "index": "PFSD018",
+      "short": "L'Aventurier"
+    },
+    "4276008240": {
+      "full": "Kriti",
+      "index": "PWSC018",
+      "short": "Kriti"
+    },
+    "4276008304": {
+      "full": "Auckland",
+      "index": "PUSC018",
+      "short": "Auckland"
+    },
+    "4276008656": {
+      "full": "Tone",
+      "index": "PJSC018",
+      "short": "Tone"
+    },
+    "4276008720": {
+      "full": "Jaarsveld",
+      "index": "PHSC018",
+      "short": "Jaarsveld"
+    },
+    "4276008752": {
+      "full": "Knesebeck",
+      "index": "PGSC018",
+      "short": "Knesebeck"
+    },
+    "4276041008": {
+      "full": "Enigheten",
+      "index": "PWSB018",
+      "short": "Enigheten"
+    },
+    "4276041040": {
+      "full": "Ipiranga",
+      "index": "PVSB018",
+      "short": "Ipiranga"
+    },
+    "4276041424": {
+      "full": "Yamato",
+      "index": "PJSB018",
+      "short": "Yamato"
+    },
+    "4276041712": {
+      "full": "Iowa",
+      "index": "PASB018",
+      "short": "Iowa"
+    },
+    "4276368656": {
+      "full": "Caboteur",
+      "index": "PXSX017",
+      "short": "Caboteur"
+    },
+    "4277024016": {
+      "full": "Lancet",
+      "index": "PXSD017",
+      "short": "Lancet"
+    },
+    "4277024080": {
+      "full": "Marcílio Dias",
+      "index": "PVSD017",
+      "short": "Marcílio Dias"
+    },
+    "4277024464": {
+      "full": "Fūjin",
+      "index": "PJSD017",
+      "short": "Fūjin"
+    },
+    "4277024592": {
+      "full": "Le Hardi",
+      "index": "PFSD017",
+      "short": "Le Hardi"
+    },
+    "4277056816": {
+      "full": "Hel",
+      "index": "PWSC017",
+      "short": "Hel"
+    },
+    "4277056880": {
+      "full": "Uganda",
+      "index": "PUSC017",
+      "short": "Uganda"
+    },
+    "4277057328": {
+      "full": "Admiral Scheer",
+      "index": "PGSC017",
+      "short": "Scheer"
+    },
+    "4277057520": {
+      "full": "Baltimore (< 31.05.2018)",
+      "index": "PASC017",
+      "short": "Baltimore (old)"
+    },
+    "4277089552": {
+      "full": "Disruptor-1",
+      "index": "PXSB017",
+      "short": "Disruptor-1"
+    },
+    "4277089584": {
+      "full": "Chios",
+      "index": "PWSB017",
+      "short": "Chios"
+    },
+    "4277090288": {
+      "full": "Montana",
+      "index": "PASB017",
+      "short": "Montana"
+    },
+    "4277122768": {
+      "full": "Hakuryū (< 23.01.2019)",
+      "index": "PJSA017",
+      "short": "Hakuryū (old)"
+    },
+    "4277417232": {
+      "full": "Goliath",
+      "index": "PXSX016",
+      "short": "Goliath"
+    },
+    "4278072592": {
+      "full": "Sea Devil",
+      "index": "PXSD016",
+      "short": "Sea Devil"
+    },
+    "4278072656": {
+      "full": "Cervantes",
+      "index": "PVSD016",
+      "short": "Cervantes"
+    },
+    "4278073168": {
+      "full": "Duchaffault",
+      "index": "PFSD016",
+      "short": "Duchaffault"
+    },
+    "4278105360": {
+      "full": "Thornridge",
+      "index": "PXSC016",
+      "short": "Thornridge"
+    },
+    "4278105392": {
+      "full": "Tre Kronor",
+      "index": "PWSC016",
+      "short": "Tre Kronor"
+    },
+    "4278105456": {
+      "full": "Hobart",
+      "index": "PUSC016",
+      "short": "Hobart"
+    },
+    "4278105904": {
+      "full": "Deutschland",
+      "index": "PGSC016",
+      "short": "Deutschland"
+    },
+    "4278106096": {
+      "full": "Worcester",
+      "index": "PASC016",
+      "short": "Worcester"
+    },
+    "4278138128": {
+      "full": "Assimilator-1",
+      "index": "PXSB016",
+      "short": "Assimilator-1"
+    },
+    "4278138160": {
+      "full": "Laudon",
+      "index": "PWSB016",
+      "short": "Laudon"
+    },
+    "4279121168": {
+      "full": "Atomic Rage",
+      "index": "PXSD015",
+      "short": "Atomic Rage"
+    },
+    "4279121232": {
+      "full": "Antioquia",
+      "index": "PVSD015",
+      "short": "Antioquia"
+    },
+    "4279121744": {
+      "full": "L'Adroit",
+      "index": "PFSD015",
+      "short": "L'Adroit"
+    },
+    "4279153968": {
+      "full": "Kralj Petar I",
+      "index": "PWSC015",
+      "short": "Kralj Petar I"
+    },
+    "4279154032": {
+      "full": "Delhi",
+      "index": "PUSC015",
+      "short": "Delhi"
+    },
+    "4279154384": {
+      "full": "Tenryū",
+      "index": "PJSC015",
+      "short": "Tenryū"
+    },
+    "4279186704": {
+      "full": "Lobster-Eyed",
+      "index": "PXSB015",
+      "short": "Lobster-Eyed"
+    },
+    "4279186736": {
+      "full": "Tegetthoff",
+      "index": "PWSB015",
+      "short": "Tegetthoff"
+    },
+    "4279219920": {
+      "full": "Taihō (< 23.01.2019)",
+      "index": "PJSA015",
+      "short": "Taihō (old)"
+    },
+    "4279220208": {
+      "full": "Midway (< 23.01.2019)",
+      "index": "PASA015",
+      "short": "Midway (old)"
+    },
+    "4280169744": {
+      "full": "Carnal",
+      "index": "PXSD014",
+      "short": "Carnal"
+    },
+    "4280169808": {
+      "full": "Serrano",
+      "index": "PVSD014",
+      "short": "Serrano"
+    },
+    "4280170192": {
+      "full": "Tachibana Lima",
+      "index": "PJSD014",
+      "short": "Tachibana L"
+    },
+    "4280170480": {
+      "full": "Nicholas",
+      "index": "PASD014",
+      "short": "Nicholas"
+    },
+    "4280202544": {
+      "full": "Dragon",
+      "index": "PWSC014",
+      "short": "Dragon"
+    },
+    "4280202608": {
+      "full": "Dunedin",
+      "index": "PUSC014",
+      "short": "Dunedin"
+    },
+    "4280202960": {
+      "full": "Kitakami",
+      "index": "PJSC014",
+      "short": "Kitakami"
+    },
+    "4280203248": {
+      "full": "New Orleans (< 31.05.2018)",
+      "index": "PASC014",
+      "short": "New Orleans (old)"
+    },
+    "4280235312": {
+      "full": "Yavuz Sultan Selim",
+      "index": "PWSB014",
+      "short": "Yavuz"
+    },
+    "4281218320": {
+      "full": "Messer",
+      "index": "PXSD013",
+      "short": "Messer"
+    },
+    "4281218384": {
+      "full": "Almirante Villar",
+      "index": "PVSD013",
+      "short": "Almte. Villar"
+    },
+    "4281219056": {
+      "full": "Gearing",
+      "index": "PASD013",
+      "short": "Gearing"
+    },
+    "4281251088": {
+      "full": "Fossil",
+      "index": "PXSC013",
+      "short": "Fossil"
+    },
+    "4281251184": {
+      "full": "Caradoc",
+      "index": "PUSC013",
+      "short": "Caradoc"
+    },
+    "4281251536": {
+      "full": "Kuma",
+      "index": "PJSC013",
+      "short": "Kuma"
+    },
+    "4281284304": {
+      "full": "Amagi",
+      "index": "PJSB013",
+      "short": "Amagi"
+    },
+    "4281284592": {
+      "full": "Arkansas Beta",
+      "index": "PASB013",
+      "short": "Arkansas B"
+    },
+    "4281317360": {
+      "full": "Essex (< 23.01.2019)",
+      "index": "PASA013",
+      "short": "Essex (old)"
+    },
+    "4282266896": {
+      "full": "Rover",
+      "index": "PXSD012",
+      "short": "Rover"
+    },
+    "4282267344": {
+      "full": "Shimakaze",
+      "index": "PJSD012",
+      "short": "Shimakaze"
+    },
+    "4282299664": {
+      "full": "Rust Nightfall",
+      "index": "PXSC012",
+      "short": "Rust Nightfall"
+    },
+    "4282299760": {
+      "full": "Port Jackson",
+      "index": "PUSC012",
+      "short": "Port Jackson"
+    },
+    "4282300112": {
+      "full": "Ibuki",
+      "index": "PJSC012",
+      "short": "Ibuki"
+    },
+    "4282300400": {
+      "full": "Pensacola (< 31.05.2018)",
+      "index": "PASC012",
+      "short": "Pensacola (old)"
+    },
+    "4282333168": {
+      "full": "North Carolina",
+      "index": "PASB012",
+      "short": "N. Carolina"
+    },
+    "4282365648": {
+      "full": "Shōkaku (< 23.01.2019)",
+      "index": "PJSA012",
+      "short": "Shōkaku (old)"
+    },
+    "4282365936": {
+      "full": "Lexington (< 23.01.2019)",
+      "index": "PASA012",
+      "short": "Lexington (old)"
+    },
+    "4283315472": {
+      "full": "Comet Trace",
+      "index": "PXSD011",
+      "short": "Comet Trace"
+    },
+    "4283348240": {
+      "full": "Octodroid",
+      "index": "PXSC011",
+      "short": "Octodroid"
+    },
+    "4283348976": {
+      "full": "Jacksonville",
+      "index": "PASC011",
+      "short": "Jacksonville"
+    },
+    "4283381008": {
+      "full": "Crocosaur",
+      "index": "PXSB011",
+      "short": "Crocosaur"
+    },
+    "4283381456": {
+      "full": "Mikasa",
+      "index": "PJSB011",
+      "short": "Mikasa"
+    },
+    "4283381488": {
+      "full": "Affondatore",
+      "index": "PISB011",
+      "short": "Affondatore"
+    },
+    "4283414224": {
+      "full": "Hiryū (< 23.01.2019)",
+      "index": "PJSA011",
+      "short": "Hiryū (old)"
+    },
+    "4284364048": {
+      "full": "Celestial",
+      "index": "PXSD010",
+      "short": "Celestial"
+    },
+    "4284364112": {
+      "full": "20 de Julio",
+      "index": "PVSD010",
+      "short": "20 de Julio"
+    },
+    "4284364496": {
+      "full": "Kagerō (< 01.12.2016)",
+      "index": "PJSD010",
+      "short": "Kagerō (old)"
+    },
+    "4284364624": {
+      "full": "Cassard",
+      "index": "PFSD010",
+      "short": "Cassard"
+    },
+    "4284396816": {
+      "full": "Century Hawk",
+      "index": "PXSC010",
+      "short": "Century Hawk"
+    },
+    "4284396848": {
+      "full": "Vanadis",
+      "index": "PWSC010",
+      "short": "Vanadis"
+    },
+    "4284396912": {
+      "full": "Cerberus",
+      "index": "PUSC010",
+      "short": "Cerberus"
+    },
+    "4284397008": {
+      "full": "Diana Lima",
+      "index": "PRSC010",
+      "short": "Diana L"
+    },
+    "4284397328": {
+      "full": "Utrecht",
+      "index": "PHSC010",
+      "short": "Utrecht"
+    },
+    "4284397360": {
+      "full": "Prinz Adalbert",
+      "index": "PGSC010",
+      "short": "Prinz Adalbert"
+    },
+    "4284429584": {
+      "full": "Maverick",
+      "index": "PXSB010",
+      "short": "Maverick"
+    },
+    "4284429616": {
+      "full": "Thor",
+      "index": "PWSB010",
+      "short": "Thor"
+    },
+    "4284429648": {
+      "full": "Libertad",
+      "index": "PVSB010",
+      "short": "Libertad"
+    },
+    "4284430032": {
+      "full": "Nagato",
+      "index": "PJSB010",
+      "short": "Nagato"
+    },
+    "4284462352": {
+      "full": "Legacy",
+      "index": "PXSA010",
+      "short": "Legacy"
+    },
+    "4284463088": {
+      "full": "Ranger (< 23.01.2019)",
+      "index": "PASA010",
+      "short": "Ranger (old)"
+    },
+    "4285412624": {
+      "full": "Razorworm",
+      "index": "PXSD009",
+      "short": "Razorworm"
+    },
+    "4285445392": {
+      "full": "Octopus",
+      "index": "PXSC009",
+      "short": "Octopus"
+    },
+    "4285445840": {
+      "full": "Mogami",
+      "index": "PJSC009",
+      "short": "Mogami"
+    },
+    "4285478160": {
+      "full": "Scorpioid",
+      "index": "PXSB009",
+      "short": "Scorpioid"
+    },
+    "4285511376": {
+      "full": "Ryūjō (< 23.01.2019)",
+      "index": "PJSA009",
+      "short": "Ryūjō (old)"
+    },
+    "4286461200": {
+      "full": "Steel Rat",
+      "index": "PXSD008",
+      "short": "Steel Rat"
+    },
+    "4286461936": {
+      "full": "Benson",
+      "index": "PASD008",
+      "short": "Benson"
+    },
+    "4286494416": {
+      "full": "Myōkō",
+      "index": "PJSC008",
+      "short": "Myōkō"
+    },
+    "4286526736": {
+      "full": "Leviathan",
+      "index": "PXSB008",
+      "short": "Leviathan"
+    },
+    "4286527184": {
+      "full": "Ishizuchi",
+      "index": "PJSB008",
+      "short": "Ishizuchi"
+    },
+    "4286527472": {
+      "full": "Colorado",
+      "index": "PASB008",
+      "short": "Colorado"
+    },
+    "4286559504": {
+      "full": "ENTERPRISE-D",
+      "index": "PXSA008",
+      "short": "ENTERPRISE-D"
+    },
+    "4287509776": {
+      "full": "Motor Boat",
+      "index": "PXSD007",
+      "short": "Motor Boat"
+    },
+    "4287510224": {
+      "full": "Fubuki (< 01.12.2016)",
+      "index": "PJSD007",
+      "short": "Fubuki (old)"
+    },
+    "4287542544": {
+      "full": "Aurora",
+      "index": "PXSC007",
+      "short": "Aurora"
+    },
+    "4287542992": {
+      "full": "Aoba",
+      "index": "PJSC007",
+      "short": "Aoba"
+    },
+    "4287543280": {
+      "full": "Cleveland (< 31.05.2018)",
+      "index": "PASC007",
+      "short": "Cleveland (old)"
+    },
+    "4287575312": {
+      "full": "Alldestroyer",
+      "index": "PXSB007",
+      "short": "Alldestroyer"
+    },
+    "4287575760": {
+      "full": "Kongō",
+      "index": "PJSB007",
+      "short": "Kongō"
+    },
+    "4288558800": {
+      "full": "Hatsuharu (< 01.12.2016)",
+      "index": "PJSD006",
+      "short": "Hatsuharu (old)"
+    },
+    "4288559088": {
+      "full": "Mahan",
+      "index": "PASD006",
+      "short": "Mahan"
+    },
+    "4288591120": {
+      "full": "Norma",
+      "index": "PXSC006",
+      "short": "Norma"
+    },
+    "4288591856": {
+      "full": "Atlanta",
+      "index": "PASC006",
+      "short": "Atlanta"
+    },
+    "4288623888": {
+      "full": "Paris",
+      "index": "PXSB006",
+      "short": "Paris"
+    },
+    "4288624336": {
+      "full": "Fusō",
+      "index": "PJSB006",
+      "short": "Fusō"
+    },
+    "4288624624": {
+      "full": "New York",
+      "index": "PASB006",
+      "short": "New York"
+    },
+    "4288657104": {
+      "full": "Zuihō (< 23.01.2019)",
+      "index": "PJSA006",
+      "short": "Zuihō (old)"
+    },
+    "4288657392": {
+      "full": "Independence (< 23.01.2019)",
+      "index": "PASA006",
+      "short": "Independence (old)"
+    },
+    "4288952304": {
+      "full": "Great Eastern",
+      "index": "PASX005",
+      "short": "St. Clair"
+    },
+    "4289606928": {
+      "full": "Blue Aster",
+      "index": "PXSD005",
+      "short": "Blue Aster"
+    },
+    "4289607376": {
+      "full": "Mutsuki (< 01.12.2016)",
+      "index": "PJSD005",
+      "short": "Mutsuki (old)"
+    },
+    "4289607664": {
+      "full": "Farragut",
+      "index": "PASD005",
+      "short": "Farragut"
+    },
+    "4289639696": {
+      "full": "Zaya",
+      "index": "PXSC005",
+      "short": "Zaya"
+    },
+    "4289640144": {
+      "full": "Furutaka",
+      "index": "PJSC005",
+      "short": "Furutaka"
+    },
+    "4289640432": {
+      "full": "Omaha",
+      "index": "PASC005",
+      "short": "Omaha"
+    },
+    "4289672464": {
+      "full": "Varg",
+      "index": "PXSB005",
+      "short": "Varg"
+    },
+    "4289705232": {
+      "full": "Spaceport Hellcarrier",
+      "index": "PXSA005",
+      "short": "Hellcarrier"
+    },
+    "4290000880": {
+      "full": "Atlas Node",
+      "index": "PASX004",
+      "short": "Atlas Node"
+    },
+    "4290655504": {
+      "full": "FlyFire",
+      "index": "PXSD004",
+      "short": "FlyFire"
+    },
+    "4290655952": {
+      "full": "Minekaze",
+      "index": "PJSD004",
+      "short": "Minekaze"
+    },
+    "4290688272": {
+      "full": "Galaxy",
+      "index": "PXSC004",
+      "short": "Galaxy"
+    },
+    "4290688720": {
+      "full": "Yūbari",
+      "index": "PJSC004",
+      "short": "Yūbari"
+    },
+    "4290689008": {
+      "full": "St. Louis",
+      "index": "PASC004",
+      "short": "St. Louis"
+    },
+    "4290721040": {
+      "full": "Magnu-S",
+      "index": "PXSB004",
+      "short": "Magnu-S"
+    },
+    "4290721776": {
+      "full": "Wyoming",
+      "index": "PASB004",
+      "short": "Wyoming"
+    },
+    "4290753808": {
+      "full": "The Great Gorgon",
+      "index": "PXSA004",
+      "short": "The Great Gorgon"
+    },
+    "4290754544": {
+      "full": "Langley (< 23.01.2019)",
+      "index": "PASA004",
+      "short": "Langley (old)"
+    },
+    "4291049456": {
+      "full": "Liberty",
+      "index": "PASX003",
+      "short": "Liberty"
+    },
+    "4291704080": {
+      "full": "Urashima",
+      "index": "PXSD003",
+      "short": "Urashima"
+    },
+    "4291704528": {
+      "full": "Isokaze",
+      "index": "PJSD003",
+      "short": "Isokaze"
+    },
+    "4291736848": {
+      "full": "Svyatozar",
+      "index": "PXSC003",
+      "short": "Svyatozar"
+    },
+    "4291737040": {
+      "full": "Murmansk",
+      "index": "PRSC003",
+      "short": "Murmansk"
+    },
+    "4291737584": {
+      "full": "Albany",
+      "index": "PASC003",
+      "short": "Albany"
+    },
+    "4291769616": {
+      "full": "Zikasa",
+      "index": "PXSB003",
+      "short": "Zikasa"
+    },
+    "4291770064": {
+      "full": "Myōgi",
+      "index": "PJSB003",
+      "short": "Myōgi"
+    },
+    "4291802384": {
+      "full": "Nobilium",
+      "index": "PXSA003",
+      "short": "Nobilium"
+    },
+    "4292752656": {
+      "full": "Ghoul",
+      "index": "PXSD002",
+      "short": "Ghoul"
+    },
+    "4292753104": {
+      "full": "Umikaze",
+      "index": "PJSD002",
+      "short": "Umikaze"
+    },
+    "4292753392": {
+      "full": "Sampson",
+      "index": "PASD002",
+      "short": "Sampson"
+    },
+    "4292785424": {
+      "full": "Scarab",
+      "index": "PXSC002",
+      "short": "Scarab"
+    },
+    "4292785616": {
+      "full": "Diana",
+      "index": "PRSC002",
+      "short": "Diana"
+    },
+    "4292785968": {
+      "full": "Dresden",
+      "index": "PGSC002",
+      "short": "Dresden"
+    },
+    "4292786160": {
+      "full": "Chester",
+      "index": "PASC002",
+      "short": "Chester"
+    },
+    "4292818192": {
+      "full": "Rasputin",
+      "index": "PXSB002",
+      "short": "Rasputin"
+    },
+    "4292818736": {
+      "full": "Tirpitz",
+      "index": "PGSB002",
+      "short": "Tirpitz"
+    },
+    "4292818896": {
+      "full": "Warspite",
+      "index": "PBSB002",
+      "short": "Warspite"
+    },
+    "4292850960": {
+      "full": "Aircraft Carrier",
+      "index": "PXSA002",
+      "short": "Air Force"
+    },
+    "4292851408": {
+      "full": "Hōshō (< 23.01.2019)",
+      "index": "PJSA002",
+      "short": "Hōshō (old)"
+    },
+    "4292851696": {
+      "full": "Bogue (< 23.01.2019)",
+      "index": "PASA002",
+      "short": "Bogue (old)"
+    },
+    "4293145872": {
+      "full": "Transylvania",
+      "index": "PXSX001",
+      "short": "Transylvania"
+    },
+    "4293146608": {
+      "full": "Cimarron",
+      "index": "PASX001",
+      "short": "Cimarron"
+    },
+    "4293801232": {
+      "full": "Blade",
+      "index": "PXSD001",
+      "short": "Blade"
+    },
+    "4293801424": {
+      "full": "Gremyashchy",
+      "index": "PRSD001",
+      "short": "Gremyashchy"
+    },
+    "4293801680": {
+      "full": "Tachibana",
+      "index": "PJSD001",
+      "short": "Tachibana"
+    },
+    "4293834000": {
+      "full": "Igor",
+      "index": "PXSC001",
+      "short": "Igor"
+    },
+    "4293834096": {
+      "full": "Sutlej",
+      "index": "PUSC001",
+      "short": "Sutlej"
+    },
+    "4293834192": {
+      "full": "Aurora",
+      "index": "PRSC001",
+      "short": "Aurora"
+    },
+    "4293834544": {
+      "full": "Hermelin",
+      "index": "PGSC001",
+      "short": "Hermelin"
+    },
+    "4293834736": {
+      "full": "Erie",
+      "index": "PASC001",
+      "short": "Erie"
+    },
+    "4293866768": {
+      "full": "Jackal",
+      "index": "PXSB001",
+      "short": "Jackal"
+    },
+    "4293866960": {
+      "full": "Imperator Nikolai I",
+      "index": "PRSB001",
+      "short": "Nikolai I"
+    },
+    "4293867216": {
+      "full": "Kawachi",
+      "index": "PJSB001",
+      "short": "Kawachi"
+    },
+    "4293867504": {
+      "full": "South Carolina",
+      "index": "PASB001",
+      "short": "S. Carolina"
+    },
+    "4293899536": {
+      "full": "Luftwaffe",
+      "index": "PXSA001",
+      "short": "Luftwaffe"
+    }
+  }
+}

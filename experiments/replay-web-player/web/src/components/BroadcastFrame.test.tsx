@@ -31,6 +31,12 @@ describe('selected ship in the broadcast information panel',()=>{
   });
 });
 
+it('shows the official map name in the battle clock, uppercase, with a fallback', () => {
+  const clock=(map:ReplayScene['map'])=>renderToStaticMarkup(<BroadcastFrame scene={{...scene,map}} time={30}/>);
+  expect(clock({...scene.map,name:'spaces/22_tierra_del_fuego',displayName:'Land of Fire'})).toContain('<span>LAND OF FIRE</span>');
+  expect(clock({...scene.map,name:'spaces/22_tierra_del_fuego',displayName:undefined})).toContain('<span>TIERRA DEL FUEGO</span>');
+});
+
 it('mirrors the enemy score strip while keeping both rosters in class/tier/name order through selection and sinking', () => {
   const shuffled: Array<Pick<ShipDefinition, 'shipName' | 'shipClass' | 'tier'>> = [
     {shipName:'Zulu DD',shipClass:'destroyer',tier:10},

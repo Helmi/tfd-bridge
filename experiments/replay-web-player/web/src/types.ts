@@ -238,6 +238,8 @@ export interface ReplayScene {
   };
   map: {
     name: string;
+    /** Official in-game map name from the client catalog; absent when unknown. */
+    displayName?: string;
     bounds: { minX: number; minY: number; maxX: number; maxY: number };
     image?: { href: string; sha256?: string };
     /** Original WoWS world-space size, retained as metadata when tracks are normalized. */
@@ -379,6 +381,7 @@ export interface ReplaySceneV1 {
   };
   map: {
     name: string;
+    displayName?: string;
     imageUrl?: string;
     spaceSize: number | { width: number; height: number };
     coordinateSpace?: 'normalized' | 'world';

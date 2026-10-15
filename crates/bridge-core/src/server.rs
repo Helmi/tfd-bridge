@@ -347,6 +347,30 @@ pub struct ReplayEntry {
     pub size: u64,
     /// Milliseconds since UNIX epoch (for ordering by recency).
     pub modified_ms: u64,
+    /// Official ship name, from the file name plus the game catalog.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ship_name: Option<String>,
+    /// GameParams id (= WG API `ship_id`) of the ship index in the file name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ship_id: Option<i64>,
+    /// Official map name, from the file name plus the game catalog.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map_display_name: Option<String>,
+}
+
+/// Split a standard replay file name
+/// `<date>_<time>_<INDEX>-<vehicle>_<map>.wowsreplay` into (ship index, map name),
+/// e.g. `20260811_202028_PGSB708-Bismarck-1941_54_Faroe.wowsreplay` -> (`PGSB708`, `54_Faroe`).
+/// None when the name does not match.
+fn parse_replay_file_name(name: &str) -> Option<(&str, &str)> {
+    let stem = name.rsplit('/').next()?.strip_suffix(".wowsreplay")?;
+    let mut parts = stem.splitn(3, '_');
+    let (date, time, rest) = (parts.next()?, parts.next()?, parts.next()?);
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(date) || !digits(time) { return None; }
+    let (index, rest) = rest.split_once('-')?;
+    let (_vehicle, map) = rest.split_once('_')?;
+    (!index.is_empty() && !map.is_empty()).then_some((index, map))
 }
 
 // ── Startup ────────────────────────────────────────────────────────────────────
@@ -606,7 +630,7 @@ fn handle_requests(
                 p if p.starts_with("/v1/share/status/") => share_routes::status(player, p),
                 p if p.starts_with("/v1/render/jobs/") => render_routes::get(player, p),
                 "/v1/health" => handle_health(decode_ctx, player),
-                "/v1/replays" => handle_list(replays_dir, generation),
+                "/v1/replays" => handle_list(replays_dir, generation, decode_ctx.map(|c| &c.tables)),
                 // /result routes MUST be matched BEFORE the generic /latest and /{name} fetch routes.
                 "/v1/replays/latest/result" => handle_latest_result(replays_dir, decode_ctx),
                 p if p.starts_with("/v1/replays/") && p.ends_with("/result") => {
@@ -703,10 +727,19 @@ fn handle_health(decode_ctx: Option<&Arc<DecodeContext>>, player: Option<&Arc<Pl
     make_json_response(StatusCode(200), &body, None)
 }
 
-fn handle_list(replays_dir: &Path, generation: &AtomicU64) -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_list(replays_dir: &Path, generation: &AtomicU64, tables: Option<&Tables>) -> Response<std::io::Cursor<Vec<u8>>> {
     match list_replays(replays_dir) {
-        Ok(entries) => {
+        Ok(mut entries) => {
             let gen = generation.load(Ordering::SeqCst);
+            if let Some(game_dir) = replays_dir.parent() {
+                for entry in &mut entries {
+                    if let Some((index, map)) = parse_replay_file_name(&entry.name) {
+                        entry.ship_name = scene_export::ship_display_name(game_dir, index);
+                        entry.ship_id = tables.and_then(|t| t.ship_ids_by_index.get(&index.to_ascii_uppercase()).copied());
+                        entry.map_display_name = scene_export::map_display_name(game_dir, map);
+                    }
+                }
+            }
             let body = serde_json::json!({
                 "generation": gen,
                 "replays": entries,
@@ -1140,6 +1173,9 @@ fn handle_player_replays(
                         object.extend(stats.iter().filter(|(_, value)| !value.is_null()).map(|(key, value)| (key.clone(), value.clone())));
                     }
                 }
+                if let Some(name) = replays_dir.parent().and_then(|game_dir| scene_export::map_display_name(game_dir, &meta.map_name)) {
+                    object.insert("mapDisplayName".to_string(), name.into());
+                }
                 object.insert("mapName".to_string(), meta.map_name.into());
                 if let Some(name) = replays_dir.parent().and_then(|game_dir| scene_export::ship_display_name(game_dir, &meta.player_vehicle)) {
                     object.insert("shipName".to_string(), name.into());
@@ -1417,6 +1453,9 @@ pub fn list_replays(dir: &Path) -> Result<Vec<ReplayEntry>, std::io::Error> {
                 name,
                 size: meta.len(),
                 modified_ms,
+                ship_name: None,
+                ship_id: None,
+                map_display_name: None,
             });
         }
     }
@@ -1545,6 +1584,20 @@ fn attach_cors(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn replay_file_name_parses_index_and_map() {
+        assert_eq!(
+            super::parse_replay_file_name("20260811_202028_PGSB708-Bismarck-1941_54_Faroe.wowsreplay"),
+            Some(("PGSB708", "54_Faroe"))
+        );
+        assert_eq!(
+            super::parse_replay_file_name("sub/20261010_195900_PASB110-Libertad_22_tierra_del_fuego.wowsreplay"),
+            Some(("PASB110", "22_tierra_del_fuego"))
+        );
+        assert_eq!(super::parse_replay_file_name("tempArenaInfo.json"), None);
+        assert_eq!(super::parse_replay_file_name("replay.wowsreplay"), None);
+    }
+
     use super::*;
     use std::fs;
     use std::net::TcpListener;
@@ -2519,6 +2572,7 @@ mod tests {
             common_economics_indices: std::collections::HashMap::new(),
             subtotal_economics: Vec::new(),
             ships: std::collections::HashMap::new(),
+            ship_ids_by_index: std::collections::HashMap::new(),
             achievements: std::collections::HashMap::new(),
             bonus_index: std::collections::HashMap::new(),
             skill_costs: std::collections::HashMap::new(),
@@ -2544,6 +2598,7 @@ mod tests {
                 schema_version: "1.0".into(),
                 arena_unique_id: 1234,
                 map_name: "Shards".into(),
+                map_display_name: None,
                 game_version: "15,4,0,1".into(),
                 game_version_short: Some("15.4".into()),
                 match_group: Some("pvp".into()),
@@ -2563,6 +2618,7 @@ mod tests {
                 clan_tag: Some("-TFD-".into()),
                 ship_id: Some(42),
                 ship_name: Some("TestShip".into()),
+                ship_display_name: None,
                 ship_tier: Some(9),
                 ship_class: None,
                 team_id: Some(1),
