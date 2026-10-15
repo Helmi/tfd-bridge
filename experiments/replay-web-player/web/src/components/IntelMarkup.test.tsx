@@ -10,7 +10,7 @@ const scene:ReplayScene={...sampleScene,replay:{...sampleScene.replay,perspectiv
   ownerSilhouette:'data:image/png;base64,owner-only',
   ownerStats:[{t:0,value:{damage:123456,potentialDamage:555555,spottingDamage:77777,ribbons:{hits:7,RIBBON_MAIN_CALIBER_PENETRATION:2,none:0}}}],
   ribbonDefinitions:{hits:{label:'Main battery hit',iconKey:'hit',isSubribbon:false,imageUrl:'data:image/png;base64,hit'},none:{label:'None',iconKey:'none',isSubribbon:false}},
-  damage:[{t:5,sourceId:owner.id,targetId:other.id,amount:1200},{t:50,sourceId:owner.id,targetId:other.id,amount:900}] as ReplayScene['damage'],
+  damage:[{id:'d1',t:5,targetId:other.id,amount:1200,kind:'shell'},{id:'d2',t:50,targetId:other.id,amount:900,kind:'shell'}],
   consumables:[{id:'c1',shipId:other.id,name:'RegenCrew',start:0,end:40}]};
 const section=(html:string,tag:string)=>{
   const start=html.indexOf(`<section class="${tag}"`);
