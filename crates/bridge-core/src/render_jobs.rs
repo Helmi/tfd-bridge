@@ -29,9 +29,9 @@ pub struct VideoOptions {
 
 impl VideoOptions {
     fn valid(&self) -> bool {
-        matches!(self.resolution.as_str(), "1080" | "1440")
+        matches!(self.resolution.as_str(), "1080" | "1440" | "2160")
             && matches!(self.fps, 24 | 30 | 60)
-            && (1_000_000..=12_000_000).contains(&self.bitrate)
+            && (1_000_000..=80_000_000).contains(&self.bitrate)
             && matches!(self.speed, 5 | 10 | 20)
     }
 }
@@ -360,10 +360,10 @@ mod tests {
 
     #[test]
     fn local_video_preferences_are_validated_and_preserved_for_worker() {
-        for resolution in ["1080", "1440"] {
+        for resolution in ["1080", "1440", "2160"] {
             for fps in [24, 30, 60] {
                 for speed in [5, 10, 20] {
-                    for bitrate in [1_000_000, 4_000_000, 12_000_000] {
+                    for bitrate in [1_000_000, 4_000_000, 80_000_000] {
                         let mut jobs = RenderJobs::default();
                         let expected = local_request(VideoOptions { map_supersampling: false, resolution: resolution.into(), fps, bitrate, speed });
                         let StartRender::New { worker, .. } = jobs.start(expected.clone()).unwrap() else { panic!("expected new job") };
@@ -373,12 +373,11 @@ mod tests {
             }
         }
         let invalid = [
-            VideoOptions { resolution: "2160".into(), ..video_options() },
             VideoOptions { fps: 0, ..video_options() },
             VideoOptions { fps: 25, ..video_options() },
             VideoOptions { fps: 61, ..video_options() },
             VideoOptions { bitrate: 999_999, ..video_options() },
-            VideoOptions { bitrate: 12_000_001, ..video_options() },
+            VideoOptions { bitrate: 80_000_001, ..video_options() },
             VideoOptions { speed: 0, ..video_options() },
             VideoOptions { speed: 15, ..video_options() },
         ];

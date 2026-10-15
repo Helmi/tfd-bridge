@@ -1,7 +1,7 @@
 import { videoFrameCount } from '../engine/ending';
 
 export interface LocalVideoSettings {
-  resolution: '1080' | '1440';
+  resolution: '1080' | '1440' | '2160';
   mapSupersampling?: boolean;
   fps: 24 | 30 | 60;
   bitrate: number;
@@ -20,4 +20,32 @@ export function estimateLocalVideo(battleSeconds: number, settings: LocalVideoSe
   const frames = videoFrameCount(battleSeconds, settings.speed, settings.fps);
   const seconds = frames / settings.fps;
   return {frames, seconds, megabytes: seconds * settings.bitrate / 8 / 1_000_000};
+}
+
+export const BITRATE_OPTIONS_MBPS = [1, 2, 4, 6, 8, 12, 16, 20, 25, 30, 40, 50, 60, 80];
+
+const SUGGESTED_MBPS: Record<LocalVideoSettings['resolution'], {standard: [number, number]; high: [number, number]}> = {
+  '1080': {standard: [8, 12], high: [12, 16]},
+  '1440': {standard: [16, 25], high: [25, 40]},
+  '2160': {standard: [40, 50], high: [60, 80]},
+};
+
+/** Suggested bitrates in Mbps for a resolution and frame rate. */
+export function suggestedBitrates(resolution: LocalVideoSettings['resolution'], fps: LocalVideoSettings['fps']) {
+  const [good, artifactFree] = SUGGESTED_MBPS[resolution][fps === 60 ? 'high' : 'standard'];
+  return {good, artifactFree};
+}
+
+export const BATTLE_LENGTH_MINUTES = [10, 15, 20];
+
+export function formatFileSize(megabytes: number) {
+  return megabytes < 1000 ? `${Math.round(megabytes)} MB` : `${(megabytes / 1000).toFixed(1)} GB`;
+}
+
+/** Expected file size for typical battle lengths with the current settings. */
+export function battleLengthSizes(settings: LocalVideoSettings) {
+  return BATTLE_LENGTH_MINUTES.map(minutes => {
+    const megabytes = estimateLocalVideo(minutes * 60, settings).megabytes;
+    return {minutes, megabytes, label: formatFileSize(megabytes)};
+  });
 }
