@@ -4,8 +4,8 @@ import { loadReplayScene } from '../engine/importScene';
 import type { ReplayScene, ReplaySceneV1 } from '../types';
 import './preview.css';
 import { BroadcastFrame } from '../components/BroadcastFrame';
+import { clock } from '../time';
 
-const clock = (t: number) => `${Math.floor(t / 60).toString().padStart(2, '0')}:${Math.floor(t % 60).toString().padStart(2, '0')}`;
 function Preview({ scene }: {scene: ReplayScene}) {
   const [time, setTime] = useState(640);
   const [playing, setPlaying] = useState(false);
