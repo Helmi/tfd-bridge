@@ -6,7 +6,7 @@ import { setTextIfChanged, truncateToWidth } from './text';
 import type { BroadcastFrameState, BroadcastLayer, LayerFactory } from './types';
 
 // Inner metrics: the LAST matching rules for .fleets, .roster-row, .roster-name and .health-track
-// in components/broadcast.css. Row origin is the top-left of the row box.
+// of the former broadcast.css (see git history). Row origin is the top-left of the row box.
 const FLEETS_BORDER = 1;
 /** `.fleet+.fleet`: 1px left border plus 24px padding. */
 const SECOND_COLUMN_INSET = 25;

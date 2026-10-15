@@ -4,7 +4,7 @@ import { buildScoreboardModel, type ScoreboardCap, type ScoreboardShip, type Sco
 import { setTextIfChanged } from './text';
 import type { BroadcastFrameState, BroadcastLayer, LayerFactory } from './types';
 
-// Inner metrics: the last matching `.scoreboard` rules in components/broadcast.css.
+// Inner metrics: the last matching `.scoreboard` rules of the former broadcast.css (see git history).
 const PADDING = { top: 12, side: 10 };
 const CENTER_WIDTH = 160;
 const SCORE_FONT_SIZE = 44;

@@ -1,60 +1,26 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  backingSize, BOX, COLORS, FEED_HEIGHT, FEED_WINDOW_HEIGHT, INTEL_COLUMN_WIDTH, MAP_COLUMN_WIDTH,
+  backingSize, BOX, COLORS, FEED_HEIGHT, FEED_WINDOW_HEIGHT, FRAME, INTEL_COLUMN_WIDTH, MAP_COLUMN_WIDTH,
   PLAYER_HEIGHT, rendererResolution, ROSTER_ROW_HEIGHT, toFrame,
 } from './layout';
 
-const css = readFileSync(new URL('../components/broadcast.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-
-/** Value of the LAST top-level declaration of one of `props` in a rule whose selector list has `selector`. */
-function lastDeclaration(selector: string, props: string[]): { prop: string; value: string } | undefined {
-  let found: { prop: string; value: string } | undefined;
-  let index = 0;
-  while (index < css.length) {
-    const open = css.indexOf('{', index);
-    if (open < 0) break;
-    const prelude = css.slice(index, open).trim();
-    let depth = 1;
-    let close = open + 1;
-    for (; close < css.length && depth > 0; close++) depth += css[close] === '{' ? 1 : css[close] === '}' ? -1 : 0;
-    index = close;
-    if (prelude.startsWith('@')) continue; // conditional rules never set these values
-    if (!prelude.split(',').some(part => part.trim() === selector)) continue;
-    for (const declaration of css.slice(open + 1, close - 1).split(';')) {
-      const colon = declaration.indexOf(':');
-      const prop = declaration.slice(0, colon).trim();
-      if (colon > 0 && props.includes(prop)) found = { prop, value: declaration.slice(colon + 1).trim() };
-    }
-  }
-  return found;
-}
-
-const px = (value: string | undefined) => Number.parseFloat(value ?? 'NaN');
-/** `flex-basis` of a `flex` shorthand ("0 0 80px") or the longhand. */
-const flexBasis = (selector: string) => {
-  const last = lastDeclaration(selector, ['flex', 'flex-basis']);
-  return px(last?.prop === 'flex' ? last.value.split(/\s+/)[2] : last?.value);
-};
-
-describe('layout constants match the last matching rule in broadcast.css', () => {
-  it('grid columns', () => {
-    expect(lastDeclaration('.broadcast', ['grid-template-columns'])?.value).toBe(`${MAP_COLUMN_WIDTH}px ${INTEL_COLUMN_WIDTH}px`);
+// These values came from the last matching rules of the former broadcast.css (see git history).
+describe('layout constants', () => {
+  it('frame and grid columns', () => {
+    expect(FRAME).toEqual({ width: 1920, height: 1080 });
+    expect(`${MAP_COLUMN_WIDTH}px ${INTEL_COLUMN_WIDTH}px`).toBe('1080px 840px');
     expect(BOX.map.w).toBe(1080);
     expect(INTEL_COLUMN_WIDTH).toBe(840);
   });
-  it('player, feed, feed window and roster row sizes', () => {
-    expect(flexBasis('.broadcast .player')).toBe(PLAYER_HEIGHT);
-    expect(flexBasis('.broadcast .feed')).toBe(FEED_HEIGHT);
-    expect(px(lastDeclaration('.broadcast .feed-window', ['height'])?.value)).toBe(FEED_WINDOW_HEIGHT);
-    expect(px(lastDeclaration('.broadcast .roster-row', ['height'])?.value)).toBe(ROSTER_ROW_HEIGHT);
-    expect(flexBasis('.broadcast .ribbons')).toBe(BOX.ribbons.h);
+  it('player, feed, feed window, ribbons and roster row sizes', () => {
+    expect(PLAYER_HEIGHT).toBe(220);
+    expect(FEED_HEIGHT).toBe(178);
+    expect(FEED_WINDOW_HEIGHT).toBe(156);
+    expect(ROSTER_ROW_HEIGHT).toBe(44);
+    expect(BOX.ribbons.h).toBe(80);
   });
-  it.each(['muted', 'line', 'green', 'red', 'gold'] as const)('color --%s', name => {
-    expect(lastDeclaration('.broadcast', [`--${name}`])?.value.toLowerCase()).toBe(COLORS[name]);
-  });
-  it('frame background', () => {
-    expect(lastDeclaration('.broadcast', ['background'])?.value.toLowerCase()).toBe(COLORS.frameBg);
+  it('colors and frame background', () => {
+    expect(COLORS).toMatchObject({ muted: '#839b90', line: '#26392f', green: '#67d9a3', red: '#fa8274', gold: '#e6b855', frameBg: '#0b1711' });
   });
 });
 

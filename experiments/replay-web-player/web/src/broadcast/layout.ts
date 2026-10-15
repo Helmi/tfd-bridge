@@ -1,5 +1,5 @@
 // Region boxes, z-order, colors and fonts of the 1920x1080 broadcast frame.
-// Values are the LAST matching rules in components/broadcast.css (layout.test.ts checks this).
+// Values from the former broadcast.css (see git history); layout.test.ts pins them.
 // Inner metrics of a layer live in that layer's own file.
 
 export interface Box { x: number; y: number; w: number; h: number }

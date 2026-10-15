@@ -54,11 +54,6 @@ export class FakeText extends FakeContainer {
 }
 
 export class FakeColorMatrixFilter { matrix: number[] = []; }
-export class FakeFillGradient {
-  destroyed = false;
-  constructor(public options: Record<string, unknown>) {}
-  destroy() { this.destroyed = true; }
-}
 export class FakeTextStyle { constructor(public options: unknown) {} }
 export const fakeCanvasTextMetrics = { measureText: (value: string) => ({ width: value.length * 10 }) };
 

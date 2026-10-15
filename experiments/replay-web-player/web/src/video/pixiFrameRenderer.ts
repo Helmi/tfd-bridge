@@ -2,7 +2,7 @@ import { BroadcastStage } from '../broadcast/BroadcastStage';
 import { backingSize } from '../broadcast/layout';
 import type { ReplayScene } from '../types';
 
-/** What `encodeMp4.ts` needs from a frame renderer (`SharedFrameRenderer` has the same surface). */
+/** What `encodeMp4.ts` needs from a frame renderer. */
 export interface FrameRenderer {
   readonly canvas: HTMLCanvasElement;
   readonly width: number;
