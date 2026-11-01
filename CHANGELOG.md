@@ -16,6 +16,9 @@ Versioning follows [SemVer](https://semver.org/).
 ### Changed
 - **Faster RePlayer and video export.** The broadcast frame (map, scoreboard, player panel, ribbons, feed, rosters and ending) is now drawn by one Pixi stage instead of HTML. The player and the video export use the same stage. Render time per frame: TBD by lead (0.21.0: 16.2 ms at 1080p30, about 14 ms at 4K30).
 
+### Added
+- **Official medal names in battle results.** Each achievement now also carries `display_name`, the medal name from the game itself (e.g. "Devastating Strike"), so tfd-engine needs no label list (schema 1.11). The field is optional; `name` is unchanged.
+
 ### Removed
 - **The old HTML broadcast frame.** The `?hud=pixi` / `?hud=dom` switch is gone, and so are the HTML frame, its capture renderer and the two browser preview pages for it.
 

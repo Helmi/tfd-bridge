@@ -368,6 +368,10 @@ pub struct Achievement {
     /// a display label or asset slug; the engine owns that mapping.
     pub name: String,
     pub count: i64,
+    /// Schema 1.11: official English medal name from the client catalog (e.g.
+    /// "Devastating Strike"); omitted when unknown. `name` stays the WG code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 /// Schema 1.5: main-battery hit-outcome sub-ribbons — real per-player counts from
@@ -1162,6 +1166,16 @@ pub fn decode_battle_result(
             .ship_name
             .as_deref()
             .and_then(|code| scene_export::ship_display_name(&game_dir, code));
+    }
+    // One catalog fetch for every player's achievements.
+    let achievement_names = scene_export::achievement_display_names(
+        &game_dir,
+        data.players
+            .iter()
+            .flat_map(|p| p.achievements.iter().map(|a| a.name.as_str())),
+    );
+    for achievement in data.players.iter_mut().flat_map(|p| p.achievements.iter_mut()) {
+        achievement.display_name = achievement_names.get(&achievement.name).cloned();
     }
     Ok(data)
 }
@@ -1999,7 +2013,7 @@ fn build_battle_data(
 
     Ok(BattleData {
         meta: BattleMeta {
-            schema_version: "1.10".into(),
+            schema_version: "1.11".into(),
             arena_unique_id,
             map_display_name: None,
             map_name,
@@ -2306,7 +2320,7 @@ pub(crate) fn resolve_player(
                         .get(&id.to_string())
                         .cloned()
                         .unwrap_or_else(|| id.to_string());
-                    Some(Achievement { name, count })
+                    Some(Achievement { name, count, display_name: None })
                 })
                 .collect()
         })
@@ -3156,6 +3170,26 @@ mod tests {
         assert!(other.economic_breakdown.is_none());
     }
 
+    /// Schema 1.11: `display_name` is serialized only when known; `name` stays
+    /// the WG code.
+    #[test]
+    fn achievement_display_name_serializes_only_when_some() {
+        let with = Achievement {
+            name: "PCH011_InstantKill".into(),
+            count: 1,
+            display_name: Some("Devastating Strike".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&with).unwrap(),
+            serde_json::json!({"name": "PCH011_InstantKill", "count": 1, "display_name": "Devastating Strike"})
+        );
+        let without = Achievement { display_name: None, ..with };
+        assert_eq!(
+            serde_json::to_value(&without).unwrap(),
+            serde_json::json!({"name": "PCH011_InstantKill", "count": 1})
+        );
+    }
+
     /// Schema 1.4: the public `achievements` field ([id, count] pairs) resolves
     /// known ids to their WG name via the achievement_index, falls back to the
     /// stringified id for an unknown id (a newer-patch medal), and defaults to
@@ -3176,10 +3210,12 @@ mod tests {
                 Achievement {
                     name: "PCH012_Arsonist".into(),
                     count: 1,
+                    display_name: None,
                 },
                 Achievement {
                     name: "999999999".into(), // unknown id -> stringified fallback
                     count: 2,
+                    display_name: None,
                 },
             ]
         );
@@ -3241,6 +3277,7 @@ mod tests {
             achievements: vec![Achievement {
                 name: "PCH012_Arsonist".into(),
                 count: 1,
+                display_name: None,
             }],
             main_hits_quality: Default::default(),
             secondary_hits: 0,
@@ -4045,7 +4082,7 @@ mod tests {
         );
         let data = result.expect("should succeed with empty players");
         assert!(data.players.is_empty());
-        assert_eq!(data.meta.schema_version, "1.10");
+        assert_eq!(data.meta.schema_version, "1.11");
     }
 
     #[test]

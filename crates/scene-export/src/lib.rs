@@ -1851,32 +1851,49 @@ fn map_catalog_key(map_name: &str) -> Option<String> {
     Some(format!("IDS_SPACES/{}", name.to_ascii_uppercase()))
 }
 
-/// Look `key` up in the newest installed client's English catalog (`global.mo`).
-/// Cache the parsed catalog by file metadata so an installed game update
-/// refreshes names automatically.
-fn catalog_text(game_dir: &Path, key: &str) -> Option<String> {
+/// The parsed English catalog (`global.mo`) of one installed build. Cached by
+/// file metadata so an installed game update refreshes names automatically.
+fn cached_catalog(path: std::path::PathBuf) -> Option<std::sync::Arc<gettext::Catalog>> {
     use std::sync::{Arc, Mutex, OnceLock};
     type CatalogCache = HashMap<std::path::PathBuf, (std::time::SystemTime, u64, Arc<gettext::Catalog>)>;
     static CACHE: OnceLock<Mutex<CatalogCache>> = OnceLock::new();
-    for build in game_data::list_available_builds(game_dir).ok()?.into_iter().rev() {
-        let path = game_data::translations_path(game_dir, build);
-        let Ok(stat) = fs::metadata(&path) else { continue };
-        let Ok(modified) = stat.modified() else { continue };
-        let mut cache = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock().ok()?;
-        let catalog = match cache.get(&path) {
-            Some((mtime, size, catalog)) if *mtime == modified && *size == stat.len() => Arc::clone(catalog),
-            _ => {
-                let Ok(file) = File::open(&path) else { continue };
-                let Ok(catalog) = gettext::Catalog::parse(file) else { continue };
-                let catalog = Arc::new(catalog);
-                cache.insert(path, (modified, stat.len(), Arc::clone(&catalog)));
-                catalog
-            }
-        };
-        let name = catalog.gettext(key);
-        if name != key && !name.trim().is_empty() { return Some(name.to_owned()); }
+    let stat = fs::metadata(&path).ok()?;
+    let modified = stat.modified().ok()?;
+    let mut cache = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock().ok()?;
+    match cache.get(&path) {
+        Some((mtime, size, catalog)) if *mtime == modified && *size == stat.len() => Some(Arc::clone(catalog)),
+        _ => {
+            let file = File::open(&path).ok()?;
+            let catalog = Arc::new(gettext::Catalog::parse(file).ok()?);
+            cache.insert(path, (modified, stat.len(), Arc::clone(&catalog)));
+            Some(catalog)
+        }
     }
-    None
+}
+
+/// Catalogs of the installed builds, newest first (unreadable ones skipped).
+fn catalogs_newest_first(game_dir: &Path) -> impl Iterator<Item = std::sync::Arc<gettext::Catalog>> {
+    let builds = game_data::list_available_builds(game_dir).unwrap_or_default();
+    let game_dir = game_dir.to_path_buf();
+    builds
+        .into_iter()
+        .rev()
+        .filter_map(move |build| cached_catalog(game_data::translations_path(&game_dir, build)))
+}
+
+/// The newest installed client's English catalog. Fetch it once, then look up
+/// many keys in memory.
+fn newest_catalog(game_dir: &Path) -> Option<std::sync::Arc<gettext::Catalog>> {
+    catalogs_newest_first(game_dir).next()
+}
+
+/// Look `key` up in the newest installed client's English catalog, falling
+/// back to older installed builds when the newest has no entry.
+fn catalog_text(game_dir: &Path, key: &str) -> Option<String> {
+    catalogs_newest_first(game_dir).find_map(|catalog| {
+        let name = catalog.gettext(key);
+        (name != key && !name.trim().is_empty()).then(|| name.to_owned())
+    })
 }
 
 /// Resolve the stable ship index with the game's own display-name catalog.
@@ -1889,6 +1906,79 @@ pub fn ship_display_name(game_dir: &Path, player_vehicle: &str) -> Option<String
 /// from the same catalog. None when the key or the catalog is missing.
 pub fn map_display_name(game_dir: &Path, map_name: &str) -> Option<String> {
     catalog_text(game_dir, &map_catalog_key(map_name)?)
+}
+
+/// Most catalog keys tried for one achievement code.
+const ACHIEVEMENT_CANDIDATE_CAP: usize = 64;
+
+/// Candidate catalog keys for an achievement code such as `PCH020_ATBACaliber`.
+/// The part after the `PCHnnn_` prefix is upper-cased. WG is inconsistent about
+/// `_` at camel-case boundaries (`InstantKill` -> `INSTANT_KILL`, but
+/// `ClassDestroy_Squad` -> `CLASSDESTROY_SQUAD`), so each lower->upper and
+/// acronym->word boundary gets a `_` or not. Existing `_` stay. At most
+/// `ACHIEVEMENT_CANDIDATE_CAP` keys, none-inserted first. Empty for a code
+/// without the prefix (e.g. a numeric id).
+fn achievement_catalog_keys(code: &str) -> Vec<String> {
+    let Some(rest) = code.strip_prefix("PCH") else { return Vec::new() };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let Some(name) = rest[digits..].strip_prefix('_') else { return Vec::new() };
+    if digits == 0 || name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return Vec::new();
+    }
+    let chars: Vec<char> = name.chars().collect();
+    // Positions in `name` where a `_` may be inserted before the character.
+    let boundaries: Vec<usize> = (1..chars.len())
+        .filter(|&i| {
+            let (prev, cur) = (chars[i - 1], chars[i]);
+            cur.is_ascii_uppercase()
+                && (prev.is_ascii_lowercase()
+                    || (prev.is_ascii_uppercase() && chars.get(i + 1).is_some_and(char::is_ascii_lowercase)))
+        })
+        .collect();
+    let combos = if boundaries.len() >= 6 { ACHIEVEMENT_CANDIDATE_CAP } else { 1usize << boundaries.len() };
+    (0..combos.min(ACHIEVEMENT_CANDIDATE_CAP))
+        .map(|mask| {
+            let mut key = String::from("IDS_ACHIEVEMENT_");
+            for (i, c) in chars.iter().enumerate() {
+                if boundaries.iter().position(|&b| b == i).is_some_and(|bit| mask >> bit & 1 == 1) {
+                    key.push('_');
+                }
+                key.push(c.to_ascii_uppercase());
+            }
+            key
+        })
+        .collect()
+}
+
+/// Official English medal name for a WG achievement code: the first candidate
+/// key `lookup` resolves. Pure, so tests can pass a plain map.
+pub fn resolve_achievement_name(code: &str, lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
+    achievement_catalog_keys(code).iter().find_map(|key| lookup(key))
+}
+
+/// Official English medal names for many achievement codes. The catalog is
+/// fetched once for the whole batch. Codes without a catalog entry are absent.
+pub fn achievement_display_names<'a>(
+    game_dir: &Path,
+    codes: impl IntoIterator<Item = &'a str>,
+) -> HashMap<String, String> {
+    let Some(catalog) = newest_catalog(game_dir) else { return HashMap::new() };
+    codes
+        .into_iter()
+        .filter_map(|code| {
+            let name = resolve_achievement_name(code, |key| {
+                let text = catalog.gettext(key);
+                (text != key && !text.trim().is_empty()).then(|| text.to_owned())
+            })?;
+            Some((code.to_owned(), name))
+        })
+        .collect()
+}
+
+/// Official English medal name for one achievement code (see
+/// `achievement_display_names` for a whole battle).
+pub fn achievement_display_name(game_dir: &Path, code: &str) -> Option<String> {
+    achievement_display_names(game_dir, [code]).remove(code)
 }
 
 /// Whether the replay captured the battle's end: a `BattleResults` (0x22)
@@ -2606,10 +2696,57 @@ mod catalog_name_tests {
     }
 
     #[test]
+    fn achievement_names_resolve_through_candidate_keys() {
+        let catalog: HashMap<&str, &str> = HashMap::from([
+            ("IDS_ACHIEVEMENT_ATBA_CALIBER", "Close Quarters Expert"),
+            ("IDS_ACHIEVEMENT_INSTANT_KILL", "Devastating Strike"),
+            ("IDS_ACHIEVEMENT_CLASSDESTROY_SQUAD", "General Offensive"),
+            ("IDS_ACHIEVEMENT_MAIN_CALIBER_SQUAD", "Strike Team"),
+            ("IDS_ACHIEVEMENT_SUPPORT_SQUAD", "Shoulder to Shoulder"),
+            ("IDS_ACHIEVEMENT_FRAG_SQUAD", "Brothers-in-Arms"),
+            ("IDS_ACHIEVEMENT_WARRIOR_SQUAD", "Coordinated Attack"),
+            ("IDS_ACHIEVEMENT_RETRIBUTION", "It's Just a Flesh Wound!"),
+            ("IDS_ACHIEVEMENT_HEADBUTT", "Die-Hard"),
+            ("IDS_ACHIEVEMENT_AIR_DEFENSE_EXPERT", "AA Defense Expert"),
+            ("IDS_ACHIEVEMENT_WARRIOR", "Kraken Unleashed!"),
+            ("IDS_ACHIEVEMENT_PVE_HERO_DAM_ENEM", "Assistant"),
+        ]);
+        let lookup = |key: &str| catalog.get(key).map(|s| s.to_string());
+        for (code, want) in [
+            ("PCH020_ATBACaliber", "Close Quarters Expert"),
+            ("PCH011_InstantKill", "Devastating Strike"),
+            ("PCH365_ClassDestroy_Squad", "General Offensive"),
+            ("PCH364_MainCaliber_Squad", "Strike Team"),
+            ("PCH367_Support_Squad", "Shoulder to Shoulder"),
+            ("PCH368_Frag_Squad", "Brothers-in-Arms"),
+            ("PCH366_Warrior_Squad", "Coordinated Attack"),
+            ("PCH010_Retribution", "It's Just a Flesh Wound!"),
+            ("PCH014_Headbutt", "Die-Hard"),
+            ("PCH174_AirDefenseExpert", "AA Defense Expert"),
+            ("PCH023_Warrior", "Kraken Unleashed!"),
+            ("PCH118_PVE_HERO_DAM_ENEM", "Assistant"),
+        ] {
+            assert_eq!(resolve_achievement_name(code, lookup).as_deref(), Some(want), "{code}");
+        }
+        assert_eq!(resolve_achievement_name("PCH159_CLAN_LEAGUE_2", lookup), None);
+        assert_eq!(resolve_achievement_name("4281525168", lookup), None);
+        assert_eq!(resolve_achievement_name("", lookup), None);
+    }
+
+    #[test]
+    fn achievement_candidates_are_capped() {
+        let keys = achievement_catalog_keys("PCH001_AaBbCcDdEeFfGgHhIiJjKkLl_MmNn");
+        assert_eq!(keys.len(), ACHIEVEMENT_CANDIDATE_CAP);
+        assert_eq!(achievement_catalog_keys("PCH011_InstantKill"), ["IDS_ACHIEVEMENT_INSTANTKILL", "IDS_ACHIEVEMENT_INSTANT_KILL"]);
+    }
+
+    #[test]
     fn missing_catalog_gives_none() {
         let dir = std::env::temp_dir().join("tfd-no-such-game-dir");
         assert_eq!(map_display_name(&dir, "spaces/22_tierra_del_fuego"), None);
         assert_eq!(ship_display_name(&dir, "PGSB708"), None);
+        assert_eq!(achievement_display_name(&dir, "PCH011_InstantKill"), None);
+        assert!(achievement_display_names(&dir, ["PCH011_InstantKill"]).is_empty());
     }
 
     #[test]
