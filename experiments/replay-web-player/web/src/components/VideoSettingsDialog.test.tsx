@@ -198,7 +198,7 @@ describe('Recent exports button and history view', () => {
     const closed = open();
     const opened = open(undefined, true);
     expect(opened).toContain('export-history-dialog');
-    expect(opened).toContain('Ship 2 · Land of Fire');
+    expect(opened).toContain('<strong>Ship 2</strong>');
     for (const markup of [closed, opened]) {
       expect(markup).toContain('role="group" aria-label="Resolution"');
       expect(button(markup, '1440p')).toContain('aria-pressed="true"');
@@ -213,7 +213,7 @@ describe('Recent exports button and history view', () => {
     fill(storage, 55);
     const markup = open(undefined, true);
     expect(markup).toContain('Recent exports (50)');
-    expect(markup.match(/<li>/g)).toHaveLength(50);
+    expect(markup.match(/<tbody>.*<\/tbody>/s)![0].match(/<tr/g)).toHaveLength(50);
   });
 });
 

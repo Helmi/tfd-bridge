@@ -16,18 +16,27 @@ describe('ExportHistoryDialog', () => {
     expect(markup).toContain('Recent exports (3)');
     expect(markup).toContain('>Close</button>');
   });
-  it('lists every entry in the given (newest first) order with date and bitrate', () => {
+  it('renders a table with a header row and one row per entry, newest first', () => {
     const markup = render(entries(3));
-    expect(markup.match(/<li>/g)).toHaveLength(3);
+    expect(markup).toContain('<table');
+    for (const label of ['When', 'Replay', 'Format', 'Encoder', 'Bitrate', 'Speed', 'Video', 'Render', 'Size'])
+      expect(markup).toContain(`scope="col"`), expect(markup).toContain(`>${label}</th>`);
+    expect(markup.match(/<th /g)).toHaveLength(9);
+    expect(markup.match(/<tbody>.*<\/tbody>/s)![0].match(/<tr/g)).toHaveLength(3);
     expect(markup.indexOf('Ship 3')).toBeLessThan(markup.indexOf('Ship 2'));
     expect(markup.indexOf('Ship 2')).toBeLessThan(markup.indexOf('Ship 1'));
-    expect(markup).toContain('2 Nov, 10:25');
-    expect(markup).toContain('2 Nov, 10:24');
-    expect(markup).toContain('<small>1080p30 · AV1 GPU · 8 Mbps · 25× · 12:40 battle → 0:43 video · done in 9 s (140 fps) · 50 MB</small>');
+  });
+  it('shows the cells of a sample row', () => {
+    const markup = render(entries(1));
+    expect(markup).toContain('>2 Nov 10:25</time>');
+    expect(markup).toContain('<strong>Ship 1</strong>');
+    expect(markup).toContain('<span>Land of Fire</span>');
+    for (const cell of ['1080p30 · AV1', 'GPU', '8 Mbps', '25×', '0:43', '9 s', '50 MB']) expect(markup).toContain(`>${cell}</td>`);
+    expect(markup).not.toMatch(/battle|done in|→/);
   });
   it('renders 50 entries in a scrollable list', () => {
     const markup = render(entries(50));
-    expect(markup.match(/<li>/g)).toHaveLength(50);
+    expect(markup.match(/<tr/g)).toHaveLength(51);
     expect(markup).toContain('class="video-history export-history-list"');
   });
 });

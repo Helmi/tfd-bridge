@@ -62,22 +62,25 @@ function renderTime(ms: number): string {
   return seconds < 120 ? `${seconds} s` : `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, '0')}`;
 }
 
-/** One dialog line: a bold main part and a small grey rest. */
-export function formatExportLine(entry: ExportHistoryEntry): {main: string; rest: string} {
+export interface ExportRow {
+  when: string; ship: string; map: string; format: string; encoder: string;
+  bitrate: string; speed: string; video: string; render: string; size: string;
+}
+
+/** The cell texts of one history table row. Unknown values show "—". */
+export function formatExportRow(entry: ExportHistoryEntry): ExportRow {
   const gpu = entry.hardware ?? (entry.encoder ? entry.encoder === 'gpu' : undefined);
-  const codec = gpu === undefined ? CODEC_LABELS[entry.codec] : `${CODEC_LABELS[entry.codec]} ${gpu ? 'GPU' : 'CPU'}`;
-  const speed = entry.renderFps === undefined ? '' : ` (${Math.round(entry.renderFps)} fps)`;
   return {
-    main: `${entry.ship} · ${entry.map}`,
-    rest: [
-      `${RESOLUTION_LABELS[entry.resolution][0]}${entry.fps}`,
-      codec,
-      ...(entry.bitrate === undefined ? [] : [`${Math.round(entry.bitrate / 100_000) / 10} Mbps`]),
-      `${entry.speed}×`,
-      `${clock(entry.battleSeconds)} battle → ${clock(entry.videoSeconds)} video`,
-      `done in ${renderTime(entry.renderMs)}${speed}`,
-      formatFileSize(entry.bytes),
-    ].join(' · '),
+    when: formatExportTime(entry.at).replace(',', ''),
+    ship: entry.ship,
+    map: entry.map,
+    format: `${RESOLUTION_LABELS[entry.resolution][0]}${entry.fps} · ${CODEC_LABELS[entry.codec]}`,
+    encoder: gpu === undefined ? '—' : gpu ? 'GPU' : 'CPU',
+    bitrate: entry.bitrate === undefined ? '—' : `${Math.round(entry.bitrate / 100_000) / 10} Mbps`,
+    speed: `${entry.speed}×`,
+    video: clock(entry.videoSeconds),
+    render: renderTime(entry.renderMs),
+    size: formatFileSize(entry.bytes),
   };
 }
 

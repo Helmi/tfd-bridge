@@ -1,6 +1,8 @@
 import {useEffect, useRef} from 'react';
-import {formatExportLine, formatExportTime, type ExportHistoryEntry} from '../video/exportHistory';
+import {formatExportRow, type ExportHistoryEntry} from '../video/exportHistory';
 import './render-dialog.css';
+
+const COLUMNS: [string, boolean][] = [['When', false], ['Replay', false], ['Format', false], ['Encoder', false], ['Bitrate', false], ['Speed', false], ['Video', true], ['Render', true], ['Size', true]];
 
 /** All stored exports, newest first, in a scrollable list. Opens on top of the export dialog. */
 export function ExportHistoryDialog({entries, onClose}: {entries: ExportHistoryEntry[]; onClose: () => void}) {
@@ -13,13 +15,23 @@ export function ExportHistoryDialog({entries, onClose}: {entries: ExportHistoryE
     <div className="render-dialog-heading">LOCAL VIDEO · MP4</div>
     <h2 id="export-history-title">Recent exports ({entries.length})</h2>
     <div className="video-history export-history-list">
-      <ul>{entries.map((entry, i) => {
-        const {main, rest} = formatExportLine(entry);
-        return <li key={`${entry.at}-${i}`}>
-          <span className="export-history-head"><strong>{main}</strong><time dateTime={entry.at}>{formatExportTime(entry.at)}</time></span>
-          <small>{rest}</small>
-        </li>;
-      })}</ul>
+      <table className="export-history-table">
+        <thead><tr>{COLUMNS.map(([label, numeric]) => <th key={label} scope="col" className={numeric ? 'num' : undefined}>{label}</th>)}</tr></thead>
+        <tbody>{entries.map((entry, i) => {
+          const row = formatExportRow(entry);
+          return <tr key={`${entry.at}-${i}`}>
+            <td className="when"><time dateTime={entry.at}>{row.when}</time></td>
+            <td className="replay" title={`${row.ship} ${row.map}`}><strong>{row.ship}</strong> <span>{row.map}</span></td>
+            <td>{row.format}</td>
+            <td>{row.encoder}</td>
+            <td>{row.bitrate}</td>
+            <td>{row.speed}</td>
+            <td className="num">{row.video}</td>
+            <td className="num">{row.render}</td>
+            <td className="num">{row.size}</td>
+          </tr>;
+        })}</tbody>
+      </table>
     </div>
     <div className="render-dialog-footer"><button type="button" onClick={onClose}>Close</button></div>
   </dialog>;
