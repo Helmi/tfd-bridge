@@ -5,6 +5,7 @@ const detect = vi.hoisted(() => vi.fn());
 vi.mock('../video/codecs', async importOriginal => ({...await importOriginal<typeof import('../video/codecs')>(), detectEncoderSupport: detect}));
 import { detectEncoderSupport, type EncoderSupport } from '../video/codecs';
 import { VideoSettingsDialog, VideoSettingsFields, settleEncoder } from './VideoSettingsDialog';
+import { addExportHistory, buildExportEntry, EXPORT_HISTORY_KEY } from '../video/exportHistory';
 import { saveVideoDefault, type LocalVideoSettings } from '../video/renderSettings';
 
 const settings: LocalVideoSettings = {resolution:'1080', fps:30, codec:'av1', encoder:'gpu', bitrate:8_000_000, speed:10};
@@ -143,5 +144,52 @@ describe('dialog opens with the saved default', () => {
     saveVideoDefault({...settings, resolution: '1440', speed: 5});
     expect(button(open(), '1440p')).toContain('aria-pressed="true"');
     expect(button(open(), '5×')).toContain('aria-pressed="true"');
+  });
+});
+
+describe('Last exports block', () => {
+  const memory = (initial?: string) => {
+    const data = new Map<string, string>(initial === undefined ? [] : [[EXPORT_HISTORY_KEY, initial]]);
+    return {getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v)};
+  };
+  const open = (batchCount?: number) => renderToStaticMarkup(<VideoSettingsDialog batchCount={batchCount} duration={754} onClose={() => {}} onRender={() => {}}/>);
+  const fill = (storage: ReturnType<typeof memory>, count: number) => {
+    for (let n = 1; n <= count; n++) addExportHistory(buildExportEntry(
+      {at: `2026-11-02T10:0${n}:00.000Z`, ship: `Ship ${n}`, map: 'Land of Fire', battleSeconds: 760, settings: settings},
+      {downloadName: 'x.mp4', elapsedMs: 8600, frames: 1263, bytes: 52_000_000, encode: {codec: 'av1', hardware: true, renderMsPerFrame: 5, waitMsPerFrame: 1, fps: 139.6}}), storage);
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('is hidden when there is no history, single and batch', () => {
+    vi.stubGlobal('localStorage', memory());
+    for (const batchCount of [undefined, 3]) expect(open(batchCount)).not.toContain('Last exports');
+  });
+  it('is hidden without error for corrupt data or blocked storage', () => {
+    vi.stubGlobal('localStorage', memory('{broken'));
+    expect(open()).not.toContain('Last exports');
+    vi.stubGlobal('localStorage', {getItem: () => {throw new Error('blocked');}, setItem: () => {}});
+    expect(open()).not.toContain('Last exports');
+  });
+  it('shows the 3 newest of 5 stored entries between the settings and the footer, single and batch', () => {
+    const storage = memory();
+    vi.stubGlobal('localStorage', storage);
+    fill(storage, 6);
+    for (const batchCount of [undefined, 3]) {
+      const markup = open(batchCount);
+      expect(markup).toContain('Last exports');
+      expect(markup.match(/<li>/g)).toHaveLength(3);
+      for (const n of [6, 5, 4]) expect(markup).toContain(`<strong>Ship ${n} · Land of Fire</strong>`);
+      for (const n of [3, 2, 1]) expect(markup).not.toContain(`Ship ${n} `);
+      expect(markup.indexOf('Ship 6')).toBeLessThan(markup.indexOf('Ship 5'));
+      expect(markup).toContain('<small>1080p30 · AV1 GPU · 10× · 12:40 battle → 0:43 video · done in 9 s (140 fps) · 52 MB</small>');
+      expect(markup.indexOf('Battle speed')).toBeLessThan(markup.indexOf('Last exports'));
+      expect(markup.indexOf('Last exports')).toBeLessThan(markup.indexOf('Save as my default'));
+    }
+  });
+  it('shows fewer than 3 entries when fewer are stored', () => {
+    const storage = memory();
+    vi.stubGlobal('localStorage', storage);
+    fill(storage, 1);
+    expect(open().match(/<li>/g)).toHaveLength(1);
   });
 });

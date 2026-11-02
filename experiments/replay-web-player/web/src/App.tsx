@@ -11,6 +11,7 @@ import { fetchBridgeScene, listBridgeReplays } from './engine/bridgeApi';
 import { loadReplayScene } from './engine/importScene';
 import { renderAndSave, webCodecsAvailable, type RenderProgress } from './video/encodeMp4';
 import { renderInBridge } from './video/bridgeRender';
+import { exportAndRecord, recordExport } from './video/exportHistory';
 import { runBatch, type BatchReplay, type BatchResult, sortOldestFirst } from './video/batchRender';
 import { useReplayShare } from './video/shareReplay';
 import type { ReplayScene } from './types';
@@ -280,10 +281,14 @@ function PlayerView({ scene, replayCount, onOpenPicker, localReplayName }: { sce
     const base = (scene.replay.title || perspectiveShip?.shipName || 'replay')
       .replace(/[^\w.-]+/g, '_').slice(0, 60) + '_' + (scene.map.displayName || readableName(scene.map.name)).replace(/[^\w.-]+/g, '_');
     try {
-      const native = isBridge && localReplayName
-        ? await renderInBridge(localReplayName,scene.replay.arenaUniqueId,setRenderProgress,renderAbort.current.signal,settings)
-        : undefined;
-      if (!native) await renderAndSave(scene, base, (p) => setRenderProgress(p), renderAbort.current.signal,settings);
+      const signal = renderAbort.current.signal;
+      await exportAndRecord({
+        bridge: isBridge && localReplayName ? () => renderInBridge(localReplayName,scene.replay.arenaUniqueId,setRenderProgress,signal,settings) : undefined,
+        local: () => renderAndSave(scene, base, (p) => setRenderProgress(p), signal,settings),
+      }, saved => recordExport({
+        at: new Date().toISOString(), ship: perspectiveShip?.shipName || scene.replay.title || 'Replay',
+        map: scene.map.displayName || readableName(scene.map.name), battleSeconds: scene.replay.duration, settings,
+      }, saved));
     } catch (reason) {
       setRenderNote(renderAbort.current?.signal.aborted ? 'Video render cancelled.' : `Render failed: ${reason instanceof Error ? reason.message : String(reason)}`);
     } finally {

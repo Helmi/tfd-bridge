@@ -27,6 +27,12 @@
 .render-dialog .video-encoder-note { margin:10px 0 0; font-size:12px; color:#91aa9d; }
 .video-estimate { display:flex; gap:8px; margin-top:20px; padding:15px 0; border-top:1px solid #2b4434; font:13px 'Space Grotesk',sans-serif; }
 .video-estimate span { color:#a5b9ad; }
+.video-history { margin-top:4px; padding-top:15px; border-top:1px solid #2b4434; }
+.video-history ul { margin:0; padding:0; list-style:none; display:grid; gap:7px; }
+.video-history .video-row-label { margin-bottom:8px; font-size:11px; }
+.video-history li { display:grid; gap:1px; }
+.video-history strong { font:500 13px 'Space Grotesk',sans-serif; color:#eaf2ed; }
+.video-history small { font:10px/1.4 'JetBrains Mono',monospace; color:#91aa9d; }
 .render-dialog .video-start-button { background:#a8d9b4; border-color:#a8d9b4; color:#112219; }
 @media(max-width:540px) { .video-choices {grid-template-columns:repeat(min(var(--cols),3),minmax(0,1fr));} }
 .video-footer-actions { display:flex; gap:10px; }

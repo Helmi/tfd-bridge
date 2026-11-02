@@ -18,6 +18,9 @@ export const DEFAULT_LOCAL_VIDEO: LocalVideoSettings = {
   resolution: '1080', fps: 30, codec: 'av1', encoder: 'gpu', bitrate: 8_000_000, speed: 10, mapSupersampling: true,
 };
 
+export const RESOLUTION_LABELS: Record<LocalVideoSettings['resolution'], [string, string]> = {
+  '1080': ['1080p', '1920 × 1080'], '1440': ['1440p', '2560 × 1440'], '2160': ['4K', '3840 × 2160'],
+};
 export const RESOLUTION_OPTIONS: LocalVideoSettings['resolution'][] = ['1080', '1440', '2160'];
 export const FPS_OPTIONS: (30 | 60)[] = [30, 60];
 export const BITRATE_OPTIONS_MBPS = [4, 8, 12, 20, 24, 36, 48, 60, 84];
@@ -35,7 +38,7 @@ export function formatFileSize(megabytes: number) {
 
 export const VIDEO_DEFAULT_KEY = 'tfd.video.default';
 
-function defaultStorage(): Pick<Storage, 'getItem' | 'setItem'> | undefined {
+export function defaultStorage(): Pick<Storage, 'getItem' | 'setItem'> | undefined {
   try { return globalThis.localStorage; } catch { return undefined; } // blocked storage throws
 }
 

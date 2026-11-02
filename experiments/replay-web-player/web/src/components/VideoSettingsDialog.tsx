@@ -1,12 +1,11 @@
 import {useEffect, useRef, useState, type CSSProperties, type ReactNode} from 'react';
 import {CODEC_LABELS, CODEC_ORDER, detectEncoderSupport, type EncoderChoice, type EncoderSupport, type VideoCodec} from '../video/codecs';
-import {BITRATE_OPTIONS_MBPS, estimateLocalVideo, formatFileSize, FPS_OPTIONS, loadVideoDefault, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
+import {BITRATE_OPTIONS_MBPS, estimateLocalVideo, formatFileSize, FPS_OPTIONS, loadVideoDefault, RESOLUTION_LABELS, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
+import {formatExportLine, loadExportHistory} from '../video/exportHistory';
 import './render-dialog.css';
 
 const ENCODERS: EncoderChoice[] = ['gpu', 'cpu'];
-const RESOLUTION_LABELS: Record<LocalVideoSettings['resolution'], [string, string]> = {
-  '1080': ['1080p', '1920 × 1080'], '1440': ['1440p', '2560 × 1440'], '2160': ['4K', '3840 × 2160'],
-};
+const HISTORY_SHOWN = 3;
 
 /** HEVC is offered only where the machine supports it (or when it is already selected). */
 export function visibleCodecs(support: EncoderSupport | undefined, selected: VideoCodec): VideoCodec[] {
@@ -21,6 +20,19 @@ export function settleEncoder(settings: LocalVideoSettings, support: EncoderSupp
   if (support[codec].cpu) return {...settings, encoder: 'cpu'};
   for (const c of visibleCodecs(support, codec)) for (const e of ENCODERS) if (support[c][e]) return {...settings, codec: c, encoder: e};
   return settings;
+}
+
+/** The newest exports; renders nothing when there are none. */
+function LastExports() {
+  const [history] = useState(() => loadExportHistory().slice(0, HISTORY_SHOWN)); // read on mount: the dialog is mounted per open
+  if (!history.length) return null;
+  return <div className="video-history">
+    <span className="video-row-label">Last exports</span>
+    <ul>{history.map((entry, i) => {
+      const {main, rest} = formatExportLine(entry);
+      return <li key={`${entry.at}-${i}`}><strong>{main}</strong><small>{rest}</small></li>;
+    })}</ul>
+  </div>;
 }
 
 function Row({label, cols, children}: {label: string; cols: number; children: ReactNode}) {
@@ -85,6 +97,7 @@ export function VideoSettingsDialog({batchCount, duration, onClose, onRender}: {
     <div className="render-dialog-heading">LOCAL VIDEO · MP4</div>
     <h2 id="video-settings-title">{batchCount ? `Save ${batchCount} ${batchCount === 1 ? 'replay' : 'replays'}` : 'Save your replay'}</h2>
     <VideoSettingsFields batchCount={batchCount} duration={duration} settings={settings} support={support} onChange={setSettings}/>
+    <LastExports/>
     <div className="render-dialog-footer">
       <button type="button" className="video-default-button" onClick={() => setSaved(saveVideoDefault(settings))}>{saved ? 'Saved as default' : 'Save as my default'}</button>
       <div className="video-footer-actions"><button type="button" onClick={onClose}>Cancel</button><button type="button" className="video-start-button" onClick={() => onRender({...settings, mapSupersampling: true})}>Render & save</button></div>
