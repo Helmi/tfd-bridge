@@ -11,6 +11,11 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.23.0] — TBD
+
+### Added
+- **Last exports in the export dialog.** The dialog lists your 3 most recent videos with the interesting numbers: resolution and frame rate, codec and whether the GPU or CPU encoded it, battle speed, battle length → video length, render time and speed, and file size.
+
 ## [0.22.0] — 2026-11-01
 
 ### Changed
