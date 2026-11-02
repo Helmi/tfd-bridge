@@ -21,6 +21,8 @@ export interface LocalReplaySummary {
   damage?: number;
   kills?: number;
   outcome?: 'victory' | 'defeat' | 'draw';
+  /** The game's own battle length in seconds; absent for incomplete replays. */
+  durationSeconds?: number;
 }
 
 interface Props {

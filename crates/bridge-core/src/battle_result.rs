@@ -1826,7 +1826,7 @@ pub(crate) fn picker_stats(meta: &scene_export::ReplayMeta, tables: &Tables) -> 
         (Some(w), Some(team)) if w >= 0 => Some(if w == team { "victory" } else { "defeat" }),
         _ => None,
     };
-    Some(serde_json::json!({"damage":owner.damage_dealt,"kills":owner.frags,"outcome":outcome}))
+    Some(serde_json::json!({"damage":owner.damage_dealt,"kills":owner.frags,"outcome":outcome,"durationSeconds":data.meta.duration_seconds}))
 }
 
 fn build_battle_data(
@@ -2679,6 +2679,33 @@ mod tests {
         assert!(stats["kills"].as_i64().unwrap() >= 0);
         assert!(stats["outcome"].is_string());
         println!("picker {:?}: {} ({:?})", meta.player_vehicle, stats, start.elapsed());
+    }
+
+    #[test]
+    fn picker_stats_include_duration_seconds_from_fixture() {
+        let tables = Tables::load(
+            &constants_path(),
+            &ship_index_min_path(),
+            &achievement_index_min_path(),
+            &bonus_index_min_path(),
+        )
+        .unwrap();
+        let fixture_str =
+            std::fs::read_to_string(battle_results_fixture_path()).expect("fixture must exist");
+        let br: serde_json::Value = serde_json::from_str(&fixture_str).unwrap();
+        let meta = scene_export::ReplayMeta {
+            battle_type: None,
+            game_version_short: None,
+            map_name: String::new(),
+            date_time: String::new(),
+            player_name: String::new(),
+            player_vehicle: String::new(),
+            complete: true,
+            header: None,
+            battle_results: Some(br),
+        };
+        let stats = picker_stats(&meta, &tables).expect("fixture stats");
+        assert_eq!(stats["durationSeconds"], 1010);
     }
 
     // ── Tables load ───────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ vi.mock('../video/codecs', async importOriginal => ({...await importOriginal<typ
 import { detectEncoderSupport, type EncoderSupport } from '../video/codecs';
 import { VideoSettingsDialog, VideoSettingsFields, settleEncoder } from './VideoSettingsDialog';
 import { addExportHistory, buildExportEntry, EXPORT_HISTORY_KEY } from '../video/exportHistory';
-import { saveVideoDefault, type LocalVideoSettings } from '../video/renderSettings';
+import { estimateLocalVideo, saveVideoDefault, type LocalVideoSettings } from '../video/renderSettings';
 
 const settings: LocalVideoSettings = {resolution:'1080', fps:30, codec:'av1', encoder:'gpu', bitrate:8_000_000, speed:10};
 const all = {gpu: true, cpu: true};
@@ -113,6 +113,34 @@ describe('size line', () => {
     const dialog = renderToStaticMarkup(<VideoSettingsDialog batchCount={3} duration={0} onClose={() => {}} onRender={() => {}}/>);
     expect(dialog).toContain('Save 3 replays');
     expect(dialog).not.toContain('about');
+  });
+});
+
+describe('batch size line', () => {
+  const batch = (batchDurations: (number | undefined)[]) =>
+    renderToStaticMarkup(<VideoSettingsFields batchCount={batchDurations.length} batchDurations={batchDurations} settings={settings} support={support()} sizeFactor={0.5} onChange={() => {}}/>);
+  const total = (markup: string) => Number(markup.match(/about (\d+) MB total/)![1]);
+  const mb = (battleSeconds: number) => estimateLocalVideo(battleSeconds, settings, 0.5).bytes / 1_048_576;
+  it('shows the battle count and the summed size', () => {
+    const markup = batch([600, 900, 1200]);
+    expect(markup).toContain('<strong>3 battles</strong>');
+    expect(markup).not.toContain('video</strong>');
+    expect(total(markup)).toBe(Math.round(mb(600) + mb(900) + mb(1200)));
+  });
+  it('says "1 battle" for a single battle', () => {
+    expect(batch([600])).toContain('<strong>1 battle</strong>');
+  });
+  it('counts a battle without duration with the average of the others', () => {
+    expect(total(batch([600, undefined, 1000]))).toBe(Math.round(mb(600) + mb(800) + mb(1000)));
+  });
+  it('shows no size line when no battle has a duration', () => {
+    const markup = batch([undefined, undefined]);
+    expect(markup).not.toContain('about');
+    expect(markup).not.toContain('battles');
+  });
+  it('shows the line in the batch dialog too', () => {
+    const dialog = renderToStaticMarkup(<VideoSettingsDialog batchCount={2} batchDurations={[600, 900]} onClose={() => {}} onRender={() => {}}/>);
+    expect(dialog).toMatch(/2 battles<\/strong><span>· about \d+ MB total/);
   });
 });
 
