@@ -33,6 +33,17 @@ export function estimateLocalVideo(battleSeconds: number, settings: LocalVideoSe
   return {frames, seconds, bytes: seconds * settings.bitrate / 8 * factor};
 }
 
+/**
+ * Total size of a batch. Battles without a known duration count with the average of the others;
+ * undefined when no battle has a duration.
+ */
+export function estimateBatchBytes(durations: (number | undefined)[], settings: LocalVideoSettings, factor = 1): number | undefined {
+  const known = durations.filter((d): d is number => d !== undefined);
+  if (!known.length) return undefined;
+  const average = known.reduce((sum, d) => sum + d, 0) / known.length;
+  return durations.reduce<number>((sum, d) => sum + estimateLocalVideo(d ?? average, settings, factor).bytes, 0);
+}
+
 /** Binary units (1 MB = 1,048,576 bytes), as Explorer and Discord count them. */
 export function formatFileSize(bytes: number) {
   const mb = bytes / 1_048_576;

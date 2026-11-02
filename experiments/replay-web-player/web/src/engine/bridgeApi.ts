@@ -27,6 +27,8 @@ export interface BridgeReplayEntry {
   damage?: number;
   kills?: number;
   outcome?: 'victory' | 'defeat' | 'draw';
+  /** The game's own battle length in seconds; absent for incomplete replays. */
+  durationSeconds?: number;
 }
 
 interface BridgeReplayListResponse {
@@ -92,6 +94,7 @@ export function replayEntryToSummary(entry: BridgeReplayEntry): LocalReplaySumma
     damage: entry.damage,
     kills: entry.kills,
     outcome: entry.outcome,
+    durationSeconds: entry.durationSeconds,
   };
 }
 

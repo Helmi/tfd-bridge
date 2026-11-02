@@ -22,6 +22,10 @@ describe('replayEntryToSummary', () => {
     expect(replayEntryToSummary({...base, mapDisplayName: 'Land of Fire'}).mapName).toBe('Land of Fire');
     expect(replayEntryToSummary(base).mapName).toBe('Tierra Del Fuego');
   });
+  it('passes the game battle duration through', () => {
+    expect(replayEntryToSummary({name: 'test.wowsreplay', size: 0, modified_ms: 0, complete: true, durationSeconds: 1010}).durationSeconds).toBe(1010);
+    expect(replayEntryToSummary({name: 'test.wowsreplay', size: 0, modified_ms: 0, complete: false}).durationSeconds).toBeUndefined();
+  });
   it('keeps unavailable results distinct from a zero-damage defeat', () => {
     const summary = replayEntryToSummary({name: 'test.wowsreplay', size: 0, modified_ms: 0, complete: false});
     expect(summary.damage).toBeUndefined();

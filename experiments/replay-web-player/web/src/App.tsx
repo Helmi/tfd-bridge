@@ -12,7 +12,7 @@ import { loadReplayScene } from './engine/importScene';
 import { renderAndSave, webCodecsAvailable, type RenderProgress } from './video/encodeMp4';
 import { renderInBridge } from './video/bridgeRender';
 import { exportAndRecord, recordExport } from './video/exportHistory';
-import { runBatch, type BatchReplay, type BatchResult, sortOldestFirst } from './video/batchRender';
+import { batchBattleSeconds, runBatch, type BatchReplay, type BatchResult, sortOldestFirst } from './video/batchRender';
 import { useReplayShare } from './video/shareReplay';
 import type { ReplayScene } from './types';
 
@@ -102,6 +102,10 @@ export function App() {
       signal: controller.signal,
       onStart: (index, current) => setBatchRun({ total: replays.length, index, current, progress: { frame: 0, total: 1, attempt: 1 } }),
       onProgress: (progress) => setBatchRun((run) => run && { ...run, progress }),
+      onSaved: (replay, saved) => recordExport({
+        at: new Date().toISOString(), ship: replay.shipName, map: replay.mapName,
+        battleSeconds: batchBattleSeconds(replay, saved, settings), settings,
+      }, saved),
     });
     batchAbort.current = null;
     setBatchRun((run) => run && { ...run, results });
@@ -244,7 +248,7 @@ export function App() {
           onClose={() => setPickerOpen(false)}
         />
       )}
-      {batchPending && <VideoSettingsDialog batchCount={batchPending.length} duration={0} onClose={() => setBatchPending(undefined)} onRender={(settings) => { void startBatch(settings); }} />}
+      {batchPending && <VideoSettingsDialog batchCount={batchPending.length} batchDurations={batchPending.map((replay) => replay.durationSeconds)} onClose={() => setBatchPending(undefined)} onRender={(settings) => { void startBatch(settings); }} />}
       {batchRun && <BatchRenderDialog {...batchRun} onCancel={() => batchAbort.current?.abort()} onClose={closeBatch} />}
     </>
   );

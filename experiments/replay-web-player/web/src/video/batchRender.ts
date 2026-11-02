@@ -1,4 +1,5 @@
-import type { RenderProgress } from './encodeMp4';
+import { ENDING_SECONDS } from '../engine/ending';
+import type { RenderProgress, SavedRender } from './encodeMp4';
 import type { LocalVideoSettings } from './renderSettings';
 import { renderInBridge } from './bridgeRender';
 
@@ -8,14 +9,21 @@ export interface BatchReplay {
   shipName: string;
   mapName: string;
   playedAt: string;
+  /** The game's own battle length in seconds, when the bridge knows it. */
+  durationSeconds?: number;
 }
 
 export type BatchResult =
-  | { replay: BatchReplay; status: 'saved' }
+  | { replay: BatchReplay; status: 'saved'; saved: SavedRender }
   | { replay: BatchReplay; status: 'failed'; error: string }
   | { replay: BatchReplay; status: 'skipped' };
 
 export const OLD_BRIDGE_REASON = 'This TFD Bridge version cannot render videos in the background. Please update it.';
+
+/** Battle length for the export history: the game's duration, else derived from the rendered frames. */
+export function batchBattleSeconds(replay: BatchReplay, saved: SavedRender, settings: LocalVideoSettings): number {
+  return replay.durationSeconds ?? Math.max(0, (saved.frames / settings.fps - ENDING_SECONDS) * settings.speed);
+}
 
 export function sortOldestFirst<T extends { playedAt: string }>(replays: T[]): T[] {
   return [...replays].sort((a, b) => Date.parse(a.playedAt) - Date.parse(b.playedAt));
@@ -33,8 +41,10 @@ export async function runBatch(options: {
   render?: typeof renderInBridge;
   onStart?: (index: number, replay: BatchReplay) => void;
   onProgress?: (progress: RenderProgress) => void;
+  /** Called right after each battle was saved. */
+  onSaved?: (replay: BatchReplay, saved: SavedRender) => void;
 }): Promise<BatchResult[]> {
-  const { settings, signal, render = renderInBridge, onStart, onProgress } = options;
+  const { settings, signal, render = renderInBridge, onStart, onProgress, onSaved } = options;
   const results: BatchResult[] = [];
   const ordered = sortOldestFirst(options.replays);
   for (const [index, replay] of ordered.entries()) {
@@ -43,7 +53,8 @@ export async function runBatch(options: {
     try {
       // The bridge resolves replays by their replays-folder-relative name (the summary id), not the bare filename.
       const saved = await render(replay.id, undefined, (progress) => onProgress?.(progress), signal, settings);
-      results.push(saved ? { replay, status: 'saved' } : { replay, status: 'failed', error: OLD_BRIDGE_REASON });
+      if (saved) onSaved?.(replay, saved);
+      results.push(saved ? { replay, status: 'saved', saved } : { replay, status: 'failed', error: OLD_BRIDGE_REASON });
     } catch (reason) {
       results.push(signal.aborted
         ? { replay, status: 'skipped' }

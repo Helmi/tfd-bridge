@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState, type CSSProperties, type ReactNode} from 'react';
 import {CODEC_LABELS, CODEC_ORDER, detectEncoderSupport, type EncoderChoice, type EncoderSupport, type VideoCodec} from '../video/codecs';
-import {BITRATE_OPTIONS_MBPS, estimateLocalVideo, formatFileSize, FPS_OPTIONS, loadVideoDefault, RESOLUTION_LABELS, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
+import {BITRATE_OPTIONS_MBPS, estimateBatchBytes, estimateLocalVideo, formatFileSize, FPS_OPTIONS, loadVideoDefault, RESOLUTION_LABELS, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
 import {loadExportHistory, sizeFactor} from '../video/exportHistory';
 import {ExportHistoryDialog} from './ExportHistoryDialog';
 import './render-dialog.css';
@@ -30,8 +30,9 @@ function Row({label, cols, children}: {label: string; cols: number; children: Re
 }
 
 /** The button rows; `support` is undefined until the first probe returns (buttons stay enabled meanwhile). */
-export function VideoSettingsFields({batchCount, duration, settings, support, sizeFactor = 1, onChange}: {
-  batchCount?: number; duration: number; settings: LocalVideoSettings; /** Share of the target bitrate the encoder reaches. */ sizeFactor?: number;
+export function VideoSettingsFields({batchCount, batchDurations, duration = 0, settings, support, sizeFactor = 1, onChange}: {
+  batchCount?: number; /** Battle seconds per selected battle (undefined = unknown); batch variant only. */ batchDurations?: (number | undefined)[];
+  duration?: number; settings: LocalVideoSettings; /** Share of the target bitrate the encoder reaches. */ sizeFactor?: number;
   support: EncoderSupport | undefined; onChange: (settings: LocalVideoSettings) => void;
 }) {
   const codec = settings.codec ?? 'h264';
@@ -40,6 +41,7 @@ export function VideoSettingsFields({batchCount, duration, settings, support, si
   const gpuMissing = support && codecs.some(c => !support[c].gpu);
   const estimate = estimateLocalVideo(duration, settings, sizeFactor);
   const seconds = Math.ceil(estimate.seconds);
+  const batchBytes = batchCount && batchDurations ? estimateBatchBytes(batchDurations, settings, sizeFactor) : undefined;
   return <>
     <Row label="Resolution" cols={3}>{RESOLUTION_OPTIONS.map(r => <button type="button" key={r} aria-pressed={settings.resolution === r} onClick={() => onChange({...settings, resolution: r})}>
       <strong>{RESOLUTION_LABELS[r][0]}</strong><small>{RESOLUTION_LABELS[r][1]}</small></button>)}</Row>
@@ -50,14 +52,17 @@ export function VideoSettingsFields({batchCount, duration, settings, support, si
     {gpuMissing && <p className="video-encoder-note">GPU encoding isn't available for these settings here — the CPU exporter is used.</p>}
     <Row label="Bitrate" cols={BITRATE_OPTIONS_MBPS.length}>{BITRATE_OPTIONS_MBPS.map(n => <button type="button" key={n} aria-label={`${n} Mbps`} aria-pressed={settings.bitrate === n * 1_000_000} onClick={() => onChange({...settings, bitrate: n * 1_000_000})}><strong>{n}</strong><small>Mbps</small></button>)}</Row>
     <Row label="Battle speed" cols={5}>{SPEED_OPTIONS.map(n => <button type="button" key={n} aria-pressed={settings.speed === n} onClick={() => onChange({...settings, speed: n})}>{n}×</button>)}</Row>
+    {batchBytes !== undefined && <div className="video-estimate"><strong>{batchCount} {batchCount === 1 ? 'battle' : 'battles'}</strong><span>· about {formatFileSize(batchBytes)} total</span></div>}
     {!batchCount && <div className="video-estimate"><strong>{Math.floor(seconds / 60)}:{(seconds % 60).toString().padStart(2, '0')} video</strong><span>· about {formatFileSize(estimate.bytes)}</span></div>}
   </>;
 }
 
-export function VideoSettingsDialog({batchCount, duration, onClose, onRender, initialHistoryOpen = false}: {
+export function VideoSettingsDialog({batchCount, batchDurations, duration, onClose, onRender, initialHistoryOpen = false}: {
   /** Batch variant: one settings object for this many battles; no single-battle estimate. */
   batchCount?: number;
-  duration: number;
+  /** Batch variant: battle seconds of each selected battle (undefined = unknown), for the total size line. */
+  batchDurations?: (number | undefined)[];
+  duration?: number;
   onClose: () => void; onRender: (settings: LocalVideoSettings) => void;
   /** Starts with the history view open (for markup tests). */
   initialHistoryOpen?: boolean;
@@ -87,7 +92,7 @@ export function VideoSettingsDialog({batchCount, duration, onClose, onRender, in
   return <dialog ref={dialog} className="render-dialog video-settings-dialog" aria-labelledby="video-settings-title" onCancel={onClose}>
     <div className="render-dialog-heading">LOCAL VIDEO · MP4</div>
     <h2 id="video-settings-title">{batchCount ? `Save ${batchCount} ${batchCount === 1 ? 'replay' : 'replays'}` : 'Save your replay'}</h2>
-    <VideoSettingsFields batchCount={batchCount} duration={duration} settings={settings} support={support} sizeFactor={sizeFactor(settings.codec ?? 'h264', settings.encoder ?? 'gpu', history)} onChange={setSettings}/>
+    <VideoSettingsFields batchCount={batchCount} batchDurations={batchDurations} duration={duration} settings={settings} support={support} sizeFactor={sizeFactor(settings.codec ?? 'h264', settings.encoder ?? 'gpu', history)} onChange={setSettings}/>
     <div className="render-dialog-footer">
       <div className="video-footer-actions">
         <button type="button" className="video-default-button" onClick={() => setSaved(saveVideoDefault(settings))}>{saved ? 'Saved as default' : 'Save as my default'}</button>
