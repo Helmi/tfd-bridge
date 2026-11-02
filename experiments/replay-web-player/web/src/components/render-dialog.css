@@ -39,8 +39,8 @@
 .export-history-table th { position:sticky; top:0; z-index:1; background:#101e18; padding:0 8px 8px; text-align:left; font:11px 'Space Grotesk',sans-serif; text-transform:uppercase; letter-spacing:.6px; color:#a5b9ad; border-bottom:1px solid #2b4434; white-space:nowrap; }
 .export-history-table td { padding:8px; border-bottom:1px solid #2b4434; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .export-history-table tbody tr:hover { background:#16281f; }
-.export-history-table th:nth-child(1) { width:104px; }
-.export-history-table th:nth-child(3) { width:130px; }
+.export-history-table th:nth-child(1) { width:126px; }
+.export-history-table th:nth-child(3) { width:162px; }
 .export-history-table th:nth-child(4) { width:76px; }
 .export-history-table th:nth-child(5) { width:92px; }
 .export-history-table th:nth-child(6) { width:62px; }
