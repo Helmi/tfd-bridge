@@ -26,14 +26,17 @@ export const FPS_OPTIONS: (30 | 60)[] = [30, 60];
 export const BITRATE_OPTIONS_MBPS = [4, 8, 12, 20, 24, 36, 48, 60, 84];
 export const SPEED_OPTIONS: LocalVideoSettings['speed'][] = [5, 10, 15, 20, 25];
 
-export function estimateLocalVideo(battleSeconds: number, settings: LocalVideoSettings) {
+/** `factor` is the share of the target bitrate the encoder really reaches (see `sizeFactor`); 1 means the full target. */
+export function estimateLocalVideo(battleSeconds: number, settings: LocalVideoSettings, factor = 1) {
   const frames = videoFrameCount(battleSeconds, settings.speed, settings.fps);
   const seconds = frames / settings.fps;
-  return {frames, seconds, megabytes: seconds * settings.bitrate / 8 / 1_000_000};
+  return {frames, seconds, bytes: seconds * settings.bitrate / 8 * factor};
 }
 
-export function formatFileSize(megabytes: number) {
-  return megabytes < 1000 ? `${Math.round(megabytes)} MB` : `${(megabytes / 1000).toFixed(1)} GB`;
+/** Binary units (1 MB = 1,048,576 bytes), as Explorer and Discord count them. */
+export function formatFileSize(bytes: number) {
+  const mb = bytes / 1_048_576;
+  return mb < 1024 ? `${Math.round(mb)} MB` : `${(bytes / 1_073_741_824).toFixed(1)} GB`;
 }
 
 export const VIDEO_DEFAULT_KEY = 'tfd.video.default';
