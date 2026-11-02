@@ -11,7 +11,7 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
-## [0.23.0] — TBD
+## [0.23.0] — 2026-11-02
 
 ### Added
 - **Recent exports.** "Recent exports" in the export dialog opens a table of your last 50 videos: date, replay, resolution and frame rate, codec, GPU or CPU, bitrate, battle speed, video length, render time, export speed in frames per second and file size. Battles from "Render multiple battles" are listed too.
