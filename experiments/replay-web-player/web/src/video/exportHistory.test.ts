@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SavedRender } from './encodeMp4';
 import {
-  addExportHistory, buildExportEntry, EXPORT_HISTORY_KEY, EXPORT_HISTORY_MAX, exportAndRecord, formatExportLine, formatExportTime, loadExportHistory, median,
+  addExportHistory, buildExportEntry, EXPORT_HISTORY_KEY, EXPORT_HISTORY_MAX, exportAndRecord, formatExportRow, formatExportTime, loadExportHistory, median,
   recordExport, sizeFactor,
   type ExportHistoryEntry, type ExportInput,
 } from './exportHistory';
@@ -46,48 +46,43 @@ describe('buildExportEntry', () => {
   });
 });
 
-describe('formatExportLine', () => {
+describe('formatExportRow', () => {
+  const row = (patch: Partial<ExportHistoryEntry> = {}) => formatExportRow({...entry(1), ...patch});
   it('formats a GPU export', () => {
-    expect(formatExportLine({...buildExportEntry(input, saved({frames: 1263, elapsedMs: 8600})), videoSeconds: 42.1})).toEqual({
-      main: 'Lenin · Land of Fire',
-      rest: '1080p30 · AV1 GPU · 8 Mbps · 20× · 12:40 battle → 0:43 video · done in 9 s (140 fps) · 50 MB',
+    expect(formatExportRow({...buildExportEntry(input, saved({frames: 1263, elapsedMs: 8600})), videoSeconds: 42.1})).toEqual({
+      when: formatExportTime(input.at).replace(',', ''), ship: 'Lenin', map: 'Land of Fire', format: '1080p30 · AV1', encoder: 'GPU',
+      bitrate: '8 Mbps', speed: '20×', video: '0:43', render: '9 s', size: '50 MB',
     });
+    expect(row().when).not.toContain(',');
   });
   it('formats a CPU export with 1440p, 4K and GB sizes', () => {
     const cpu = buildExportEntry({...input, settings: {...input.settings, resolution: '1440', fps: 60, codec: 'h264', encoder: 'cpu', speed: 5}},
       saved({encode: {codec: 'h264', hardware: false, renderMsPerFrame: 0, waitMsPerFrame: 0, fps: 12.4}, elapsedMs: 150_400, bytes: 1_250_000_000, frames: 7200}));
-    expect(formatExportLine(cpu).rest).toBe('1440p60 · H.264 CPU · 8 Mbps · 5× · 12:40 battle → 2:00 video · done in 2:30 (12 fps) · 1.2 GB');
-    expect(formatExportLine({...cpu, resolution: '2160'}).rest.startsWith('4K60 · ')).toBe(true);
+    expect(formatExportRow(cpu)).toMatchObject({format: '1440p60 · H.264', encoder: 'CPU', speed: '5×', video: '2:00', render: '2:30', size: '1.2 GB'});
+    expect(formatExportRow({...cpu, resolution: '2160'}).format).toBe('4K60 · H.264');
   });
-  it('takes GPU/CPU from the encoder when hardware is unknown and omits it when neither is known', () => {
+  it('takes GPU/CPU from the encoder when hardware is unknown and shows a dash when neither is known', () => {
     const base = buildExportEntry(input, saved({encode: undefined}));
-    expect(formatExportLine(base).rest).toContain('AV1 GPU · ');
-    expect(formatExportLine({...base, encoder: 'cpu'}).rest).toContain('AV1 CPU · ');
-    expect(formatExportLine({...base, encoder: undefined}).rest).toContain('1080p30 · AV1 · 8 Mbps · 20×');
+    expect(formatExportRow(base).encoder).toBe('GPU');
+    expect(formatExportRow({...base, encoder: 'cpu'}).encoder).toBe('CPU');
+    expect(formatExportRow({...base, encoder: undefined}).encoder).toBe('—');
   });
-  it('leaves the bitrate out for old entries and rounds it to one decimal', () => {
+  it('shows a dash for old entries without bitrate and rounds it to one decimal', () => {
     const {bitrate: _b, ...old} = entry(1);
-    expect(formatExportLine(old).rest).toContain('AV1 GPU · 20×');
-    expect(formatExportLine({...entry(1), bitrate: 12_500_000}).rest).toContain('AV1 GPU · 12.5 Mbps · 20×');
+    expect(formatExportRow(old).bitrate).toBe('—');
+    expect(row({bitrate: 12_500_000}).bitrate).toBe('12.5 Mbps');
   });
   it('prefers hardware over the requested encoder', () => {
-    expect(formatExportLine({...entry(1), encoder: 'gpu', hardware: false}).rest).toContain('AV1 CPU');
+    expect(row({encoder: 'gpu', hardware: false}).encoder).toBe('CPU');
   });
-  it('rounds times and rates as specified', () => {
-    const line = (patch: Partial<ExportHistoryEntry>) => formatExportLine({...entry(1), ...patch}).rest;
-    expect(line({videoSeconds: 42.1})).toContain('→ 0:43 video');
-    expect(line({videoSeconds: 60})).toContain('→ 1:00 video');
-    expect(line({battleSeconds: 759.2})).toContain('12:40 battle');
-    expect(line({renderMs: 8600})).toContain('done in 9 s');
-    expect(line({renderMs: 100})).toContain('done in 1 s');
-    expect(line({renderMs: 119_400})).toContain('done in 119 s');
-    expect(line({renderMs: 119_600})).toContain('done in 2:00');
-    expect(line({renderMs: 125_500})).toContain('done in 2:06');
-    expect(line({renderFps: 139.6})).toContain('(140 fps)');
-  });
-  it('omits the fps part when the rate is unknown', () => {
-    const {renderFps: _fps, ...rest} = entry(1);
-    expect(formatExportLine(rest).rest).toContain('done in 9 s · 50 MB');
+  it('rounds times as specified', () => {
+    expect(row({videoSeconds: 42.1}).video).toBe('0:43');
+    expect(row({videoSeconds: 60}).video).toBe('1:00');
+    expect(row({renderMs: 8600}).render).toBe('9 s');
+    expect(row({renderMs: 100}).render).toBe('1 s');
+    expect(row({renderMs: 119_400}).render).toBe('119 s');
+    expect(row({renderMs: 119_600}).render).toBe('2:00');
+    expect(row({renderMs: 125_500}).render).toBe('2:06');
   });
 });
 
