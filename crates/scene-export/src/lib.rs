@@ -1692,6 +1692,14 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
         .and_then(|entity| GuiAsset::ShipSilhouette(&entity.ship_code).read(&vfs, Some(&version)))
         .map(|bytes| format!("data:image/png;base64,{}", BASE64.encode(bytes)));
     let teams = build_teams(&entities);
+    let outcome = replay_outcome(collector.winning_team, self_entity.filter(|entity| entity.relation == "self").map(|entity| entity.team_id.as_str()));
+    // Bot names are catalog keys. Resolve them last: the perspective above and
+    // the chat sender match during the scan keep the raw username.
+    let name_catalog = newest_catalog(game_dir);
+    resolve_scene_player_names(&mut entities, &mut collector.chat, |key| {
+        let text = name_catalog.as_ref()?.gettext(key);
+        (text != key).then(|| text.to_owned())
+    });
     let id = source_sha256[..16].to_string();
     let replay_name = replay_path
         .file_name()
@@ -1712,7 +1720,7 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
             battle_type: replay.meta.matchGroup.clone(),
             date_time: (!replay.meta.dateTime.is_empty()).then(|| replay.meta.dateTime.clone()),
             complete,
-            outcome: replay_outcome(collector.winning_team, self_entity.filter(|entity| entity.relation == "self").map(|entity| entity.team_id.as_str())),
+            outcome,
             duration_ms,
             battle_start_ms: battle_start,
             perspective,
@@ -1979,6 +1987,42 @@ pub fn achievement_display_names<'a>(
 /// `achievement_display_names` for a whole battle).
 pub fn achievement_display_name(game_dir: &Path, code: &str) -> Option<String> {
     achievement_display_names(game_dir, [code]).remove(code)
+}
+
+/// Whether `name` is a whole catalog key such as `IDS_OP_14_ENEMY_WAVE_14`.
+fn is_catalog_key(name: &str) -> bool {
+    name.strip_prefix("IDS_").is_some_and(|rest| {
+        !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+    })
+}
+
+/// Display name for a player. Operations and Co-op bots carry a raw catalog
+/// key (`IDS_OP_14_ENEMY_WAVE_14`) instead of a name; resolve those through
+/// `lookup`. Any other name, and any key `lookup` does not know, stays as is.
+/// Pure, so tests can pass a plain map.
+fn resolve_player_name(name: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
+    if is_catalog_key(name)
+        && let Some(resolved) = lookup(name).filter(|text| !text.trim().is_empty())
+    {
+        return resolved;
+    }
+    name.to_owned()
+}
+
+/// Replace bot catalog keys with game names in the scene's displayed player
+/// names (entities and chat sender names). Runs after the scan, so the chat
+/// sender match against the raw username has already happened.
+fn resolve_scene_player_names(
+    entities: &mut [EntityDescriptor],
+    chat: &mut [ChatEvent],
+    lookup: impl Fn(&str) -> Option<String>,
+) {
+    for entity in entities {
+        entity.player_name = resolve_player_name(&entity.player_name, &lookup);
+    }
+    for event in chat {
+        event.sender_name = resolve_player_name(&event.sender_name, &lookup);
+    }
 }
 
 /// Whether the replay captured the battle's end: a `BattleResults` (0x22)
@@ -2738,6 +2782,78 @@ mod catalog_name_tests {
         let keys = achievement_catalog_keys("PCH001_AaBbCcDdEeFfGgHhIiJjKkLl_MmNn");
         assert_eq!(keys.len(), ACHIEVEMENT_CANDIDATE_CAP);
         assert_eq!(achievement_catalog_keys("PCH011_InstantKill"), ["IDS_ACHIEVEMENT_INSTANTKILL", "IDS_ACHIEVEMENT_INSTANT_KILL"]);
+    }
+
+    fn bot_catalog() -> HashMap<&'static str, &'static str> {
+        HashMap::from([
+            ("IDS_OP_14_ENEMY_WAVE_14", "Gimu 4"),
+            ("IDS_OP_14_KEY_OBJECT_ALLY", "Eagle"),
+            ("IDS_OP_14_ENEMY_WAVE_ADD_4", "Mato 4"),
+            ("IDS_OP_14_ENEMY_WAVE_310", "Nensho 10"),
+        ])
+    }
+
+    #[test]
+    fn resolve_player_name_maps_bot_keys_only() {
+        let catalog = bot_catalog();
+        let lookup = |key: &str| catalog.get(key).map(|s| s.to_string());
+        for (raw, want) in [
+            ("IDS_OP_14_ENEMY_WAVE_14", "Gimu 4"),
+            ("IDS_OP_14_KEY_OBJECT_ALLY", "Eagle"),
+            ("IDS_OP_14_ENEMY_WAVE_ADD_4", "Mato 4"),
+            ("IDS_OP_14_ENEMY_WAVE_310", "Nensho 10"),
+        ] {
+            assert_eq!(resolve_player_name(raw, lookup), want);
+        }
+        // Human names, key-like names missing from the catalog, lowercase and
+        // partial matches stay raw.
+        for raw in [
+            "Helmi", "IDS_UNKNOWN_KEY", "ids_op_14_enemy_wave_14", "IDS_",
+            "prefix IDS_OP_14_ENEMY_WAVE_14", "IDS_OP_14_ENEMY_WAVE_14 ", "IDS_op_14", "",
+        ] {
+            assert_eq!(resolve_player_name(raw, lookup), raw);
+        }
+        // No catalog at all: raw stays.
+        assert_eq!(resolve_player_name("IDS_OP_14_ENEMY_WAVE_14", |_| None), "IDS_OP_14_ENEMY_WAVE_14");
+    }
+
+    fn test_entity(id: &str, player_name: &str) -> EntityDescriptor {
+        EntityDescriptor {
+            id: id.into(),
+            team_id: "1".into(),
+            relation: "enemy".into(),
+            player_name: player_name.into(),
+            clan: None,
+            division_id: None,
+            division_label: None,
+            ship_name: String::new(),
+            ship_code: String::new(),
+            tier: None,
+            species: "unknown".into(),
+            max_hp: 0.0,
+        }
+    }
+
+    #[test]
+    fn scene_names_resolve_bots_and_keep_humans() {
+        let catalog = bot_catalog();
+        let lookup = |key: &str| catalog.get(key).map(|s| s.to_string());
+        let mut entities = vec![
+            test_entity("1", "Helmi"),
+            test_entity("2", "IDS_OP_14_ENEMY_WAVE_14"),
+            test_entity("3", "IDS_OP_14_MISSING"),
+        ];
+        let mut chat = vec![
+            ChatEvent { t: 0, sender_id: "2".into(), sender_name: "IDS_OP_14_ENEMY_WAVE_14".into(), channel: "all".into(), message: "hi".into() },
+            ChatEvent { t: 1, sender_id: "1".into(), sender_name: "Helmi".into(), channel: "all".into(), message: "yo".into() },
+        ];
+        resolve_scene_player_names(&mut entities, &mut chat, lookup);
+        let names: Vec<_> = entities.iter().map(|e| e.player_name.as_str()).collect();
+        assert_eq!(names, ["Helmi", "Gimu 4", "IDS_OP_14_MISSING"]);
+        // The sender id was matched on the raw name earlier and stays; only the
+        // displayed sender name changes.
+        assert_eq!((chat[0].sender_id.as_str(), chat[0].sender_name.as_str()), ("2", "Gimu 4"));
+        assert_eq!((chat[1].sender_id.as_str(), chat[1].sender_name.as_str()), ("1", "Helmi"));
     }
 
     #[test]
