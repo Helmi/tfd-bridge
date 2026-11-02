@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_LOCAL_VIDEO, loadVideoDefault, saveVideoDefault, VIDEO_DEFAULT_KEY } from './renderSettings';
+import { DEFAULT_LOCAL_VIDEO, estimateLocalVideo, formatFileSize, loadVideoDefault, saveVideoDefault, VIDEO_DEFAULT_KEY } from './renderSettings';
 
 const memory = (initial?: string) => {
   const map = new Map<string, string>(initial === undefined ? [] : [[VIDEO_DEFAULT_KEY, initial]]);
@@ -39,5 +39,25 @@ describe('local video default', () => {
     const broken = {getItem: () => {throw new Error('blocked');}, setItem: () => {throw new Error('blocked');}};
     expect(loadVideoDefault(broken)).toEqual(DEFAULT_LOCAL_VIDEO);
     expect(saveVideoDefault(DEFAULT_LOCAL_VIDEO, broken)).toBe(false);
+  });
+});
+
+describe('formatFileSize', () => {
+  it('uses binary MB and GB, so sizes match Explorer', () => {
+    expect(formatFileSize(0)).toBe('0 MB');
+    expect(formatFileSize(1_048_576)).toBe('1 MB');
+    expect(formatFileSize(120_000_000)).toBe('114 MB');
+    expect(formatFileSize(1_073_741_823)).toBe('1024 MB');
+    expect(formatFileSize(1_073_741_824)).toBe('1.0 GB');
+    expect(formatFileSize(1_250_000_000)).toBe('1.2 GB');
+  });
+});
+
+describe('estimateLocalVideo', () => {
+  it('returns bytes from length, bitrate and factor', () => {
+    const base = estimateLocalVideo(100, DEFAULT_LOCAL_VIDEO);
+    expect(base.seconds).toBe(14.5);
+    expect(base.bytes).toBeCloseTo(14.5 * 8_000_000 / 8);
+    expect(estimateLocalVideo(100, DEFAULT_LOCAL_VIDEO, 0.5).bytes).toBeCloseTo(base.bytes / 2);
   });
 });

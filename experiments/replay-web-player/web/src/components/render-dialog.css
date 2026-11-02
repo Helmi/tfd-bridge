@@ -33,6 +33,9 @@
 .video-history li { display:grid; gap:1px; }
 .video-history strong { font:500 13px 'Space Grotesk',sans-serif; color:#eaf2ed; }
 .video-history small { font:10px/1.4 'JetBrains Mono',monospace; color:#91aa9d; }
+.export-history-list { max-height:60vh; overflow-y:auto; margin-top:16px; padding-right:6px; }
+.export-history-head { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+.export-history-head time { font:10px 'JetBrains Mono',monospace; color:#7f9b89; white-space:nowrap; }
 .render-dialog .video-start-button { background:#a8d9b4; border-color:#a8d9b4; color:#112219; }
 @media(max-width:540px) { .video-choices {grid-template-columns:repeat(min(var(--cols),3),minmax(0,1fr));} }
 .video-footer-actions { display:flex; gap:10px; }

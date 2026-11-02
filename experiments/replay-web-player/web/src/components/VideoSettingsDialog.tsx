@@ -1,11 +1,11 @@
 import {useEffect, useRef, useState, type CSSProperties, type ReactNode} from 'react';
 import {CODEC_LABELS, CODEC_ORDER, detectEncoderSupport, type EncoderChoice, type EncoderSupport, type VideoCodec} from '../video/codecs';
 import {BITRATE_OPTIONS_MBPS, estimateLocalVideo, formatFileSize, FPS_OPTIONS, loadVideoDefault, RESOLUTION_LABELS, RESOLUTION_OPTIONS, saveVideoDefault, SPEED_OPTIONS, type LocalVideoSettings} from '../video/renderSettings';
-import {formatExportLine, loadExportHistory} from '../video/exportHistory';
+import {loadExportHistory, sizeFactor} from '../video/exportHistory';
+import {ExportHistoryDialog} from './ExportHistoryDialog';
 import './render-dialog.css';
 
 const ENCODERS: EncoderChoice[] = ['gpu', 'cpu'];
-const HISTORY_SHOWN = 3;
 
 /** HEVC is offered only where the machine supports it (or when it is already selected). */
 export function visibleCodecs(support: EncoderSupport | undefined, selected: VideoCodec): VideoCodec[] {
@@ -22,19 +22,6 @@ export function settleEncoder(settings: LocalVideoSettings, support: EncoderSupp
   return settings;
 }
 
-/** The newest exports; renders nothing when there are none. */
-function LastExports() {
-  const [history] = useState(() => loadExportHistory().slice(0, HISTORY_SHOWN)); // read on mount: the dialog is mounted per open
-  if (!history.length) return null;
-  return <div className="video-history">
-    <span className="video-row-label">Last exports</span>
-    <ul>{history.map((entry, i) => {
-      const {main, rest} = formatExportLine(entry);
-      return <li key={`${entry.at}-${i}`}><strong>{main}</strong><small>{rest}</small></li>;
-    })}</ul>
-  </div>;
-}
-
 function Row({label, cols, children}: {label: string; cols: number; children: ReactNode}) {
   return <div className="video-row" role="group" aria-label={label}>
     <span className="video-row-label" aria-hidden="true">{label}</span>
@@ -43,15 +30,15 @@ function Row({label, cols, children}: {label: string; cols: number; children: Re
 }
 
 /** The button rows; `support` is undefined until the first probe returns (buttons stay enabled meanwhile). */
-export function VideoSettingsFields({batchCount, duration, settings, support, onChange}: {
-  batchCount?: number; duration: number; settings: LocalVideoSettings;
+export function VideoSettingsFields({batchCount, duration, settings, support, sizeFactor = 1, onChange}: {
+  batchCount?: number; duration: number; settings: LocalVideoSettings; /** Share of the target bitrate the encoder reaches. */ sizeFactor?: number;
   support: EncoderSupport | undefined; onChange: (settings: LocalVideoSettings) => void;
 }) {
   const codec = settings.codec ?? 'h264';
   const encoder = settings.encoder ?? 'gpu';
   const codecs = visibleCodecs(support, codec);
   const gpuMissing = support && codecs.some(c => !support[c].gpu);
-  const estimate = estimateLocalVideo(duration, settings);
+  const estimate = estimateLocalVideo(duration, settings, sizeFactor);
   const seconds = Math.ceil(estimate.seconds);
   return <>
     <Row label="Resolution" cols={3}>{RESOLUTION_OPTIONS.map(r => <button type="button" key={r} aria-pressed={settings.resolution === r} onClick={() => onChange({...settings, resolution: r})}>
@@ -63,20 +50,24 @@ export function VideoSettingsFields({batchCount, duration, settings, support, on
     {gpuMissing && <p className="video-encoder-note">GPU encoding isn't available for these settings here — the CPU exporter is used.</p>}
     <Row label="Bitrate" cols={BITRATE_OPTIONS_MBPS.length}>{BITRATE_OPTIONS_MBPS.map(n => <button type="button" key={n} aria-label={`${n} Mbps`} aria-pressed={settings.bitrate === n * 1_000_000} onClick={() => onChange({...settings, bitrate: n * 1_000_000})}><strong>{n}</strong><small>Mbps</small></button>)}</Row>
     <Row label="Battle speed" cols={5}>{SPEED_OPTIONS.map(n => <button type="button" key={n} aria-pressed={settings.speed === n} onClick={() => onChange({...settings, speed: n})}>{n}×</button>)}</Row>
-    {!batchCount && <div className="video-estimate"><strong>{Math.floor(seconds / 60)}:{(seconds % 60).toString().padStart(2, '0')} video</strong><span>· about {formatFileSize(estimate.megabytes)}</span></div>}
+    {!batchCount && <div className="video-estimate"><strong>{Math.floor(seconds / 60)}:{(seconds % 60).toString().padStart(2, '0')} video</strong><span>· about {formatFileSize(estimate.bytes)}</span></div>}
   </>;
 }
 
-export function VideoSettingsDialog({batchCount, duration, onClose, onRender}: {
+export function VideoSettingsDialog({batchCount, duration, onClose, onRender, initialHistoryOpen = false}: {
   /** Batch variant: one settings object for this many battles; no single-battle estimate. */
   batchCount?: number;
   duration: number;
   onClose: () => void; onRender: (settings: LocalVideoSettings) => void;
+  /** Starts with the history view open (for markup tests). */
+  initialHistoryOpen?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [settings, setSettings] = useState(loadVideoDefault); // every open starts from the saved default (the dialog is mounted per open)
   const [support, setSupport] = useState<EncoderSupport>();
   const [saved, setSaved] = useState(false);
+  const [history] = useState(() => loadExportHistory()); // read on mount: the dialog is mounted per open
+  const [historyOpen, setHistoryOpen] = useState(initialHistoryOpen);
   // Live detection for the exact config the encoder would use; never blocks the dialog.
   useEffect(() => {
     let current = true;
@@ -96,11 +87,14 @@ export function VideoSettingsDialog({batchCount, duration, onClose, onRender}: {
   return <dialog ref={dialog} className="render-dialog video-settings-dialog" aria-labelledby="video-settings-title" onCancel={onClose}>
     <div className="render-dialog-heading">LOCAL VIDEO · MP4</div>
     <h2 id="video-settings-title">{batchCount ? `Save ${batchCount} ${batchCount === 1 ? 'replay' : 'replays'}` : 'Save your replay'}</h2>
-    <VideoSettingsFields batchCount={batchCount} duration={duration} settings={settings} support={support} onChange={setSettings}/>
-    <LastExports/>
+    <VideoSettingsFields batchCount={batchCount} duration={duration} settings={settings} support={support} sizeFactor={sizeFactor(settings.codec ?? 'h264', settings.encoder ?? 'gpu', history)} onChange={setSettings}/>
     <div className="render-dialog-footer">
-      <button type="button" className="video-default-button" onClick={() => setSaved(saveVideoDefault(settings))}>{saved ? 'Saved as default' : 'Save as my default'}</button>
+      <div className="video-footer-actions">
+        <button type="button" className="video-default-button" onClick={() => setSaved(saveVideoDefault(settings))}>{saved ? 'Saved as default' : 'Save as my default'}</button>
+        {history.length > 0 && <button type="button" className="video-default-button" onClick={() => setHistoryOpen(true)}>Recent exports ({history.length})</button>}
+      </div>
       <div className="video-footer-actions"><button type="button" onClick={onClose}>Cancel</button><button type="button" className="video-start-button" onClick={() => onRender({...settings, mapSupersampling: true})}>Render & save</button></div>
     </div>
+    {historyOpen && <ExportHistoryDialog entries={history} onClose={() => setHistoryOpen(false)}/>}
   </dialog>;
 }
