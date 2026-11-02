@@ -27,7 +27,7 @@ vi.mock('pixi.js', () => {
   return { Container, Graphics, Rectangle };
 });
 
-import { createScoreboardLayer } from './scoreboardLayer';
+import { createScoreboardLayer, stripBounds, stripLayout } from './scoreboardLayer';
 
 const owner = sampleScene.ships[0];
 const scene: ReplayScene = { ...sampleScene, replay: { ...sampleScene.replay, perspectiveEntityId: owner.id } };
@@ -129,5 +129,86 @@ describe('scoreboard layer', () => {
     layer.update(frame(165));
     const caps = ['A', 'B', 'C'].map(letter => texts.find(t => t.text === letter)!.style.fill);
     expect(caps).toEqual([COLORS.green, COLORS.red, COLORS.red]);
+  });
+});
+
+describe('survivor strip layout', () => {
+  const friendly = stripBounds('friendly', 3);
+  const enemy = stripBounds('enemy', 3);
+  const SLOT = 27;
+  const extent = (count: number, l: { pitch: number; scale: number }) => (count - 1) * l.pitch + SLOT * l.scale;
+
+  it('bounds each side by its column edge and 8 px before the cap row', () => {
+    // Three caps: 3 x 21 + 2 x 9 = 81 px wide, centred on x 540.
+    expect(friendly).toEqual({ left: 38, right: 540 - 40.5 - 8 });
+    expect(enemy).toEqual({ left: 540 + 40.5 + 8, right: 28 + 1024 - 10 });
+  });
+
+  it('keeps 12 ships exactly as before: 30 px pitch, full size, centred on the column', () => {
+    expect(stripLayout(12, friendly, 249)).toEqual({ pitch: 30, scale: 1, x0: 249 - (12 * 30 - 3) / 2 });
+    const right = stripLayout(12, enemy, 831);
+    expect(right).toEqual({ pitch: 30, scale: 1, x0: 831 - 178.5 });
+  });
+
+  it('first closes the gap, then shrinks the icons', () => {
+    const tight = stripLayout(16, friendly, 249);
+    expect(tight.scale).toBe(1);
+    expect(tight.pitch).toBeGreaterThanOrEqual(SLOT);
+    expect(tight.pitch).toBeLessThan(30);
+    const small = stripLayout(24, friendly, 249);
+    expect(small.scale).toBeLessThan(1);
+    expect(small.scale).toBeGreaterThanOrEqual(0.5);
+    expect(small.pitch).toBeCloseTo(SLOT * small.scale);
+  });
+
+  it.each([12, 15, 16, 24, 30, 40, 60])('fits %i ships inside both bounds', count => {
+    for (const bounds of [friendly, enemy]) {
+      const layout = stripLayout(count, bounds, (bounds.left + bounds.right) / 2);
+      expect(layout.scale).toBeGreaterThanOrEqual(0.5);
+      expect(layout.x0).toBeGreaterThanOrEqual(bounds.left - 1e-9);
+      expect(layout.x0 + extent(count, layout)).toBeLessThanOrEqual(bounds.right + 1e-9);
+    }
+  });
+
+  it('keeps the friendly strip 8 px left of the cap row and the enemy strip 8 px right of it', () => {
+    const f = stripLayout(24, friendly, 249);
+    expect(f.x0 + extent(24, f)).toBeLessThanOrEqual(540 - 40.5 - 8 + 1e-9);
+    const e = stripLayout(24, enemy, 831);
+    expect(e.x0).toBeGreaterThanOrEqual(540 + 40.5 + 8 - 1e-9);
+  });
+
+  it('overlaps the icons at half size when even that does not fit', () => {
+    const layout = stripLayout(40, friendly, 249);
+    expect(layout.scale).toBe(0.5);
+    expect(layout.pitch).toBeLessThan(SLOT * 0.5);
+    expect(layout.x0 + extent(40, layout)).toBeCloseTo(friendly.right);
+  });
+
+  it('scales the drawn boxes of a crowded battle and keeps them inside the strip bounds', () => {
+    const clones = Array.from({ length: 48 }, (_, i) => ({ ...sampleScene.ships[i % 2 ? 0 : sampleScene.ships.findIndex(s => s.teamId !== owner.teamId)], id: `bot-${i}`, teamId: i % 2 ? owner.teamId : 'enemy-team' }));
+    const crowded: ReplayScene = { ...scene, ships: [owner, ...clones] as ReplayScene['ships'] };
+    const { ctx, sprites } = fakeContext();
+    const layer = createScoreboardLayer(ctx, crowded);
+    const state = evaluateScene(crowded, 0);
+    const split = (team: (s: EvaluatedShip) => boolean) => state.ships.filter(team);
+    layer.update({
+      scene: crowded, time: 0, state, selectedId: owner.id, ownerId: owner.id, ownerTeamId: owner.teamId,
+      ally: split(s => s.definition.teamId === owner.teamId), enemy: split(s => s.definition.teamId !== owner.teamId),
+      interactive: true, reducedMotion: false, selectShip() {},
+    });
+    type Box = { label: string; boundsArea: { width: number }; position: { x: number } };
+    const boxes = (layer.container as unknown as { children: Box[] }).children.filter(c => c.label === 'survivor');
+    expect(boxes).toHaveLength(crowded.ships.length);
+    const sides = [friendly, enemy];
+    const nAlly = state.ships.filter(s => s.definition.teamId === owner.teamId).length;
+    const groups = [boxes.slice(0, nAlly), boxes.slice(nAlly)];
+    groups.forEach((group, i) => {
+      const bounds = sides[i];
+      expect(group[0].position.x).toBeGreaterThanOrEqual(bounds.left - 1);
+      const last = group[group.length - 1];
+      expect(last.position.x + last.boundsArea.width).toBeLessThanOrEqual(bounds.right + 1e-9);
+    });
+    expect(sprites).toHaveLength(boxes.length);
+    expect(groups[0][0].boundsArea.width).toBeLessThan(25);
   });
 });

@@ -176,6 +176,31 @@ describe('player panel layer', () => {
   });
 });
 
+describe('player panel ship line', () => {
+  // The real class icons are 72 x 128 SVGs, drawn rotated by 90 degrees.
+  const classes = ['destroyer', 'cruiser', 'battleship', 'carrier', 'submarine'] as const;
+  const realCtx = {
+    mode: 'export',
+    createText: (style: Record<string, unknown>) => new FakeText(style),
+    classIconSprite: () => Object.assign(new FakeSprite({ width: 72, height: 128 }), { rotation: Math.PI / 2 }),
+  } as unknown as StageContext;
+
+  it.each(classes.flatMap(shipClass => [[shipClass, true], [shipClass, false]] as const))('keeps the ship name right of the %s icon (owner: %s)', (shipClass, isOwner) => {
+    const ships = scene.ships.map(s => s.id === (isOwner ? owner.id : other.id) ? { ...s, shipClass } : s);
+    const classed: ReplayScene = { ...scene, ships };
+    const layer = createPlayerPanelLayer(realCtx, classed);
+    layer.update(frame(isOwner ? owner.id : other.id, 30, classed));
+    const root = layer.container as unknown as FakeContainer;
+    const icon = allOf(root, FakeSprite).find(s => !s.filters)!;
+    const name = allOf(root, FakeText).find(t => t.text === (isOwner ? owner : other).shipName)!;
+    // Rotated by 90 degrees, the drawn width is the texture height times the scale.
+    const drawnWidth = icon.texture.height * icon.scale.y;
+    const iconRight = icon.position.x + drawnWidth / 2;
+    expect(iconRight).toBeLessThanOrEqual(25);
+    expect(name.position.x).toBeGreaterThanOrEqual(iconRight + 10 - 1);
+  });
+});
+
 describe('ribbons layer', () => {
   const badgeSprites = (layer: ReturnType<typeof createRibbonsLayer>) => allOf(layer.container as unknown as FakeContainer, FakeSprite);
 

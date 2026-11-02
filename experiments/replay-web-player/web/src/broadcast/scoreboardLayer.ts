@@ -16,6 +16,9 @@ const DEAD_ICON = { color: '#68766d', alpha: 0.45 };
 const MAP_LABEL = { y: 10, color: '#9bb3a3' };
 const CLOCK = { y: 37.25, color: '#d9e4db' };
 const CAP = { y: 65, diameter: 21, gap: 9 };
+/** Clear space between a survivor strip and the cap row, and the smallest icon scale before icons overlap. */
+const CAP_CLEARANCE = 8;
+const MIN_ICON_SCALE = 0.5;
 
 const TEAM_COLORS = { friendly: COLORS.green, enemy: COLORS.red };
 const capColor = (owner: ScoreboardSide | null) => (owner ? TEAM_COLORS[owner] : CLOCK.color);
@@ -28,6 +31,38 @@ const COLUMN_X = {
   center: BOX.scoreboard.x + BOX.scoreboard.w / 2,
   enemy: BOX.scoreboard.x + BOX.scoreboard.w - PADDING.side - sideWidth / 2,
 };
+
+export interface StripBounds { left: number; right: number }
+export interface StripLayout { pitch: number; scale: number; x0: number }
+
+/** Horizontal room of a side's survivor strip: its column edge to the cap row, with clearance. */
+export function stripBounds(side: ScoreboardSide, zoneCount: number): StripBounds {
+  const half = (zoneCount * CAP.diameter + Math.max(0, zoneCount - 1) * CAP.gap) / 2;
+  return side === 'friendly'
+    ? { left: BOX.scoreboard.x + PADDING.side, right: COLUMN_X.center - half - CAP_CLEARANCE }
+    : { left: COLUMN_X.center + half + CAP_CLEARANCE, right: BOX.scoreboard.x + BOX.scoreboard.w - PADDING.side };
+}
+
+/**
+ * Slot x0, pitch and icon scale so `count` slots fit `bounds`, centred on `center` where possible.
+ * Order: nominal pitch, then no gap, then smaller icons (down to MIN_ICON_SCALE), then overlap.
+ */
+export function stripLayout(count: number, bounds: StripBounds, center: number): StripLayout {
+  const room = bounds.right - bounds.left;
+  const nominal = ICON_SLOT.w + ICON_GAP;
+  let pitch = nominal;
+  let scale = 1;
+  if (count > 1 && (count - 1) * nominal + ICON_SLOT.w > room) {
+    pitch = (room - ICON_SLOT.w) / (count - 1);
+    if (pitch < ICON_SLOT.w) {
+      scale = Math.max(MIN_ICON_SCALE, room / (count * ICON_SLOT.w));
+      pitch = scale === MIN_ICON_SCALE ? (room - ICON_SLOT.w * scale) / (count - 1) : ICON_SLOT.w * scale;
+    }
+  }
+  const extent = (count - 1) * pitch + ICON_SLOT.w * scale;
+  const x0 = Math.min(Math.max(center - extent / 2, bounds.left), Math.max(bounds.left, bounds.right - extent));
+  return { pitch, scale, x0 };
+}
 
 interface Strip { key: string; boxes: Container[]; sprites: Sprite[]; state: string[] }
 
@@ -83,19 +118,18 @@ export const createScoreboardLayer: LayerFactory = (ctx, scene) => {
     const key = ships.map(s => `${s.id}:${s.shipClass}`).join('|');
     if (key !== strip.key) {
       for (const box of strip.boxes) box.destroy({ children: true });
-      const pitch = ICON_SLOT.w + ICON_GAP;
-      const left = COLUMN_X[side] - (ships.length * pitch - ICON_GAP) / 2;
+      const { pitch, scale, x0: left } = stripLayout(ships.length, stripBounds(side, scene.captureZones.length), COLUMN_X[side]);
       const centerY = y + PADDING.top + SCORE_FONT_SIZE + SCORE_ICON_GAP + ICON_SLOT.h / 2;
       strip.boxes = [];
       strip.sprites = ships.map((ship, index) => {
         const sprite = ctx.classIconSprite(ship.shipClass);
         // The DOM icon is "contain" in its 27x25 slot, then rotated: the glyph is as wide as the slot is tall.
-        sprite.scale.set(Math.min(ICON_SLOT.w / sprite.texture.width, ICON_SLOT.h / sprite.texture.height));
+        sprite.scale.set(Math.min(ICON_SLOT.w / sprite.texture.width, ICON_SLOT.h / sprite.texture.height) * scale);
         // The box keeps the rotated element rectangle (25 x 27, as in the DOM), also where the glyph is narrower.
         const box = new Container({ label: 'survivor' });
-        box.boundsArea = new Rectangle(0, 0, ICON_SLOT.h, ICON_SLOT.w);
-        box.position.set(left + (ICON_SLOT.w - ICON_SLOT.h) / 2 + index * pitch, centerY - ICON_SLOT.w / 2);
-        sprite.position.set(ICON_SLOT.h / 2, ICON_SLOT.w / 2);
+        box.boundsArea = new Rectangle(0, 0, ICON_SLOT.h * scale, ICON_SLOT.w * scale);
+        box.position.set(left + (ICON_SLOT.w - ICON_SLOT.h) / 2 * scale + index * pitch, centerY - ICON_SLOT.w * scale / 2);
+        sprite.position.set(ICON_SLOT.h * scale / 2, ICON_SLOT.w * scale / 2);
         box.addChild(sprite);
         container.addChild(box);
         strip.boxes.push(box);
