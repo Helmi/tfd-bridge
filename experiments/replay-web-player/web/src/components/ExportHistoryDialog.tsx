@@ -2,7 +2,7 @@ import {useEffect, useRef} from 'react';
 import {formatExportRow, type ExportHistoryEntry} from '../video/exportHistory';
 import './render-dialog.css';
 
-const COLUMNS: [string, boolean][] = [['When', false], ['Replay', false], ['Format', false], ['Encoder', false], ['Bitrate', false], ['Speed', false], ['Video', true], ['Render', true], ['Size', true]];
+const COLUMNS: [string, boolean][] = [['When', false], ['Replay', false], ['Format', false], ['Encoder', false], ['Bitrate', false], ['Speed', false], ['Video', true], ['Render', true], ['FPS', true], ['Size', true]];
 
 /** All stored exports, newest first, in a scrollable list. Opens on top of the export dialog. */
 export function ExportHistoryDialog({entries, onClose}: {entries: ExportHistoryEntry[]; onClose: () => void}) {
@@ -28,6 +28,7 @@ export function ExportHistoryDialog({entries, onClose}: {entries: ExportHistoryE
             <td>{row.speed}</td>
             <td className="num">{row.video}</td>
             <td className="num">{row.render}</td>
+            <td className="num">{row.fps}</td>
             <td className="num">{row.size}</td>
           </tr>;
         })}</tbody>

@@ -14,7 +14,7 @@ Versioning follows [SemVer](https://semver.org/).
 ## [0.23.0] — TBD
 
 ### Added
-- **Recent exports.** "Recent exports" in the export dialog opens a table of your last 50 videos: date, replay, resolution and frame rate, codec, GPU or CPU, bitrate, battle speed, video length, render time and file size. Battles from "Render multiple battles" are listed too.
+- **Recent exports.** "Recent exports" in the export dialog opens a table of your last 50 videos: date, replay, resolution and frame rate, codec, GPU or CPU, bitrate, battle speed, video length, render time, export speed in frames per second and file size. Battles from "Render multiple battles" are listed too.
 
 ### Fixed
 - **Co-op and Operations battles with many ships.** The survivor icons in the scoreboard now shrink to fit their half instead of running under the cap letters and into the side panel. Normal 12-ship battles look exactly as before.

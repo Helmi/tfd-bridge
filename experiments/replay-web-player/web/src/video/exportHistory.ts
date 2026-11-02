@@ -64,7 +64,7 @@ function renderTime(ms: number): string {
 
 export interface ExportRow {
   when: string; ship: string; map: string; format: string; encoder: string;
-  bitrate: string; speed: string; video: string; render: string; size: string;
+  bitrate: string; speed: string; video: string; render: string; fps: string; size: string;
 }
 
 /** The cell texts of one history table row. Unknown values show "—". */
@@ -80,6 +80,7 @@ export function formatExportRow(entry: ExportHistoryEntry): ExportRow {
     speed: `${entry.speed}×`,
     video: clock(entry.videoSeconds),
     render: renderTime(entry.renderMs),
+    fps: entry.renderFps === undefined ? '—' : String(Math.round(entry.renderFps)),
     size: formatFileSize(entry.bytes),
   };
 }

@@ -47,11 +47,16 @@ describe('buildExportEntry', () => {
 });
 
 describe('formatExportRow', () => {
+  it('shows the measured export fps, or a dash when unknown', () => {
+    expect(formatExportRow({...entry(1), renderFps: 139.6}).fps).toBe('140');
+    const {renderFps: _f, ...noFps} = entry(1);
+    expect(formatExportRow(noFps).fps).toBe('—');
+  });
   const row = (patch: Partial<ExportHistoryEntry> = {}) => formatExportRow({...entry(1), ...patch});
   it('formats a GPU export', () => {
     expect(formatExportRow({...buildExportEntry(input, saved({frames: 1263, elapsedMs: 8600})), videoSeconds: 42.1})).toEqual({
       when: formatExportTime(input.at).replace(',', ''), ship: 'Lenin', map: 'Land of Fire', format: '1080p30 · AV1', encoder: 'GPU',
-      bitrate: '8 Mbps', speed: '20×', video: '0:43', render: '9 s', size: '50 MB',
+      bitrate: '8 Mbps', speed: '20×', video: '0:43', render: '9 s', fps: '140', size: '50 MB',
     });
     expect(row().when).not.toContain(',');
   });
