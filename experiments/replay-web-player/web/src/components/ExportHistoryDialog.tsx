@@ -6,9 +6,10 @@ import './render-dialog.css';
 export function ExportHistoryDialog({entries, onClose}: {entries: ExportHistoryEntry[]; onClose: () => void}) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {const element = dialog.current!; element.showModal(); return () => element.close();}, []);
-  // Esc closes only this view: the cancel event must not reach the export dialog underneath.
+  // Esc closes only this view. React bubbles synthetic events through the component tree,
+  // so without stopPropagation the export dialog's onCancel (its React parent) also fires.
   return <dialog ref={dialog} className="render-dialog export-history-dialog" aria-labelledby="export-history-title"
-    onCancel={event => {event.preventDefault(); onClose();}}>
+    onCancel={event => {event.preventDefault(); event.stopPropagation(); onClose();}}>
     <div className="render-dialog-heading">LOCAL VIDEO · MP4</div>
     <h2 id="export-history-title">Recent exports ({entries.length})</h2>
     <div className="video-history export-history-list">
