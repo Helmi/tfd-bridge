@@ -16,6 +16,10 @@ Versioning follows [SemVer](https://semver.org/).
 ### Added
 - **Last exports in the export dialog.** The dialog lists your 3 most recent videos with the interesting numbers: resolution and frame rate, codec and whether the GPU or CPU encoded it, battle speed, battle length → video length, render time and speed, and file size.
 
+### Fixed
+- **Co-op and Operations battles with many ships.** The survivor icons in the scoreboard now shrink to fit their half instead of running under the cap letters and into the side panel. Normal 12-ship battles look exactly as before.
+- **Bot names in Operations.** Bots show their in-game names (e.g. "Gimu 4") instead of raw keys like `IDS_OP_14_ENEMY_WAVE_14`, in the RePlayer and in videos.
+
 ## [0.22.0] — 2026-11-01
 
 ### Changed
