@@ -8,7 +8,7 @@ pub mod video_share;
 mod share_coordinator;
 mod render_worker;
 
-use bridge_core::battle_result::{DecodeConfig, Tables};
+use bridge_core::battle_result::{DecodeConfig, TableSet};
 use bridge_core::detection::derive_game_dir;
 use bridge_core::finalize::{FinalizeOptions, FinalizedCallback};
 use bridge_core::server::{self, Bridge, DecodeContext, PlayerConfig};
@@ -314,18 +314,22 @@ fn build_decode_context(app: &tauri::AppHandle, replays_path: &Path) -> Option<A
         bonus_index_path: bonus_index_path.clone(),
     };
 
-    match Tables::load(
+    // Per-version tables load lazily; load the newest now so a broken resource
+    // dir disables the feature at startup, as before.
+    match TableSet::new(
         &constants_path,
         &ship_index_path,
         &achievement_index_path,
         &bonus_index_path,
-    ) {
+    )
+    .and_then(|tables| tables.newest().map(|_| tables))
+    {
         Ok(tables) => {
             log::info!("Tables loaded; battle-result feature active");
             Some(Arc::new(DecodeContext::new(cfg, tables)))
         }
         Err(e) => {
-            log::error!("Tables::load failed ({e}); battle-result feature disabled");
+            log::error!("Tables load failed ({e}); battle-result feature disabled");
             None
         }
     }

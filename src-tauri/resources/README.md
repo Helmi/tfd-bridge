@@ -15,6 +15,14 @@ The [landaire/wows-toolkit](https://github.com/landaire/wows-toolkit)
 `CLIENT_VEH_INTERACTION_DETAILS`, `COMMON_RESULTS`, `PLAYER_PRIVATE_RESULTS`, and
 `INIT_ECONOMICS_INDICES` — the positional-array → named-field maps.
 
+Older versions live in `constants/<major.minor>.json` (e.g. `constants/15.9.json`);
+`scripts/update-game-data.py` archives the previous file there when the major.minor
+changes. A replay uses the newest file whose `VERSION` is not newer than its game
+version (a newer replay gets `constants.json`). The result layouts and the player/bot
+member maps change on patch boundaries (15.10 did both). The RePlayer scene passes the
+selected file to the toolkit only for replays newer than 15.9; up to 15.9 the toolkit's
+own version-gated member maps are used, so those scenes are unchanged.
+
 ## ship_index.json
 
 `vehicle_id → { index, name, level, species, nation, group }`, distilled from the

@@ -16,7 +16,7 @@ The script:
 1. Reads the client version and build from `<game>\game_info.xml`.
 2. Dumps GameParams with `wowsunpack` into a temp dir (about 3 GB, 1-2 minutes) and deletes it afterwards.
 3. Rebuilds `ship_index.json`, `achievement_index.json` and `bonus_index.json` in `src-tauri/resources/` (`scripts/build_indexes.py`, streaming, existing ship order kept).
-4. Downloads the build's `constants.json` from `landaire/wows-replay-data` and writes it to `src-tauri/resources/`. If the build is not published yet, it says so and continues. Run it again in a few days.
+4. Downloads the build's `constants.json` from `landaire/wows-replay-data` and writes it to `src-tauri/resources/`. If the `VERSION` major.minor changed, the previous file is first kept as `src-tauri/resources/constants/<old major.minor>.json`. The app picks, per replay, the newest constants file not newer than the replay (battle results and the RePlayer scene), so older replays keep their layout. If the build is not published yet, it says so and continues. Run it again in a few days.
 5. Writes `game-data/<major.minor.patch.build>/ship_names.json` and `map_names.json` from the client's English `global.mo`, and refreshes `game-data/latest/`. The release workflow uploads the two `latest` files as release assets on tag builds. Tfd-engine reads them. A rerun on the same client keeps `generated_at`, so `git status` stays clean.
 6. Prints a summary: new and removed ships, achievements and bonuses; changed constants keys (loud warning if a decode-critical key changed); `KNOWN_GOOD` status; upstream wows-toolkit commits since our pin.
 

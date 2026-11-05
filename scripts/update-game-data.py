@@ -4,7 +4,8 @@
 
 Steps: read client version/build, dump GameParams, rebuild the three id indexes, write the
 ship/map name tables to game-data/, fetch the build's
-constants.json from landaire/wows-replay-data, then print a summary and the manual checklist.
+constants.json from landaire/wows-replay-data (keeping the previous
+version as constants/<major.minor>.json), then print a summary and the manual checklist.
 Never commits, pushes, or edits Rust/TS code. --dry-run writes nothing into the repo.
 See docs/game-update-cycle.md.
 """
@@ -86,6 +87,31 @@ def pinned_rev(cargo_toml):
 def render_constants(data):
     """Repo format: 2-space indent, UTF-8, no trailing newline."""
     return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def constants_major_minor(data):
+    """'15.10' from a constants dict ({"VERSION": {"VERSION": "15.10", ...}}), else None."""
+    v = data.get("VERSION")
+    v = v.get("VERSION") if isinstance(v, dict) else v
+    m = re.match(r"(\d+)\.(\d+)", v) if isinstance(v, str) else None
+    return f"{m.group(1)}.{m.group(2)}" if m else None
+
+
+def archive_old_constants(res, old_text, old, new):
+    """Keep the replaced constants as constants/<major.minor>.json when the major.minor changed.
+
+    The app picks the newest file not newer than a replay's version, so older replays keep
+    their layout. Returns the written repo-relative name, or None. Never overwrites a file.
+    """
+    old_mm = constants_major_minor(old)
+    if old_mm is None or old_mm == constants_major_minor(new):
+        return None
+    target = res / "constants" / f"{old_mm}.json"
+    if target.exists():
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(norm(old_text).encode("utf-8"))
+    return f"constants/{old_mm}.json"
 
 
 def norm(text):
@@ -255,7 +281,8 @@ def main():
         map_names = build_map_names(catalog, list_space_dirs(args.wowsunpack, args.game, build, work))
         gd_version = game_data_version(version)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        constants_old = json.loads((res / "constants.json").read_text(encoding="utf-8"))
+        constants_old_text = (res / "constants.json").read_text(encoding="utf-8")
+        constants_old = json.loads(constants_old_text)
         folder = constants_folder(version)
         constants_new = fetch_constants(folder)
         written = []
@@ -265,8 +292,13 @@ def main():
                 for name, key, entries in (("ship_names.json", "ships", ship_names), ("map_names.json", "maps", map_names)):
                     if write_table(args.repo / "game-data" / sub / name, gd_version, key, entries, now):
                         written.append(f"game-data/{sub}/{name}")
-            if constants_new is not None and write_if_changed(res / "constants.json", render_constants(constants_new)):
-                written.append("constants.json")
+            if constants_new is not None:
+                # Archive first: the old file is replaced just below.
+                archived = archive_old_constants(res, constants_old_text, constants_old, constants_new)
+                if archived:
+                    written.append(archived)
+                if write_if_changed(res / "constants.json", render_constants(constants_new)):
+                    written.append("constants.json")
         if args.keep_dump:
             kept = Path(tempfile.gettempdir()) / f"GameParams-{build}.json"
             shutil.move(str(dump), kept)

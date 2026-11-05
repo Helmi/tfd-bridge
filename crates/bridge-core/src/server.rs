@@ -37,7 +37,7 @@
 /// transitions are battle start/end signals, and a battle end triggers the
 /// stability + structural checks that announce the newest `.wowsreplay` as
 /// finalized.  There is exactly ONE watcher per bridge.
-use crate::battle_result::{BattleData, DecodeConfig, DecodeError, Tables};
+use crate::battle_result::{BattleData, DecodeConfig, DecodeError, TableSet};
 use crate::finalize::{FinalizeDetector, FinalizeOptions, TEMP_ARENA_INFO};
 use notify::{RecursiveMode, Watcher};
 use percent_encoding::percent_decode_str;
@@ -77,7 +77,7 @@ pub enum BridgeError {
 /// Signature of the decode function: same as `battle_result::decode_battle_result`,
 /// injectable via a closure for tests.
 pub type DecodeFn =
-    Arc<dyn Fn(&Path, &DecodeConfig, &Tables) -> Result<BattleData, DecodeError> + Send + Sync>;
+    Arc<dyn Fn(&Path, &DecodeConfig, &TableSet) -> Result<BattleData, DecodeError> + Send + Sync>;
 
 /// Secondary index key: used to look up the hash without re-reading the file.
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -143,7 +143,7 @@ impl ResultCache {
 /// `/result` endpoints return 501 and the capability is omitted from health.
 pub struct DecodeContext {
     pub config: DecodeConfig,
-    pub tables: Tables,
+    pub tables: TableSet,
     pub cache: Mutex<ResultCache>,
     /// The decode function — defaults to `battle_result::decode_battle_result`;
     /// injectable via a closure in tests.
@@ -152,7 +152,7 @@ pub struct DecodeContext {
 
 impl DecodeContext {
     /// Construct with the production decode function.
-    pub fn new(config: DecodeConfig, tables: Tables) -> Self {
+    pub fn new(config: DecodeConfig, tables: TableSet) -> Self {
         Self {
             config,
             tables,
@@ -162,7 +162,7 @@ impl DecodeContext {
     }
 
     /// Construct with an injected decode function (for tests).
-    pub fn with_decode_fn(config: DecodeConfig, tables: Tables, decode_fn: DecodeFn) -> Self {
+    pub fn with_decode_fn(config: DecodeConfig, tables: TableSet, decode_fn: DecodeFn) -> Self {
         Self {
             config,
             tables,
@@ -247,6 +247,8 @@ struct PlayerState {
     /// keyed by `FileKey`, used to enrich the player's replay picker. Populated
     /// lazily from the plaintext replay header — no game files, no packet decode.
     meta_cache: Mutex<std::collections::HashMap<FileKey, scene_export::ReplayMeta>>,
+    /// Bundled per-version constants for the scene exporter (member maps, 15.10+).
+    constants: scene_export::constants::ConstantsSet,
 }
 
 impl PlayerState {
@@ -258,6 +260,7 @@ impl PlayerState {
             cache: Mutex::new(SceneCache::new(16)),
             decode_lock: Mutex::new(()),
             meta_cache: Mutex::new(std::collections::HashMap::new()),
+            constants: Default::default(),
         }
     }
 
@@ -504,7 +507,14 @@ pub(crate) fn start_on_ports_full(
     };
     // Wrap the caller's PlayerConfig into the runtime state (cache + decode
     // lock) once at startup, same shape as decode's Option<Arc<DecodeContext>>.
-    let player_state: Option<Arc<PlayerState>> = player.map(|cfg| Arc::new(PlayerState::new(cfg)));
+    let player_state: Option<Arc<PlayerState>> = player.map(|cfg| {
+        let mut state = PlayerState::new(cfg);
+        // Per-version constants for the scene exporter (empty without battle-result resources).
+        if let Some(ctx) = decode.as_ref() {
+            state.constants = ctx.tables.constants().clone();
+        }
+        Arc::new(state)
+    });
 
     thread::spawn(move || {
         handle_requests(
@@ -727,15 +737,17 @@ fn handle_health(decode_ctx: Option<&Arc<DecodeContext>>, player: Option<&Arc<Pl
     make_json_response(StatusCode(200), &body, None)
 }
 
-fn handle_list(replays_dir: &Path, generation: &AtomicU64, tables: Option<&Tables>) -> Response<std::io::Cursor<Vec<u8>>> {
+fn handle_list(replays_dir: &Path, generation: &AtomicU64, tables: Option<&TableSet>) -> Response<std::io::Cursor<Vec<u8>>> {
     match list_replays(replays_dir) {
         Ok(mut entries) => {
             let gen = generation.load(Ordering::SeqCst);
+            // Ship ids do not vary by version: the newest tables serve all.
+            let tables = tables.and_then(|t| t.newest().ok());
             if let Some(game_dir) = replays_dir.parent() {
                 for entry in &mut entries {
                     if let Some((index, map)) = parse_replay_file_name(&entry.name) {
                         entry.ship_name = scene_export::ship_display_name(game_dir, index);
-                        entry.ship_id = tables.and_then(|t| t.ship_ids_by_index.get(&index.to_ascii_uppercase()).copied());
+                        entry.ship_id = tables.as_ref().and_then(|t| t.ship_ids_by_index.get(&index.to_ascii_uppercase()).copied());
                         entry.map_display_name = scene_export::map_display_name(game_dir, map);
                     }
                 }
@@ -1084,8 +1096,9 @@ fn scene_cached(path: &Path, replays_dir: &Path, state: &PlayerState) -> Result<
     // caller) keeps at most one decode running at a time.
     const DECODE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
     let (tx, rx) = std::sync::mpsc::channel();
+    let constants = state.constants.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(scene_export::export_scene_json(&game_dir, &replay_path));
+        let _ = tx.send(scene_export::export_scene_json(&game_dir, &replay_path, Some(&constants)));
     });
     let body = match rx.recv_timeout(DECODE_TIMEOUT) {
         Ok(Ok(json)) => json,
@@ -2554,14 +2567,14 @@ mod tests {
     // no real sidecar or replay files are needed.
 
     use crate::battle_result::{
-        BattleData, BattleMeta, BattlePlayer, DecodeConfig, DecodeError, DecodeStatus, Tables,
+        BattleData, BattleMeta, BattlePlayer, DecodeConfig, DecodeError, DecodeStatus, TableSet, Tables,
     };
     use std::sync::atomic::AtomicU32;
 
     /// Build a minimal stub `Tables` — we only need a non-panicking value for
     /// the DecodeContext; no actual decode happens (stub decode_fn is used).
-    fn stub_tables() -> Tables {
-        Tables {
+    fn stub_tables() -> TableSet {
+        TableSet::fixed(Tables {
             public_indices: std::collections::HashMap::new(),
             common_results: Vec::new(),
             interaction_details: Vec::new(),
@@ -2576,7 +2589,7 @@ mod tests {
             achievements: std::collections::HashMap::new(),
             bonus_index: std::collections::HashMap::new(),
             skill_costs: std::collections::HashMap::new(),
-        }
+        })
     }
 
     /// Build a minimal stub `DecodeConfig` — paths don't need to exist because

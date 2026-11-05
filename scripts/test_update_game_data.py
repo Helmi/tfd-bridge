@@ -39,6 +39,31 @@ def test_critical_changes():
     assert ugd.critical_changes(keys) == ["CLIENT_PUBLIC_RESULTS_INDICES", "COMMON_ECONOMICS"]
 
 
+def test_constants_major_minor():
+    assert ugd.constants_major_minor({"VERSION": {"VERSION": "15.10", "BUILD": 1}}) == "15.10"
+    assert ugd.constants_major_minor({"VERSION": "15.9"}) == "15.9"
+    assert ugd.constants_major_minor({}) is None
+
+
+def test_archive_old_constants_keeps_previous_major_minor(tmp_path):
+    old = {"VERSION": {"VERSION": "15.9", "BUILD": 1}, "A": 1}
+    new = {"VERSION": {"VERSION": "15.10", "BUILD": 2}, "A": 2}
+    old_text = json.dumps(old, indent=2)
+    assert ugd.archive_old_constants(tmp_path, old_text, old, new) == "constants/15.9.json"
+    assert json.loads((tmp_path / "constants" / "15.9.json").read_text(encoding="utf-8")) == old
+    # Never overwrites an existing archive.
+    (tmp_path / "constants" / "15.9.json").write_text("keep", encoding="utf-8")
+    assert ugd.archive_old_constants(tmp_path, old_text, old, new) is None
+    assert (tmp_path / "constants" / "15.9.json").read_text(encoding="utf-8") == "keep"
+
+
+def test_archive_old_constants_skips_same_major_minor(tmp_path):
+    old = {"VERSION": {"VERSION": "15.10", "BUILD": 1}}
+    new = {"VERSION": {"VERSION": "15.10", "BUILD": 2}}
+    assert ugd.archive_old_constants(tmp_path, json.dumps(old), old, new) is None
+    assert not (tmp_path / "constants").exists()
+
+
 RUST = "const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 8), (15, 9)];\n"
 
 

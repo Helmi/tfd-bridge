@@ -1,5 +1,6 @@
 mod ballistics;
 mod consumables;
+pub mod constants;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -1569,7 +1570,13 @@ fn replay_outcome(winner: Option<i8>, owner_team: Option<&str>) -> Option<&'stat
     }
 }
 
-pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> {
+/// `constants` is the bundled per-version constants; `None` keeps the toolkit's
+/// built-in (version-gated) maps, which is correct for replays up to 15.9.
+pub fn export_scene_json(
+    game_dir: &Path,
+    replay_path: &Path,
+    constants: Option<&constants::ConstantsSet>,
+) -> Result<String> {
     let replay_bytes = fs::read(replay_path)
         .with_context(|| format!("reading replay {}", replay_path.display()))?;
     let source_sha256 = hex::encode(Sha256::digest(&replay_bytes));
@@ -1590,7 +1597,14 @@ pub fn export_scene_json(game_dir: &Path, replay_path: &Path) -> Result<String> 
             game_params.set_translations(catalog);
         }
     }
-    let constants = GameConstants::from_vfs(&vfs);
+    let overrides = constants
+        .and_then(|set| set.scene_overrides(Some((version.major, version.minor))));
+    // Without overrides keep the plain `from_vfs` recipe (today's behavior for
+    // every replay the toolkit's built-in maps cover).
+    let constants = match overrides.as_ref() {
+        Some(_) => GameConstants::for_build(Some(&vfs), overrides.as_ref(), Some(version)),
+        None => GameConstants::from_vfs(&vfs),
+    };
 
     let map_info =
         load_map_info(&replay.meta.mapName, &vfs).unwrap_or(MapInfo { space_size: 48_000 });

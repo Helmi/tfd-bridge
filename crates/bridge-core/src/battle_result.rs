@@ -1072,6 +1072,92 @@ impl Tables {
     }
 }
 
+/// Per-version [`Tables`]: one lazily loaded, cached set per constants file.
+///
+/// A replay is decoded with the newest constants file not newer than its game
+/// version (see `scene_export::constants`); a replay newer than every file gets
+/// the newest. The ship/achievement/bonus indices are shared by all versions.
+pub struct TableSet {
+    constants: scene_export::constants::ConstantsSet,
+    ship_index_path: PathBuf,
+    achievement_index_path: PathBuf,
+    bonus_index_path: PathBuf,
+    /// Keyed by the constants file's own `VERSION`.
+    cache: std::sync::Mutex<HashMap<(u32, u32), Arc<Tables>>>,
+    /// Test/stub mode: serve this one `Tables` for every version.
+    fixed: Option<Arc<Tables>>,
+}
+
+impl TableSet {
+    /// `constants_path` is the newest file (`<resources>/constants.json`); older
+    /// versions are read from `constants/` beside it.
+    pub fn new(
+        constants_path: &Path,
+        ship_index_path: &Path,
+        achievement_index_path: &Path,
+        bonus_index_path: &Path,
+    ) -> Result<TableSet, DecodeError> {
+        let dir = constants_path.parent().unwrap_or_else(|| Path::new("."));
+        let constants = scene_export::constants::ConstantsSet::scan(dir);
+        if constants.is_empty() {
+            return Err(DecodeError::Resources(format!("no constants files found in {}", dir.display())));
+        }
+        Ok(TableSet {
+            constants,
+            ship_index_path: ship_index_path.to_path_buf(),
+            achievement_index_path: achievement_index_path.to_path_buf(),
+            bonus_index_path: bonus_index_path.to_path_buf(),
+            cache: std::sync::Mutex::new(HashMap::new()),
+            fixed: None,
+        })
+    }
+
+    /// A set that serves `tables` for every version (tests, stubs).
+    pub fn fixed(tables: Tables) -> TableSet {
+        TableSet {
+            constants: Default::default(),
+            ship_index_path: PathBuf::new(),
+            achievement_index_path: PathBuf::new(),
+            bonus_index_path: PathBuf::new(),
+            cache: std::sync::Mutex::new(HashMap::new()),
+            fixed: Some(Arc::new(tables)),
+        }
+    }
+
+    /// The constants files, for the scene exporter.
+    pub fn constants(&self) -> &scene_export::constants::ConstantsSet {
+        &self.constants
+    }
+
+    /// Tables for a replay of `version` (`None` = unknown → newest).
+    pub fn for_version(&self, version: Option<(u32, u32)>) -> Result<Arc<Tables>, DecodeError> {
+        if let Some(tables) = &self.fixed {
+            return Ok(tables.clone());
+        }
+        let (file_version, path) = self
+            .constants
+            .select(version.unwrap_or((u32::MAX, u32::MAX)))
+            .ok_or_else(|| DecodeError::Resources("no constants files loaded".into()))?;
+        let mut cache = self.cache.lock().unwrap();
+        if let Some(tables) = cache.get(file_version) {
+            return Ok(tables.clone());
+        }
+        let tables = Arc::new(Tables::load(
+            path,
+            &self.ship_index_path,
+            &self.achievement_index_path,
+            &self.bonus_index_path,
+        )?);
+        cache.insert(*file_version, tables.clone());
+        Ok(tables)
+    }
+
+    /// Tables for the newest constants (ship ids, which do not vary by version).
+    pub fn newest(&self) -> Result<Arc<Tables>, DecodeError> {
+        self.for_version(None)
+    }
+}
+
 /// Invert `ship_index.json`: ship index → numeric GameParams id. Keys that are
 /// not numbers or have an empty index are skipped.
 pub fn ship_ids_by_index(ships: &HashMap<String, ShipInfo>) -> HashMap<String, i64> {
@@ -1117,7 +1203,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub fn decode_battle_result(
     replay_path: &Path,
     cfg: &DecodeConfig,
-    tables: &Tables,
+    tables: &TableSet,
 ) -> Result<BattleData, DecodeError> {
     let replay_bytes = fs::read(replay_path)?;
     let source_file_hash = sha256_hex(&replay_bytes);
@@ -1136,6 +1222,14 @@ pub fn decode_battle_result(
     });
 
     let (meta_value, br) = extracted?;
+    // The replay's own game version picks the constants (result layouts changed
+    // in 15.10).
+    let version = meta_value
+        .get("clientVersionFromExe")
+        .and_then(|v| v.as_str())
+        .and_then(parse_version_short)
+        .and_then(|short| scene_export::constants::parse_major_minor(&short));
+    let tables = tables.for_version(version)?;
 
     // Second pass — ship/commander loadouts from the battle-START packets
     // (schema 1.7). Deliberately isolated: a panic or error here degrades to
@@ -1159,7 +1253,7 @@ pub fn decode_battle_result(
         br,
         source_file_hash,
         replay_path,
-        tables,
+        &tables,
         &builds,
     )?;
     data.meta.map_display_name = scene_export::map_display_name(&game_dir, &data.meta.map_name);
@@ -1816,8 +1910,10 @@ fn status_from_checks(checks: &[DecodeCheck]) -> DecodeStatus {
 /// and the test-only JSONL helper ([`parse_jsonl_and_build`]).
 /// Resolve picker stats with the same constants and trust checks as the full
 /// results screen, but without scanning entity packets or extracting builds.
-pub(crate) fn picker_stats(meta: &scene_export::ReplayMeta, tables: &Tables) -> Option<serde_json::Value> {
+pub(crate) fn picker_stats(meta: &scene_export::ReplayMeta, tables: &TableSet) -> Option<serde_json::Value> {
     let br = meta.battle_results.as_ref()?;
+    let version = meta.game_version_short.as_deref().and_then(scene_export::constants::parse_major_minor);
+    let tables = &*tables.for_version(version).ok()?;
     let data = build_battle_data(meta.header.clone(), br.clone(), String::new(), Path::new(""), tables, &HashMap::new()).ok()?;
     if data.meta.decode_status == DecodeStatus::Unreliable { return None; }
     let owner = data.players.iter().find(|p| p.is_self)?;
@@ -2645,9 +2741,9 @@ mod tests {
         fixture_dir().join("bonus_index_min.json")
     }
 
-    /// The full staged bonus_index.json in src-tauri/resources/ (for e2e tests
-    /// that decode real replays).
-    fn bonus_index_path() -> PathBuf {
+    /// The staged src-tauri/resources/ (constants.json + constants/ + indices)
+    /// for e2e tests that decode real replays.
+    fn resources_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -2655,7 +2751,10 @@ mod tests {
             .unwrap()
             .join("src-tauri")
             .join("resources")
-            .join("bonus_index.json")
+    }
+
+    fn bonus_index_path() -> PathBuf {
+        resources_dir().join("bonus_index.json")
     }
 
     fn battle_results_fixture_path() -> PathBuf {
@@ -2666,8 +2765,8 @@ mod tests {
     #[ignore = "requires a local replay supplied through TFD_PICKER_REPLAY"]
     fn picker_real_replay_summary() {
         let path = PathBuf::from(std::env::var("TFD_PICKER_REPLAY").expect("TFD_PICKER_REPLAY"));
-        let resources = constants_path().parent().unwrap().to_path_buf();
-        let tables = Tables::load(&constants_path(), &resources.join("ship_index.json"), &resources.join("achievement_index.json"), &resources.join("bonus_index.json")).unwrap();
+        let resources = resources_dir();
+        let tables = TableSet::new(&resources.join("constants.json"), &resources.join("ship_index.json"), &resources.join("achievement_index.json"), &resources.join("bonus_index.json")).unwrap();
         let start = std::time::Instant::now();
         let meta = scene_export::read_replay_meta(&path).unwrap();
         let stats = picker_stats(&meta, &tables).expect("valid result stats");
@@ -2687,6 +2786,7 @@ mod tests {
             &bonus_index_min_path(),
         )
         .unwrap();
+        let tables = TableSet::fixed(tables);
         let fixture_str =
             std::fs::read_to_string(battle_results_fixture_path()).expect("fixture must exist");
         let br: serde_json::Value = serde_json::from_str(&fixture_str).unwrap();
@@ -2703,6 +2803,54 @@ mod tests {
         };
         let stats = picker_stats(&meta, &tables).expect("fixture stats");
         assert_eq!(stats["durationSeconds"], 1010);
+    }
+
+    // ── TableSet: per-version tables ──────────────────────────────────────────
+
+    #[test]
+    fn table_set_picks_tables_for_the_replay_version() {
+        let resources = resources_dir();
+        let set = TableSet::new(
+            &resources.join("constants.json"),
+            &resources.join("ship_index.json"),
+            &resources.join("achievement_index.json"),
+            &bonus_index_path(),
+        )
+        .unwrap();
+        let t159 = set.for_version(Some((15, 9))).unwrap();
+        let t153 = set.for_version(Some((15, 3))).unwrap();
+        let t1510 = set.for_version(Some((15, 10))).unwrap();
+        let t1511 = set.for_version(Some((15, 11))).unwrap();
+        let unknown = set.for_version(None).unwrap();
+        // <= 15.9 shares the 15.9 tables (loaded once); 15.10+ and unknown get 15.10.
+        assert!(Arc::ptr_eq(&t159, &t153));
+        assert!(Arc::ptr_eq(&t1510, &t1511));
+        assert!(Arc::ptr_eq(&t1510, &unknown));
+        assert!(!Arc::ptr_eq(&t159, &t1510));
+        // 15.10 inserted 12 CLIENT_PUBLIC_RESULTS fields and 2 PLAYER_PRIVATE_RESULTS.
+        assert_eq!(t1510.public_indices.len(), t159.public_indices.len() + 12);
+        assert_eq!(t1510.private_results.len(), t159.private_results.len() + 2);
+        // The 15.9 tables are the fixture constants (layout the fixtures use).
+        let fixture = make_tables_from_fixture();
+        assert_eq!(t159.public_indices, fixture.public_indices);
+        assert_eq!(t159.private_results, fixture.private_results);
+    }
+
+    #[test]
+    fn table_set_fixed_serves_one_tables_for_every_version() {
+        let set = TableSet::fixed(make_tables_from_fixture());
+        let a = set.for_version(Some((15, 3))).unwrap();
+        let b = set.for_version(Some((15, 10))).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn table_set_new_errors_without_constants() {
+        let missing = Path::new("/nonexistent/dir/constants.json");
+        assert!(matches!(
+            TableSet::new(missing, missing, missing, missing),
+            Err(DecodeError::Resources(_))
+        ));
     }
 
     // ── Tables load ───────────────────────────────────────────────────────────
@@ -4011,6 +4159,7 @@ mod tests {
             &bonus_index_min_path(),
         )
         .unwrap();
+        let tables = TableSet::fixed(tables);
         let cfg = DecodeConfig {
             game_dir: PathBuf::from("/nonexistent/game"),
             constants_path: constants_path(),
@@ -4313,9 +4462,9 @@ mod tests {
     #[ignore = "requires the local replay supplied through TFD_ECON_MISSOURI"]
     fn economic_breakdown_matches_game_screen() {
         let path = PathBuf::from(std::env::var("TFD_ECON_MISSOURI").expect("TFD_ECON_MISSOURI"));
-        let resources = constants_path().parent().unwrap().to_path_buf();
-        let tables = Tables::load(
-            &constants_path(),
+        let resources = resources_dir();
+        let tables = TableSet::new(
+            &resources.join("constants.json"),
             &resources.join("ship_index.json"),
             &resources.join("achievement_index.json"),
             &bonus_index_path(),
@@ -4323,7 +4472,7 @@ mod tests {
         .unwrap();
         let cfg = DecodeConfig {
             game_dir: PathBuf::from(r"C:\Games\World_of_Warships"),
-            constants_path: constants_path(),
+            constants_path: resources.join("constants.json"),
             ship_index_path: resources.join("ship_index.json"),
             achievement_index_path: resources.join("achievement_index.json"),
             bonus_index_path: bonus_index_path(),
@@ -4413,6 +4562,7 @@ mod tests {
             .join("src-tauri/resources/achievement_index.json");
         let tables = Tables::load(&constants_path(), &si_path, &ai_path, &bonus_index_path())
             .expect("tables must load");
+        let tables = TableSet::fixed(tables);
         let cfg = DecodeConfig {
             game_dir,
             constants_path: constants_path(),
@@ -4556,6 +4706,7 @@ mod tests {
             .join("src-tauri/resources/achievement_index.json");
         let tables = Tables::load(&constants_path(), &si_path, &ai_path, &bonus_index_path())
             .expect("tables must load");
+        let tables = TableSet::fixed(tables);
         let cfg = DecodeConfig {
             game_dir,
             constants_path: constants_path(),
@@ -4713,6 +4864,7 @@ mod tests {
             .join("src-tauri/resources/achievement_index.json");
         let tables = Tables::load(&constants_path(), &si_path, &ai_path, &bonus_index_path())
             .expect("tables must load for e2e");
+        let table_set = TableSet::fixed(Tables::load(&constants_path(), &si_path, &ai_path, &bonus_index_path()).expect("tables must load for e2e"));
 
         let cfg = DecodeConfig {
             game_dir,
@@ -4848,7 +5000,7 @@ mod tests {
 
             eprintln!("  decoding {} ({})", fname, ver);
 
-            let battle_data = match decode_battle_result(replay_path, &cfg, &tables) {
+            let battle_data = match decode_battle_result(replay_path, &cfg, &table_set) {
                 Ok(d) => d,
                 // The installed game ships only the CURRENT build's entity specs,
                 // so replays from an uninstalled older build cannot be parsed.
