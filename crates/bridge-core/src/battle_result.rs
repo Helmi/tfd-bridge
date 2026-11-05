@@ -30,7 +30,7 @@ use wowsunpack::rpc::entitydefs::EntitySpec;
 // ── Known-good version set ─────────────────────────────────────────────────────
 
 /// Pairs (major, minor) for which the bundled constants + parser are confirmed good.
-const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 4), (15, 5), (15, 6), (15, 7), (15, 8), (15, 9)];
+const KNOWN_GOOD: &[(u32, u32)] = &[(15, 3), (15, 4), (15, 5), (15, 6), (15, 7), (15, 8), (15, 9), (15, 10)];
 
 // ── Output structs ─────────────────────────────────────────────────────────────
 
@@ -571,8 +571,10 @@ const DMG_OTHER: &[&str] = &[
     "damage_pulse_laser",
     "damage_axis_laser",
     "damage_phaser_laser",
+    "damage_phaser_laser_splash", // 15.10
     "damage_event_1",
     "damage_event_2",
+    "damage_event_3", // 15.10
     "damage_adbomb", // airstrike depth-charge damage; counted once here, not in DMG_DEPTH_CHARGE
     "damage_missile",
 ];
@@ -2625,15 +2627,10 @@ mod tests {
     }
 
     fn constants_path() -> PathBuf {
-        // Use the full staged constants.json in src-tauri/resources/
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("src-tauri")
-            .join("resources")
-            .join("constants.json")
+        // The fixtures (battle_results_min.json etc.) use the 15.9 result layout,
+        // so the tests pin the 15.9 constants instead of the staged, per-patch
+        // src-tauri/resources/constants.json.
+        fixture_dir().join("constants_15_9.json")
     }
 
     fn ship_index_min_path() -> PathBuf {
@@ -4146,11 +4143,11 @@ mod tests {
             "privateDataList": []
         });
         let inner_str = serde_json::to_string(&inner).unwrap();
-        // clientVersionFromExe "15,10,0,1" → short "15.10" — a future version NOT in
-        // KNOWN_GOOD → should warn. (15.3–15.9 are all known-good now.)
+        // clientVersionFromExe "15,11,0,1" → short "15.11" — a future version NOT in
+        // KNOWN_GOOD → should warn. (15.3–15.10 are all known-good now.)
         // mapName "spaces/23_Shards" → map_name should be "23_Shards" (strip prefix).
         // matchGroup "ranked" → match_group should be Some("ranked").
-        let meta_line = r#"{"matchGroup":"ranked","clientVersionFromExe":"15,10,0,1","mapName":"spaces/23_Shards"}"#;
+        let meta_line = r#"{"matchGroup":"ranked","clientVersionFromExe":"15,11,0,1","mapName":"spaces/23_Shards"}"#;
         let jsonl = format!(
             "{meta_line}\n{{\"packet_type\":34,\"clock\":1.0,\"payload\":{{\"BattleResults\":{inner_str:?}}}}}"
         );
@@ -4168,7 +4165,7 @@ mod tests {
         );
         assert_eq!(
             data.meta.game_version_short,
-            Some("15.10".into()),
+            Some("15.11".into()),
             "game_version_short must be parsed from clientVersionFromExe"
         );
         assert_eq!(
@@ -4176,13 +4173,13 @@ mod tests {
             Some("ranked".into()),
             "match_group must be taken from meta matchGroup"
         );
-        // 15.10 is not in KNOWN_GOOD → must have a stale-version warning.
+        // 15.11 is not in KNOWN_GOOD → must have a stale-version warning.
         assert!(
             !data.meta.warnings.is_empty(),
-            "stale version 15.10 must produce a warning"
+            "stale version 15.11 must produce a warning"
         );
         assert!(
-            data.meta.warnings.iter().any(|w| w.contains("15.10")),
+            data.meta.warnings.iter().any(|w| w.contains("15.11")),
             "warning must mention the version; got: {:?}",
             data.meta.warnings
         );

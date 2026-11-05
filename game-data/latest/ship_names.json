@@ -1,12 +1,17 @@
 {
-  "game_version": "15.9.0.13357625",
-  "generated_at": "2026-10-15T12:31:47Z",
+  "game_version": "15.10.0.13533378",
+  "generated_at": "2026-11-05T16:46:13Z",
   "schema_version": "1.0",
   "ships": {
     "3246831056": {
       "full": "Test Sub 1",
       "index": "PRSS999",
       "short": "Test Sub 1"
+    },
+    "3247355152": {
+      "full": "Expeditioner",
+      "index": "PXSC999",
+      "short": "Expeditioner"
     },
     "3247355344": {
       "full": "Test Ship",
@@ -217,6 +222,11 @@
       "full": "AL Tashkent",
       "index": "PRSD919",
       "short": "AL Tashkent"
+    },
+    "3331241168": {
+      "full": "Chao Heng",
+      "index": "PZSC919",
+      "short": "Chao Heng"
     },
     "3331241680": {
       "full": "Tone 3",
@@ -1033,6 +1043,11 @@
       "index": "PWSD719",
       "short": "Błyskawica '52"
     },
+    "3540923824": {
+      "full": "Halcón",
+      "index": "PSSD719",
+      "short": "Halcón"
+    },
     "3540924112": {
       "full": "Minegumo",
       "index": "PJSD719",
@@ -1417,6 +1432,11 @@
       "full": "Salem",
       "index": "PASC710",
       "short": "Salem"
+    },
+    "3550426320": {
+      "full": "Jiuhua",
+      "index": "PZSB710",
+      "short": "Jiuhua"
     },
     "3550426448": {
       "full": "Sete de Setembro",
@@ -3673,6 +3693,11 @@
       "index": "PJSA111",
       "short": "Sekiryu"
     },
+    "4178556720": {
+      "full": "Oswald Boelcke",
+      "index": "PGSA111",
+      "short": "Oswald Boelcke"
+    },
     "4178556880": {
       "full": "Eagle",
       "index": "PBSA111",
@@ -5003,6 +5028,11 @@
       "index": "PXSX037",
       "short": "Daihatsu"
     },
+    "4256052496": {
+      "full": "Premonition",
+      "index": "PXSD037",
+      "short": "Premonition"
+    },
     "4256053232": {
       "full": "Hughes",
       "index": "PASD037",
@@ -5093,6 +5123,11 @@
       "index": "PXSX026",
       "short": "Canterbury"
     },
+    "4267586832": {
+      "full": "Fever",
+      "index": "PXSD026",
+      "short": "Fever"
+    },
     "4267587280": {
       "full": "Kamikaze R",
       "index": "PJSD026",
@@ -5153,10 +5188,20 @@
       "index": "PXSD023",
       "short": "Steel Lancet"
     },
+    "4270798096": {
+      "full": "Wrath",
+      "index": "PXSB023",
+      "short": "Wrath"
+    },
     "4271781136": {
       "full": "Angler",
       "index": "PXSD022",
       "short": "Angler"
+    },
+    "4271813904": {
+      "full": "Compulsion",
+      "index": "PXSC022",
+      "short": "Compulsion"
     },
     "4272829712": {
       "full": "Rumble",
@@ -5172,6 +5217,11 @@
       "full": "Kurama",
       "index": "PJSC021",
       "short": "Kurama"
+    },
+    "4272895248": {
+      "full": "Obsession",
+      "index": "PXSB021",
+      "short": "Obsession"
     },
     "4272895696": {
       "full": "Izumo",
@@ -5192,6 +5242,11 @@
       "full": "Des Moines",
       "index": "PASC020",
       "short": "Des Moines"
+    },
+    "4273943824": {
+      "full": "Oblivion",
+      "index": "PXSB020",
+      "short": "Oblivion"
     },
     "4273977328": {
       "full": "Essex",
@@ -5253,6 +5308,11 @@
       "index": "PVSB019",
       "short": "Los Andes"
     },
+    "4274992912": {
+      "full": "Eenhoorn",
+      "index": "PHSB019",
+      "short": "Eenhoorn"
+    },
     "4275975440": {
       "full": "Mizu-Jet",
       "index": "PXSD018",
@@ -5307,6 +5367,11 @@
       "full": "Yamato",
       "index": "PJSB018",
       "short": "Yamato"
+    },
+    "4276041488": {
+      "full": "Prins Maurits",
+      "index": "PHSB018",
+      "short": "Prins Maurits"
     },
     "4276041712": {
       "full": "Iowa",
@@ -5367,6 +5432,11 @@
       "full": "Chios",
       "index": "PWSB017",
       "short": "Chios"
+    },
+    "4277090064": {
+      "full": "Graaf van Egmont",
+      "index": "PHSB017",
+      "short": "Graaf van Egmont"
     },
     "4277090288": {
       "full": "Montana",
@@ -5432,6 +5502,11 @@
       "full": "Laudon",
       "index": "PWSB016",
       "short": "Laudon"
+    },
+    "4278138640": {
+      "full": "Grote Geus",
+      "index": "PHSB016",
+      "short": "Grote Geus"
     },
     "4279121168": {
       "full": "Atomic Rage",
@@ -5723,6 +5798,11 @@
       "index": "PJSB010",
       "short": "Nagato"
     },
+    "4284430096": {
+      "full": "Neptunus",
+      "index": "PHSB010",
+      "short": "Neptunus"
+    },
     "4284462352": {
       "full": "Legacy",
       "index": "PXSA010",
@@ -5918,10 +5998,10 @@
       "index": "PXSA005",
       "short": "Hellcarrier"
     },
-    "4290000880": {
-      "full": "Atlas Node",
-      "index": "PASX004",
-      "short": "Atlas Node"
+    "4290000144": {
+      "full": "Atlas",
+      "index": "PXSX004",
+      "short": "Atlas"
     },
     "4290655504": {
       "full": "FlyFire",
