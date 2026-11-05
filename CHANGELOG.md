@@ -11,6 +11,12 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.24.0] — 2026-11-05
+
+### Fixed
+- **World of Warships 15.10 support.** Post-battle data works again for 15.10 replays (damage, XP, spotting and ship names were empty or wrong), and the RePlayer shows the ships again (the map was empty). 15.10 changed both the result layout and the player data in the replay.
+- **Older replays keep working.** The bridge now keeps the decode data for each game version and picks the matching one for each replay, so 15.9 replays decode exactly as before.
+
 ## [0.23.0] — 2026-11-02
 
 ### Added
