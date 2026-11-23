@@ -164,7 +164,7 @@ function textOptions(spec: TextSpec): TextStyleOptions {
     fill: spec.fill,
     align: 'center',
     letterSpacing: spec.letterSpacing,
-    stroke: { color: '#05100d', width: spec.strokeWidth },
+    stroke: { color: '#05100d', width: spec.strokeWidth, join: 'round' },
   };
 }
 
@@ -187,7 +187,7 @@ function styleMapText(text: Text, spec: TextSpec): void {
   text.style.fontWeight = spec.weight;
   text.style.fill = spec.fill;
   text.style.letterSpacing = spec.letterSpacing;
-  text.style.stroke = { color: '#05100d', width: spec.strokeWidth };
+  text.style.stroke = { color: '#05100d', width: spec.strokeWidth, join: 'round' };
 }
 
 /** Keyed display objects reused across draws. Entries not requested between `begin` and `sweep` are destroyed. */
