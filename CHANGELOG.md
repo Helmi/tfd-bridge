@@ -11,6 +11,12 @@ Versioning follows [SemVer](https://semver.org/).
 
 ---
 
+## [0.24.1] — 2026-11-23
+
+### Fixed
+- **Title bar stays on engine pages.** On the Battle Monitor and Result screens the TFD Bridge title bar could disappear and not come back. It now restores itself.
+- **Sharper ship names in videos and the RePlayer.** Map labels no longer show spiky outline artifacts on letters like V, A, M and N.
+
 ## [0.24.0] — 2026-11-05
 
 ### Fixed
