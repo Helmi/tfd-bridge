@@ -628,7 +628,8 @@ const MONITOR_EMBED_JS: &str = r##"
     // the window controls granted by capabilities/player.json — so its buttons
     // navigate via `location` instead of invoking commands.
     var isPlayer = location.host.indexOf('127.0.0.1') === 0 || location.pathname === '/player' || location.pathname.indexOf('/player/') === 0;
-    if (document.getElementById('tfd-embed-bar') || !document.body) return;
+    if (!document.body) return;
+    if (document.getElementById('tfd-embed-bar')) { ensureBarStyle(); return; }
     // The bar shows in two contexts (read synchronously off the global Tauri
     // window API — no IPC, no permission):
     //  - profile-* window → New Window mode: one profile in its own window; the
@@ -795,7 +796,10 @@ const MONITOR_EMBED_JS: &str = r##"
     // local dashboard reserves its own 34px (body padding-top in index.html), so we
     // do NOT inject it there — the engine-specific selectors would be dead weight and
     // turning the local <body> into a fixed box would fight its own layout.
-    if (isEngine && !document.getElementById('tfd-embed-barvar')) {
+    ensureBarStyle();
+  }
+  function ensureBarStyle() {
+    if (isEngine && !document.getElementById('tfd-embed-barvar') && document.head) {
       var bv = document.createElement('style');
       bv.id = 'tfd-embed-barvar';
       bv.textContent =
@@ -816,10 +820,28 @@ const MONITOR_EMBED_JS: &str = r##"
       document.head.appendChild(bv);
     }
   }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', injectBar);
-  } else {
+  // Self-healing: some engine pages (React hydrating the whole document, error
+  // boundaries re-rendering <html>, soft navigations) remove nodes they did not
+  // render, including this bar and its inset style. Re-inject whenever either is
+  // missing; injectBar is idempotent, so this never duplicates them.
+  var healPending = false;
+  function heal() {
+    if (healPending) return;
+    healPending = true;
+    requestAnimationFrame(function () {
+      healPending = false;
+      if (!document.getElementById('tfd-embed-bar') || (isEngine && !document.getElementById('tfd-embed-barvar'))) injectBar();
+    });
+  }
+  function start() {
     injectBar();
+    new MutationObserver(heal).observe(document, { childList: true, subtree: true });
+    window.addEventListener('pageshow', heal);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
   }
 })();
 "##;
